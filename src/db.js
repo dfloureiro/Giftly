@@ -60,6 +60,10 @@ const migrations = [
   `
   CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
   `,
+  // v5: anonymous lists (the admin sees that a gift is reserved, not by whom)
+  `
+  ALTER TABLE lists ADD COLUMN anonymous INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 {
@@ -129,14 +133,14 @@ export const lists = {
   byToken(token) {
     return db.prepare('SELECT * FROM lists WHERE token = ?').get(token);
   },
-  create({ title, description }) {
+  create({ title, description, anonymous }) {
     return Number(db.prepare(
-      'INSERT INTO lists (title, description, token, created_at) VALUES (?, ?, ?, ?)'
-    ).run(title, description, newToken(), now()).lastInsertRowid);
+      'INSERT INTO lists (title, description, anonymous, token, created_at) VALUES (?, ?, ?, ?, ?)'
+    ).run(title, description, anonymous ? 1 : 0, newToken(), now()).lastInsertRowid);
   },
-  update(id, { title, description, archived }) {
-    db.prepare('UPDATE lists SET title = ?, description = ?, archived = ? WHERE id = ?')
-      .run(title, description, archived ? 1 : 0, id);
+  update(id, { title, description, archived, anonymous }) {
+    db.prepare('UPDATE lists SET title = ?, description = ?, archived = ?, anonymous = ? WHERE id = ?')
+      .run(title, description, archived ? 1 : 0, anonymous ? 1 : 0, id);
   },
   /** New secret link: the old one stops working and everyone is logged out of this list. */
   regenerateToken(id) {

@@ -295,6 +295,7 @@ function validateList(ctx, body) {
     title: clean(body.title, 120),
     description: cleanMultiline(body.description, 2000),
     archived: body.archived === '1',
+    anonymous: body.anonymous === '1',
   };
   return { form, error: form.title ? undefined : ctx.t('admin.titleRequired') };
 }
@@ -425,7 +426,8 @@ route('POST', '/admin/items/:id', (ctx) => {
   if (error) return html(ctx.res, views.adminItemPage(ctx, { item, list: lists.get(item.list_id), form, error }), 400);
   if (form.remove_image) form.image_source = '';
   items.update(item.id, form);
-  items.setManualReservation(item.id, form.reserved_name);
+  // Anonymous lists don't show (or let the admin edit) who reserved a gift.
+  if (!lists.get(item.list_id)?.anonymous) items.setManualReservation(item.id, form.reserved_name);
   const uploaded = applyUpload(item.id, ctx.body.image_data);
   if (!uploaded && form.remove_image) clearPreview(item.id);
   if (!uploaded && form.image_source && form.image_source !== item.image_source) {

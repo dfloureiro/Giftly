@@ -179,3 +179,4 @@ fieldset.image-field legend { font-weight: 600; font-size: .92rem; padding: 0 4p
 .upload img { width: 88px; height: 88px; object-fit: contain; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
 fieldset.group { border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin: 0; display: grid; gap: 10px; }
 fieldset.group legend { font-weight: 600; font-size: .92rem; padding: 0 4px; }
+.hint { margin: -6px 0 0; }

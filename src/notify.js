@@ -159,6 +159,9 @@ export function notify(event, { list, guest, item } = {}) {
   const channels = buildChannels(s);
   if (!channels.length || (event !== 'test' && !eventSet(s).has(event))) return Promise.resolve([]);
   const t = makeT(config.lang);
+  // Anonymous lists: never say who picked or gave up a gift.
+  const hideName = !!list?.anonymous && (event === 'pick' || event === 'unpick');
+  const key = hideName ? `notify.${event}.anon` : `notify.${event}`;
   const vars = {
     name: guest?.name ?? '',
     item: item?.title ?? '',
@@ -167,10 +170,10 @@ export function notify(event, { list, guest, item } = {}) {
   };
   const msg = {
     event,
-    title: t(`notify.${event}.title`, vars),
+    title: t(`${key}.title`, vars),
     message: t(`notify.${event}.message`, vars),
     click: adminUrl(list),
-    data: { list: list?.title, guest: guest?.name, item: item?.title, price: item?.price || undefined, item_url: item?.url || undefined },
+    data: { list: list?.title, guest: hideName ? undefined : guest?.name, item: item?.title, price: item?.price || undefined, item_url: item?.url || undefined },
   };
   return Promise.all(channels.map((c) =>
     c.send(msg).then(() => ({ channel: c.name, ok: true }), (err) => {

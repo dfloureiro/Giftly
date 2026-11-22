@@ -1,5 +1,13 @@
 const strings = {
   pt: {
+    'anon.option': "Anónima: esconder quem escolheu cada prenda",
+    'anon.hint': "Útil quando a lista é tua. No backoffice vês que prendas estão reservadas, mas não por quem, e as notificações dizem só “alguém”. É proteção contra spoilers, não segredo: se desligares esta opção, os nomes voltam a aparecer.",
+    'anon.badge': "anónima",
+    'anon.active': "Lista anónima: vês que prendas estão reservadas, mas não por quem.",
+    'anon.reserved': "Reservada",
+    'anon.editHint': "Lista anónima: quem reservou não é mostrado. Para libertar uma prenda usa “Libertar” na lista.",
+    'notify.pick.anon.title': "🎁 Alguém escolheu uma prenda",
+    'notify.unpick.anon.title': "↩️ Alguém desistiu de uma prenda",
     'notify.none': "Nenhum canal ativo. Preenche pelo menos um abaixo.",
     'notify.when': "Avisar-me quando…",
     'notify.ev.pick': "alguém escolhe uma prenda",
@@ -143,6 +151,14 @@ const strings = {
     'error.home': 'Ir para o início',
   },
   en: {
+    'anon.option': "Anonymous: hide who picked each gift",
+    'anon.hint': "Handy when the list is yours. The admin shows which gifts are reserved, but not by whom, and notifications just say “someone”. This is spoiler protection, not secrecy: turning it off shows the names again.",
+    'anon.badge': "anonymous",
+    'anon.active': "Anonymous list: you see which gifts are reserved, but not by whom.",
+    'anon.reserved': "Reserved",
+    'anon.editHint': "Anonymous list: who reserved it is not shown. To free a gift, use “Release” on the list.",
+    'notify.pick.anon.title': "🎁 Someone picked a gift",
+    'notify.unpick.anon.title': "↩️ Someone gave up a gift",
     'notify.none': "No channel active. Fill in at least one below.",
     'notify.when': "Notify me when…",
     'notify.ev.pick': "someone picks a gift",

@@ -60,7 +60,7 @@ function layout(ctx, { title, body, bodyClass = '' }) {
 <meta name="robots" content="noindex, nofollow">
 <title>${title ? `${title} · ${site}` : site}</title>
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/static/style.css?v=4">
+<link rel="stylesheet" href="/static/style.css?v=5">
 <script src="/static/app.js?v=3" defer></script>
 </head>
 <body class="${bodyClass}">
@@ -221,6 +221,8 @@ function listFields(ctx, v, { withArchived = false } = {}) {
     <label>${ctx.t('admin.description')}
       <textarea name="description" rows="2" maxlength="2000" placeholder="${ctx.t('admin.descriptionPlaceholder')}">${v.description || ''}</textarea>
     </label>
+    <label class="check"><input type="checkbox" name="anonymous" value="1"${v.anonymous ? raw(' checked') : ''}> ${ctx.t('anon.option')}</label>
+    <p class="small muted hint">${ctx.t('anon.hint')}</p>
     ${withArchived ? h`<label class="check"><input type="checkbox" name="archived" value="1"${v.archived ? raw(' checked') : ''}> ${ctx.t('admin.archived')}</label>` : ''}`;
 }
 
@@ -236,6 +238,7 @@ ${all.length ? h`
     <a href="/admin/lists/${l.id}">
       <strong>${l.title}</strong>
       ${l.archived ? h`<span class="badge">${ctx.t('admin.archivedBadge')}</span>` : ''}
+      ${l.anonymous ? h`<span class="badge">${ctx.t('anon.badge')}</span>` : ''}
       <span class="small muted">${l.item_count} ${ctx.t('admin.items').toLowerCase()} (${l.reserved_count} ${ctx.t('admin.reserved')}) · ${l.guest_count} ${ctx.t('admin.guests').toLowerCase()}</span>
     </a>
   </li>`)}
@@ -332,7 +335,8 @@ export function adminListPage(ctx, { list, allItems, allGuests, baseUrl, listFor
     title: list.title,
     body: h`
 ${adminHeader(ctx, '/admin', ctx.t('admin.back'))}
-<h1>${list.title} ${list.archived ? h`<span class="badge">${ctx.t('admin.archivedBadge')}</span>` : ''}</h1>
+<h1>${list.title} ${list.archived ? h`<span class="badge">${ctx.t('admin.archivedBadge')}</span>` : ''} ${list.anonymous ? h`<span class="badge">${ctx.t('anon.badge')}</span>` : ''}</h1>
+${list.anonymous ? h`<p class="small muted">${ctx.t('anon.active')}</p>` : ''}
 <section class="share card">
   <p>${ctx.t('admin.shareHint')}</p>
   <div class="copy-row">
@@ -351,7 +355,9 @@ ${adminHeader(ctx, '/admin', ctx.t('admin.back'))}
       <div class="body">
         ${itemBody(ctx, it)}
         ${previewStatus(ctx, it)}
-        <p class="status">${it.reserved_name
+        <p class="status">${it.reserved_name && list.anonymous
+          ? h`🎀 ${ctx.t('anon.reserved')}`
+          : it.reserved_name
           ? h`🎀 ${ctx.t('admin.reservedBy', { name: it.reserved_name })} <span class="muted">· ${fmtDate(ctx, it.reserved_at)}${it.reserved_guest_id ? '' : ` · ${ctx.t('admin.manual')}`}</span>`
           : h`<span class="muted">${ctx.t('admin.free')}</span>`}</p>
       </div>
@@ -390,10 +396,10 @@ ${adminHeader(ctx, '/admin', ctx.t('admin.back'))}
   <h2>${ctx.t('admin.guests')}</h2>
   ${allGuests.length ? h`
   <table>
-    <thead><tr><th>${ctx.t('login.name')}</th><th>${ctx.t('admin.picks')}</th><th>${ctx.t('admin.lastSeen')}</th><th></th></tr></thead>
+    <thead><tr><th>${ctx.t('login.name')}</th>${list.anonymous ? '' : h`<th>${ctx.t('admin.picks')}</th>`}<th>${ctx.t('admin.lastSeen')}</th><th></th></tr></thead>
     <tbody>
       ${allGuests.map((g) => h`<tr>
-        <td>${g.name}</td><td>${g.pick_count}</td><td>${fmtDate(ctx, g.last_seen)}</td>
+        <td>${g.name}</td>${list.anonymous ? '' : h`<td>${g.pick_count}</td>`}<td>${fmtDate(ctx, g.last_seen)}</td>
         <td>${postButton(ctx, `/admin/guests/${g.id}/delete`, ctx.t('admin.deleteGuest'), { cls: 'link danger', confirm: ctx.t('admin.deleteGuestConfirm') })}</td>
       </tr>`)}
     </tbody>
@@ -442,10 +448,12 @@ ${adminHeader(ctx, `/admin/lists/${list.id}`, ctx.t('admin.backToList'))}
         </div>
       </div>
     </fieldset>
-    <label>${ctx.t('admin.reservedName')}
+    ${list.anonymous
+      ? h`<p class="small muted">${item.reserved_name ? h`🎀 ${ctx.t('anon.reserved')} · ` : ''}${ctx.t('anon.editHint')}</p>`
+      : h`<label>${ctx.t('admin.reservedName')}
       <input name="reserved_name" maxlength="60" value="${v.reserved_name || ''}">
       <span class="small muted">${ctx.t('admin.reservedNameHint')}</span>
-    </label>
+    </label>`}
     <button type="submit" class="primary">${ctx.t('admin.save')}</button>
   </form>
   ${item.url || item.image_source ? h`<hr>${postButton(ctx, `/admin/items/${item.id}/preview`, ctx.t('preview.refresh'), { cls: 'secondary' })}` : ''}
