@@ -6,6 +6,7 @@ Self-hosted gift lists for families and friends.
 - You share the list's **secret link**. People open it, type their name, and pick what they'll give.
 - A picked gift **disappears for everyone else**, so no two people buy the same thing.
 - Gifts with a link show the **shop's product image and price** automatically. Prices are re-checked daily and are never typed by hand.
+- Optional **notifications** (ntfy, Telegram, Discord/Slack webhook) when someone picks a gift.
 - The admin always shows everything: who picked what and when, and who joined.
 
 Available in **Portuguese (pt-PT)** and **English**. The language follows the visitor's browser, and every page has a PT/EN switch.
@@ -47,6 +48,20 @@ docker run -d --name giftly -p 3000:3000 \
 | `COOKIE_SECURE` | `auto` | `auto` sets `Secure` cookies when the request came over HTTPS. |
 | `SESSION_SECRET` | generated | Generated once and stored in `/data` if not set. |
 | `PORT` | `3000` | |
+
+## Notifications
+
+You can get a message when someone picks or gives up a gift. Set one or more of these:
+
+| Channel | Variables |
+|---|---|
+| [ntfy](https://ntfy.sh) (free phone app) | `NOTIFY_NTFY_URL=https://ntfy.sh/<long-random-topic>` (optional: `NOTIFY_NTFY_TOKEN` for protected/self-hosted servers) |
+| Telegram | `NOTIFY_TELEGRAM_BOT_TOKEN` (from @BotFather) and `NOTIFY_TELEGRAM_CHAT_ID` (send your bot a message, then open `https://api.telegram.org/bot<token>/getUpdates`) |
+| Discord / Slack / anything else | `NOTIFY_WEBHOOK_URL`: receives a JSON POST with `content` (Discord), `text` (Slack), plus `event`, `list`, `guest`, `item`, `price`, `item_url`, `url` |
+
+`NOTIFY_EVENTS` chooses what triggers a message: `pick,unpick` (default), and you can add `join` (someone opened a list for the first time). Messages use `APP_LANG`. With `BASE_URL` set, each message links to the list in the admin. Use **Send test notification** in the admin to check your setup.
+
+On ntfy.sh, anyone who knows the topic name can read it, so make the topic long and random (for example `giftly-` followed by `openssl rand -hex 12`).
 
 ## Exposing it with Cloudflare Tunnel
 

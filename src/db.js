@@ -140,12 +140,12 @@ export const guests = {
       const existing = db.prepare('SELECT * FROM guests WHERE list_id = ? AND name = ?').get(listId, name);
       if (existing) {
         db.prepare('UPDATE guests SET last_seen = ? WHERE id = ?').run(now(), existing.id);
-        return existing;
+        return { ...existing, isNew: false };
       }
       const id = Number(db.prepare(
         'INSERT INTO guests (list_id, name, created_at, last_seen) VALUES (?, ?, ?, ?)'
       ).run(listId, name, now(), now()).lastInsertRowid);
-      return guests.get(id);
+      return { ...guests.get(id), isNew: true };
     });
   },
   touch(id) {

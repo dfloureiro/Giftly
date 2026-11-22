@@ -10,6 +10,7 @@ import { makeT } from './i18n.js';
 import * as views from './views.js';
 import { IMAGE_DIR, IMAGE_FILE_RE, IMAGE_TYPES, removeImage, saveImageBuffer, sweepImages } from './preview.js';
 import { enqueuePreview, clearPreview, startPreviewQueue } from './previewQueue.js';
+import { notify, notifyChannels } from './notify.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const GUEST_COOKIE = 'giftly_guest';
@@ -146,6 +147,8 @@ const FLASH = {
   deleted: ['success', 'admin.deleted'],
   released: ['success', 'admin.released'],
   newLink: ['success', 'admin.newLinkDone'],
+  notifyOk: ['success', 'notify.testOk'],
+  notifyFail: ['error', 'notify.testFail'],
 };
 
 // ---------- routing ----------
@@ -222,6 +225,7 @@ route('POST', '/l/:token/join', (ctx) => {
   }
   if (!name) return html(ctx.res, views.joinPage(ctx, { list, name, error: ctx.t('login.noName') }), 400);
   const guest = guests.findOrCreate(list.id, name);
+  if (guest.isNew) notify('join', { list, guest });
   const others = guestEntries(ctx).filter(([g]) => guests.get(g)?.list_id !== list.id);
   redirect(ctx.res, `/l/${list.token}`, [guestCookie(ctx, [...others, [guest.id, list.epoch]])]);
 });
@@ -232,12 +236,15 @@ route('POST', '/l/:token/logout', (ctx) => {
 }, { auth: 'guest' });
 
 route('POST', '/l/:token/pick/:id', (ctx) => {
-  const ok = items.reserve(Number(ctx.params.id), ctx.session.guest);
+  const id = Number(ctx.params.id);
+  const ok = items.reserve(id, ctx.session.guest);
+  if (ok) notify('pick', { ...ctx.session, item: items.get(id) });
   redirect(ctx.res, `/l/${ctx.session.list.token}?m=${ok ? 'picked' : 'taken'}`);
 }, { auth: 'guest' });
 
 route('POST', '/l/:token/unpick/:id', (ctx) => {
-  items.unreserve(Number(ctx.params.id), ctx.session.guest);
+  const id = Number(ctx.params.id);
+  if (items.unreserve(id, ctx.session.guest)) notify('unpick', { ...ctx.session, item: items.get(id) });
   redirect(ctx.res, `/l/${ctx.session.list.token}?m=unpicked`);
 }, { auth: 'guest' });
 
@@ -245,7 +252,7 @@ route('POST', '/l/:token/unpick/:id', (ctx) => {
 
 route('GET', '/admin', (ctx) => {
   if (!ctx.isAdmin) return html(ctx.res, views.adminLoginPage(ctx));
-  html(ctx.res, views.adminDashboard(ctx, { all: lists.all(), form: {} }));
+  html(ctx.res, views.adminDashboard(ctx, { all: lists.all(), form: {}, channels: notifyChannels() }));
 });
 
 route('POST', '/admin/login', (ctx) => {
@@ -262,6 +269,12 @@ route('POST', '/admin/login', (ctx) => {
   redirect(ctx.res, '/admin', [cookie(ctx.req, ADMIN_COOKIE, token, 14 * DAY)]);
 });
 
+route('POST', '/admin/notify-test', async (ctx) => {
+  const results = await notify('test');
+  const ok = results.length && results.every((r) => r.ok);
+  redirect(ctx.res, `/admin?m=${ok ? 'notifyOk' : 'notifyFail'}`);
+}, { auth: 'admin' });
+
 route('POST', '/admin/logout', (ctx) => {
   redirect(ctx.res, '/admin', [cookie(ctx.req, ADMIN_COOKIE, '', 0)]);
 }, { auth: 'admin' });
@@ -277,7 +290,7 @@ function validateList(ctx, body) {
 
 route('POST', '/admin/lists', (ctx) => {
   const { form, error } = validateList(ctx, ctx.body);
-  if (error) return html(ctx.res, views.adminDashboard(ctx, { all: lists.all(), form, error }), 400);
+  if (error) return html(ctx.res, views.adminDashboard(ctx, { all: lists.all(), form, error, channels: notifyChannels() }), 400);
   const id = lists.create(form);
   redirect(ctx.res, `/admin/lists/${id}?m=created`);
 }, { auth: 'admin' });
