@@ -24,7 +24,8 @@ if (!env.ADMIN_PASSWORD || env.ADMIN_PASSWORD.length < 8) {
 
 export const config = {
   port: Number(env.PORT) || 3000,
-  host: env.HOST || '0.0.0.0',
+  // Unset = Node's default: all interfaces, IPv6 and IPv4 (dual-stack) when available.
+  host: env.HOST || undefined,
   dataDir,
   adminPassword: env.ADMIN_PASSWORD,
   sessionSecret: loadSecret(),

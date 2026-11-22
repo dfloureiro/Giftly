@@ -20,9 +20,12 @@ jobs:
         run: |
           docker build -t giftly-test .
           docker run -d --name t -e ADMIN_PASSWORD=ci-password-123 -p 3000:3000 giftly-test
-          for i in $(seq 1 20); do curl -fsS localhost:3000/healthz && break; sleep 1; done
-          curl -fsS localhost:3000/ | grep -q Giftly
-          docker rm -f t
+          trap 'docker logs t; docker rm -f t' EXIT
+          for i in $(seq 1 20); do curl -fsS 127.0.0.1:3000/healthz && break; sleep 1; done
+          for url in 127.0.0.1:3000 localhost:3000; do
+            body=$(curl -fsS "$url/")
+            grep -q Giftly <<<"$body"
+          done
 
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3

@@ -571,9 +571,10 @@ const server = http.createServer((req, res) => {
   });
 });
 
-server.listen(config.port, config.host, () => {
+server.listen({ port: config.port, host: config.host }, () => {
   startPreviewQueue();
-  console.log(`giftly listening on http://${config.host}:${config.port} (lang=${config.lang}, data=${config.dataDir})`);
+  const { address, port } = server.address();
+  console.log(`giftly listening on ${address}:${port} (lang=${config.lang}, data=${config.dataDir})`);
 });
 
 for (const sig of ['SIGTERM', 'SIGINT']) {
