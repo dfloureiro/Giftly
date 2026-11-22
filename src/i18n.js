@@ -1,5 +1,6 @@
 const strings = {
   pt: {
+    'notify.problem': "Configuração inválida, canal desativado →",
     'notify.pick.title': "🎁 {name} escolheu uma prenda",
     'notify.pick.message': "“{item}”{price} · {list}",
     'notify.unpick.title': "↩️ {name} desistiu de uma prenda",
@@ -127,6 +128,7 @@ const strings = {
     'error.home': 'Ir para o início',
   },
   en: {
+    'notify.problem': "Invalid setting, channel disabled →",
     'notify.pick.title': "🎁 {name} picked a gift",
     'notify.pick.message': "“{item}”{price} · {list}",
     'notify.unpick.title': "↩️ {name} gave up a gift",

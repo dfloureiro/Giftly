@@ -9,16 +9,38 @@ const TIMEOUT_MS = 8000;
 
 const channels = [];
 
+// A bad notification setting must never stop the app: log it and skip that channel.
+export const notifyProblems = [];
+const invalid = (name, why) => {
+  notifyProblems.push(`${name}: ${why}`);
+  console.error(`notifications: ${name} disabled — ${why}`);
+};
+
 if (env.NOTIFY_NTFY_URL) {
-  // e.g. https://ntfy.sh/my-secret-topic — published as JSON so titles can use any characters.
-  const u = new URL(env.NOTIFY_NTFY_URL);
-  const topic = u.pathname.replace(/^\/+|\/+$/g, '');
-  channels.push({
-    name: 'ntfy',
-    send: ({ title, message, click }) => post(`${u.origin}/`, {
-      topic, title, message, tags: ['gift'], ...(click && { click }),
-    }, env.NOTIFY_NTFY_TOKEN ? { Authorization: `Bearer ${env.NOTIFY_NTFY_TOKEN}` } : {}),
-  });
+  // https://ntfy.sh/my-secret-topic, https://my-ntfy.example/topic, or just "my-secret-topic" (→ ntfy.sh).
+  // Published as JSON so titles can use any characters.
+  const raw = env.NOTIFY_NTFY_URL.trim();
+  let origin, topic;
+  if (/^https?:\/\//i.test(raw)) {
+    try {
+      const u = new URL(raw);
+      origin = u.origin;
+      topic = u.pathname.replace(/^\/+|\/+$/g, '');
+    } catch { /* reported below */ }
+  } else {
+    origin = 'https://ntfy.sh';
+    topic = raw;
+  }
+  if (!origin || !/^[-_A-Za-z0-9]{1,64}$/.test(topic || '')) {
+    invalid('ntfy', 'NOTIFY_NTFY_URL must be like https://ntfy.sh/<topic>, and the topic may only use letters, numbers, "-" and "_"');
+  } else {
+    channels.push({
+      name: 'ntfy',
+      send: ({ title, message, click }) => post(`${origin}/`, {
+        topic, title, message, tags: ['gift'], ...(click && { click }),
+      }, env.NOTIFY_NTFY_TOKEN ? { Authorization: `Bearer ${env.NOTIFY_NTFY_TOKEN}` } : {}),
+    });
+  }
 }
 
 if (env.NOTIFY_TELEGRAM_BOT_TOKEN && env.NOTIFY_TELEGRAM_CHAT_ID) {
@@ -31,7 +53,11 @@ if (env.NOTIFY_TELEGRAM_BOT_TOKEN && env.NOTIFY_TELEGRAM_CHAT_ID) {
   });
 }
 
-if (env.NOTIFY_WEBHOOK_URL) {
+let webhookOk = false;
+try { webhookOk = !!env.NOTIFY_WEBHOOK_URL && /^https?:$/.test(new URL(env.NOTIFY_WEBHOOK_URL).protocol); } catch { /* below */ }
+if (env.NOTIFY_WEBHOOK_URL && !webhookOk) invalid('webhook', 'NOTIFY_WEBHOOK_URL must be an http(s) URL');
+
+if (webhookOk) {
   channels.push({
     name: 'webhook',
     // `content` → Discord, `text` → Slack; the rest is for custom integrations.

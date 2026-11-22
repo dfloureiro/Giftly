@@ -10,7 +10,7 @@ import { makeT } from './i18n.js';
 import * as views from './views.js';
 import { IMAGE_DIR, IMAGE_FILE_RE, IMAGE_TYPES, removeImage, saveImageBuffer, sweepImages } from './preview.js';
 import { enqueuePreview, clearPreview, startPreviewQueue } from './previewQueue.js';
-import { notify, notifyChannels } from './notify.js';
+import { notify, notifyChannels, notifyProblems } from './notify.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const GUEST_COOKIE = 'giftly_guest';
@@ -252,7 +252,7 @@ route('POST', '/l/:token/unpick/:id', (ctx) => {
 
 route('GET', '/admin', (ctx) => {
   if (!ctx.isAdmin) return html(ctx.res, views.adminLoginPage(ctx));
-  html(ctx.res, views.adminDashboard(ctx, { all: lists.all(), form: {}, channels: notifyChannels() }));
+  html(ctx.res, views.adminDashboard(ctx, { all: lists.all(), form: {}, channels: notifyChannels(), problems: notifyProblems }));
 });
 
 route('POST', '/admin/login', (ctx) => {
@@ -290,7 +290,7 @@ function validateList(ctx, body) {
 
 route('POST', '/admin/lists', (ctx) => {
   const { form, error } = validateList(ctx, ctx.body);
-  if (error) return html(ctx.res, views.adminDashboard(ctx, { all: lists.all(), form, error, channels: notifyChannels() }), 400);
+  if (error) return html(ctx.res, views.adminDashboard(ctx, { all: lists.all(), form, error, channels: notifyChannels(), problems: notifyProblems }), 400);
   const id = lists.create(form);
   redirect(ctx.res, `/admin/lists/${id}?m=created`);
 }, { auth: 'admin' });

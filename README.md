@@ -72,11 +72,11 @@ You can get a message when someone picks or gives up a gift. Set one or more of 
 
 | Channel | Variables |
 |---|---|
-| [ntfy](https://ntfy.sh) (free phone app) | `NOTIFY_NTFY_URL=https://ntfy.sh/<long-random-topic>` (optional: `NOTIFY_NTFY_TOKEN` for protected/self-hosted servers) |
+| [ntfy](https://ntfy.sh) (free phone app) | `NOTIFY_NTFY_URL=https://ntfy.sh/<long-random-topic>` (a bare topic name also works; topics may only use letters, numbers, `-` and `_`) (optional: `NOTIFY_NTFY_TOKEN` for protected/self-hosted servers) |
 | Telegram | `NOTIFY_TELEGRAM_BOT_TOKEN` (from @BotFather) and `NOTIFY_TELEGRAM_CHAT_ID` (send your bot a message, then open `https://api.telegram.org/bot<token>/getUpdates`) |
 | Discord / Slack / anything else | `NOTIFY_WEBHOOK_URL`: receives a JSON POST with `content` (Discord), `text` (Slack), plus `event`, `list`, `guest`, `item`, `price`, `item_url`, `url` |
 
-`NOTIFY_EVENTS` chooses what triggers a message: `pick,unpick` (default), and you can add `join` (someone opened a list for the first time). Messages use `APP_LANG`. With `BASE_URL` set, each message links to the list in the admin. Use **Send test notification** in the admin to check your setup.
+`NOTIFY_EVENTS` chooses what triggers a message: `pick,unpick` (default), and you can add `join` (someone opened a list for the first time). Messages use `APP_LANG`. With `BASE_URL` set, each message links to the list in the admin. Use **Send test notification** in the admin to check your setup. An invalid setting never stops Giftly: that channel is disabled, and the problem is shown in the admin and the logs.
 
 On ntfy.sh, anyone who knows the topic name can read it, so make the topic long and random (for example `giftly-` followed by `openssl rand -hex 12`).
 

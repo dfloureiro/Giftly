@@ -224,7 +224,7 @@ function listFields(ctx, v, { withArchived = false } = {}) {
     ${withArchived ? h`<label class="check"><input type="checkbox" name="archived" value="1"${v.archived ? raw(' checked') : ''}> ${ctx.t('admin.archived')}</label>` : ''}`;
 }
 
-export function adminDashboard(ctx, { all, form, error, channels = [] }) {
+export function adminDashboard(ctx, { all, form, error, channels = [], problems = [] }) {
   return layout(ctx, {
     title: ctx.t('admin.title'),
     body: h`
@@ -253,6 +253,7 @@ ${all.length ? h`
 
 <section class="card">
   <h2>${ctx.t('notify.heading')}</h2>
+  ${problems.map((p) => h`<div class="flash flash-error" role="alert">${ctx.t('notify.problem')} ${p}</div>`)}
   ${channels.length ? h`
     <p>${ctx.t('notify.active', { channels: channels.join(', ') })}</p>
     ${postButton(ctx, '/admin/notify-test', ctx.t('notify.testButton'), { cls: 'secondary' })}`
