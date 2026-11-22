@@ -56,6 +56,10 @@ const migrations = [
   ALTER TABLE items ADD COLUMN price_checked_at INTEGER;
   UPDATE items SET price = '' WHERE url = '';
   `,
+  // v4: settings edited in the admin (notifications, ...)
+  `
+  CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+  `,
 ];
 
 {
@@ -88,6 +92,25 @@ export function tx(fn) {
 const now = () => Date.now();
 // 16 random bytes → 22 url-safe chars; unguessable, short enough to paste in a message.
 const newToken = () => randomBytes(16).toString('base64url');
+
+// ---------- settings ----------
+
+export const settings = {
+  /** All settings whose key starts with `prefix`, returned without the prefix. */
+  all(prefix = '') {
+    const out = {};
+    for (const r of db.prepare('SELECT key, value FROM settings WHERE key LIKE ?').all(`${prefix}%`)) {
+      out[r.key.slice(prefix.length)] = r.value;
+    }
+    return out;
+  },
+  setMany(obj) {
+    tx(() => {
+      const stmt = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
+      for (const [k, v] of Object.entries(obj)) stmt.run(k, String(v));
+    });
+  },
+};
 
 // ---------- lists ----------
 

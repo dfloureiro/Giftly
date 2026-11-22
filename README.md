@@ -6,7 +6,7 @@ Self-hosted gift lists for families and friends.
 - You share the list's **secret link**. People open it, type their name, and pick what they'll give.
 - A picked gift **disappears for everyone else**, so no two people buy the same thing.
 - Gifts with a link show the **shop's product image and price** automatically. Prices are re-checked daily and are never typed by hand.
-- Optional **notifications** (ntfy, Telegram, Discord/Slack webhook) when someone picks a gift.
+- Optional **notifications** (ntfy, Telegram, Discord/Slack webhook) when someone picks a gift, configured in the admin.
 - The admin always shows everything: who picked what and when, and who joined.
 
 <p align="center">
@@ -68,17 +68,19 @@ docker run -d --name giftly -p 3000:3000 \
 
 ## Notifications
 
-You can get a message when someone picks or gives up a gift. Set one or more of these:
+You can get a message when someone picks or gives up a gift, or opens a list for the first time. Set it up in the admin under **Notifications**: choose the events, fill in one or more channels, and use **Send test notification**.
 
-| Channel | Variables |
+| Channel | What you need |
 |---|---|
-| [ntfy](https://ntfy.sh) (free phone app) | `NOTIFY_NTFY_URL=https://ntfy.sh/<long-random-topic>` (a bare topic name also works; topics may only use letters, numbers, `-` and `_`) (optional: `NOTIFY_NTFY_TOKEN` for protected/self-hosted servers) |
-| Telegram | `NOTIFY_TELEGRAM_BOT_TOKEN` (from @BotFather) and `NOTIFY_TELEGRAM_CHAT_ID` (send your bot a message, then open `https://api.telegram.org/bot<token>/getUpdates`) |
-| Discord / Slack / anything else | `NOTIFY_WEBHOOK_URL`: receives a JSON POST with `content` (Discord), `text` (Slack), plus `event`, `list`, `guest`, `item`, `price`, `item_url`, `url` |
+| [ntfy](https://ntfy.sh) (free phone app) | A topic such as `https://ntfy.sh/giftly-<random>` or just `giftly-<random>` (letters, numbers, `-` and `_` only). Add an access token for protected or self-hosted servers. |
+| Telegram | A bot token (from @BotFather) and your chat ID (send your bot a message, then open `https://api.telegram.org/bot<token>/getUpdates`). |
+| Discord / Slack / anything else | A webhook URL. It receives a JSON POST with `content` (Discord), `text` (Slack), plus `event`, `list`, `guest`, `item`, `price`, `item_url` and `url`. |
 
-`NOTIFY_EVENTS` chooses what triggers a message: `pick,unpick` (default), and you can add `join` (someone opened a list for the first time). Messages use `APP_LANG`. With `BASE_URL` set, each message links to the list in the admin. Use **Send test notification** in the admin to check your setup. An invalid setting never stops Giftly: that channel is disabled, and the problem is shown in the admin and the logs.
+Settings are stored in the database. Tokens are never shown back in the page: leave the field empty to keep the current one, or tick *Clear* to remove it. With `BASE_URL` set, each message links to the list in the admin. Messages use `APP_LANG`.
 
-On ntfy.sh, anyone who knows the topic name can read it, so make the topic long and random (for example `giftly-` followed by `openssl rand -hex 12`).
+On ntfy.sh, anyone who knows the topic name can read it, so make it long and random (for example `giftly-` followed by `openssl rand -hex 12`).
+
+The `NOTIFY_NTFY_URL`, `NOTIFY_NTFY_TOKEN`, `NOTIFY_TELEGRAM_BOT_TOKEN`, `NOTIFY_TELEGRAM_CHAT_ID`, `NOTIFY_WEBHOOK_URL` and `NOTIFY_EVENTS` environment variables still work, but only as initial values: whatever you save in the admin takes precedence. An invalid setting never stops Giftly; that channel is disabled, and the problem is shown in the admin.
 
 ## Exposing it with Cloudflare Tunnel
 

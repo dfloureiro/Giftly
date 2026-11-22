@@ -10,7 +10,7 @@ import { makeT } from './i18n.js';
 import * as views from './views.js';
 import { IMAGE_DIR, IMAGE_FILE_RE, IMAGE_TYPES, removeImage, saveImageBuffer, sweepImages } from './preview.js';
 import { enqueuePreview, clearPreview, startPreviewQueue } from './previewQueue.js';
-import { notify, notifyChannels, notifyProblems } from './notify.js';
+import { notify, notifyStatus, saveNotifySettings } from './notify.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const GUEST_COOKIE = 'giftly_guest';
@@ -148,6 +148,7 @@ const FLASH = {
   released: ['success', 'admin.released'],
   newLink: ['success', 'admin.newLinkDone'],
   notifyOk: ['success', 'notify.testOk'],
+  notifySaved: ['success', 'admin.saved'],
   notifyFail: ['error', 'notify.testFail'],
 };
 
@@ -252,7 +253,7 @@ route('POST', '/l/:token/unpick/:id', (ctx) => {
 
 route('GET', '/admin', (ctx) => {
   if (!ctx.isAdmin) return html(ctx.res, views.adminLoginPage(ctx));
-  html(ctx.res, views.adminDashboard(ctx, { all: lists.all(), form: {}, channels: notifyChannels(), problems: notifyProblems }));
+  html(ctx.res, views.adminDashboard(ctx, { all: lists.all(), form: {}, notify: notifyStatus() }));
 });
 
 route('POST', '/admin/login', (ctx) => {
@@ -269,10 +270,20 @@ route('POST', '/admin/login', (ctx) => {
   redirect(ctx.res, '/admin', [cookie(ctx.req, ADMIN_COOKIE, token, 14 * DAY)]);
 });
 
+route('POST', '/admin/notifications', (ctx) => {
+  const { errors, values } = saveNotifySettings(ctx.body);
+  if (errors.length) {
+    const notify = notifyStatus();
+    notify.values = { ...notify.values, ...values, events: values.events.split(',').filter(Boolean) };
+    return html(ctx.res, views.adminDashboard(ctx, { all: lists.all(), form: {}, notify, notifyErrors: errors }), 400);
+  }
+  redirect(ctx.res, '/admin?m=notifySaved#notifications');
+}, { auth: 'admin' });
+
 route('POST', '/admin/notify-test', async (ctx) => {
   const results = await notify('test');
   const ok = results.length && results.every((r) => r.ok);
-  redirect(ctx.res, `/admin?m=${ok ? 'notifyOk' : 'notifyFail'}`);
+  redirect(ctx.res, `/admin?m=${ok ? 'notifyOk' : 'notifyFail'}#notifications`);
 }, { auth: 'admin' });
 
 route('POST', '/admin/logout', (ctx) => {
@@ -290,7 +301,7 @@ function validateList(ctx, body) {
 
 route('POST', '/admin/lists', (ctx) => {
   const { form, error } = validateList(ctx, ctx.body);
-  if (error) return html(ctx.res, views.adminDashboard(ctx, { all: lists.all(), form, error, channels: notifyChannels(), problems: notifyProblems }), 400);
+  if (error) return html(ctx.res, views.adminDashboard(ctx, { all: lists.all(), form, error, notify: notifyStatus() }), 400);
   const id = lists.create(form);
   redirect(ctx.res, `/admin/lists/${id}?m=created`);
 }, { auth: 'admin' });

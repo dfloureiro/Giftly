@@ -60,7 +60,7 @@ function layout(ctx, { title, body, bodyClass = '' }) {
 <meta name="robots" content="noindex, nofollow">
 <title>${title ? `${title} · ${site}` : site}</title>
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/static/style.css?v=3">
+<link rel="stylesheet" href="/static/style.css?v=4">
 <script src="/static/app.js?v=3" defer></script>
 </head>
 <body class="${bodyClass}">
@@ -224,7 +224,7 @@ function listFields(ctx, v, { withArchived = false } = {}) {
     ${withArchived ? h`<label class="check"><input type="checkbox" name="archived" value="1"${v.archived ? raw(' checked') : ''}> ${ctx.t('admin.archived')}</label>` : ''}`;
 }
 
-export function adminDashboard(ctx, { all, form, error, channels = [], problems = [] }) {
+export function adminDashboard(ctx, { all, form, error, notify, notifyErrors = [] }) {
   return layout(ctx, {
     title: ctx.t('admin.title'),
     body: h`
@@ -251,15 +251,54 @@ ${all.length ? h`
   </form>
 </section>
 
-<section class="card">
-  <h2>${ctx.t('notify.heading')}</h2>
-  ${problems.map((p) => h`<div class="flash flash-error" role="alert">${ctx.t('notify.problem')} ${p}</div>`)}
-  ${channels.length ? h`
-    <p>${ctx.t('notify.active', { channels: channels.join(', ') })}</p>
-    ${postButton(ctx, '/admin/notify-test', ctx.t('notify.testButton'), { cls: 'secondary' })}`
-  : h`<p class="muted">${ctx.t('notify.none')}</p>`}
-</section>`,
+${notifySection(ctx, notify, notifyErrors)}`,
   });
+}
+
+function notifySection(ctx, { values: v, channels, problems }, errors) {
+  const checked = (on) => (on ? raw(' checked') : '');
+  const secret = (name, isSet) => h`
+      <input name="${name}" type="password" autocomplete="off" placeholder="${isSet ? ctx.t('notify.secretKeep') : ''}">
+      ${isSet ? h`<label class="check small"><input type="checkbox" name="clear_${name}" value="1"> ${ctx.t('notify.secretClear')}</label>` : ''}`;
+  return h`
+<section class="card" id="notifications">
+  <h2>${ctx.t('notify.heading')}</h2>
+  ${[...new Set([...errors, ...problems])].map((k) => h`<div class="flash flash-error" role="alert">${ctx.t(k)}</div>`)}
+  <p class="small muted">${channels.length ? ctx.t('notify.active', { channels: channels.join(', ') }) : ctx.t('notify.none')}</p>
+  <form method="post" action="/admin/notifications" class="stack">
+    ${csrfField(ctx)}
+    <fieldset class="group">
+      <legend>${ctx.t('notify.when')}</legend>
+      <label class="check"><input type="checkbox" name="event_pick" value="1"${checked(v.events.includes('pick'))}> ${ctx.t('notify.ev.pick')}</label>
+      <label class="check"><input type="checkbox" name="event_unpick" value="1"${checked(v.events.includes('unpick'))}> ${ctx.t('notify.ev.unpick')}</label>
+      <label class="check"><input type="checkbox" name="event_join" value="1"${checked(v.events.includes('join'))}> ${ctx.t('notify.ev.join')}</label>
+    </fieldset>
+    <fieldset class="group">
+      <legend>ntfy</legend>
+      <label>${ctx.t('notify.ntfyUrl')}
+        <input name="ntfy_url" value="${v.ntfy_url}" placeholder="https://ntfy.sh/giftly-…" autocomplete="off" spellcheck="false">
+        <span class="small muted">${ctx.t('notify.ntfyHint')}</span>
+      </label>
+      <label>${ctx.t('notify.ntfyToken')}${secret('ntfy_token', v.ntfy_token_set)}</label>
+    </fieldset>
+    <fieldset class="group">
+      <legend>Telegram</legend>
+      <label>${ctx.t('notify.tgToken')}${secret('telegram_bot_token', v.telegram_bot_token_set)}</label>
+      <label>${ctx.t('notify.tgChat')}
+        <input name="telegram_chat_id" value="${v.telegram_chat_id}" autocomplete="off" spellcheck="false">
+      </label>
+    </fieldset>
+    <fieldset class="group">
+      <legend>Webhook</legend>
+      <label>${ctx.t('notify.webhookUrl')}
+        <input name="webhook_url" type="url" value="${v.webhook_url}" placeholder="https://discord.com/api/webhooks/…" autocomplete="off" spellcheck="false">
+        <span class="small muted">${ctx.t('notify.webhookHint')}</span>
+      </label>
+    </fieldset>
+    <button type="submit" class="primary">${ctx.t('admin.save')}</button>
+  </form>
+  ${channels.length ? postButton(ctx, '/admin/notify-test', ctx.t('notify.testButton'), { cls: 'secondary' }) : ''}
+</section>`;
 }
 
 function itemFields(ctx, v) {
