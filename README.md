@@ -101,4 +101,4 @@ ADMIN_PASSWORD=dev-password npm run dev
 
 ## License
 
-MIT
+[GPL-3.0](LICENSE)
