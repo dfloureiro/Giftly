@@ -267,3 +267,10 @@ ol.steps li > form { margin-top: .5rem; }
 code.secret { font-size: 1rem; letter-spacing: .05em; word-break: break-all; }
 ul.recovery-codes { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 16px; }
 ul.recovery-codes code { font-size: 1.05rem; }
+
+/* collapsible actions (wishlist edit/remove, "I'll give it"): inline when closed, full width when open */
+.actions > details.edit { flex: 0 0 auto; }
+.actions > details.edit[open] { flex: 1 1 100%; }
+.actions > details.edit > summary { list-style: none; display: block; margin-top: 0; }
+.actions > details.edit > summary::-webkit-details-marker { display: none; }
+.warn { color: var(--err); }

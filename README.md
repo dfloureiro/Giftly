@@ -12,6 +12,7 @@ Self-hosted gift lists for families and friends.
 - Gifts with a link show the **shop's product image and price** automatically. Prices are re-checked daily and are never typed by hand.
 - **Several admins**, each with their own account, and optional **notifications** (ntfy, Telegram, Discord/Slack webhook) when someone picks a gift.
 - The admin always shows everything: who picked what and when, and who joined.
+- **Wishlists:** each admin keeps a personal wishlist; another admin can create a guest list from it (the owner never sees that list or what was reserved), or take an item with "I'll give it".
 - **Gifts to give:** keep track of the gifts *you* give: people, birthdays, Christmas and other occasions, with a checklist per occasion, what each person got last year, shared or private entries per admin, and **reminders** when a gift is still missing.
 
 <p align="center">
@@ -34,6 +35,18 @@ Self-hosted gift lists for families and friends.
 </p>
 <p align="center">
   <img src="docs/screenshots/admins.png" alt="Admins page: every admin account, new-password links, and invite links to add another admin" width="600">
+</p>
+</details>
+
+<details>
+<summary><strong>Wishlists</strong></summary>
+<p align="center">
+  <img src="docs/screenshots/wishlist-own.png" alt="Your own wishlist: items in order of preference, with no hint of what was reserved" width="480">
+  &nbsp;
+  <img src="docs/screenshots/wishlist-others.png" alt="Another admin's wishlist: available or already chosen items, I'll give it, and create a list from it" width="480">
+</p>
+<p align="center">
+  <img src="docs/screenshots/wishlist-list.png" alt="A private guest list created from someone's wishlist, with linked items, hide here, and items reserved elsewhere" width="600">
 </p>
 </details>
 
@@ -109,6 +122,23 @@ Each admin has their own account (username and password, no email needed).
 
 **Upgrading from 1.x:** keep `ADMIN_PASSWORD` set for the first start of 2.0 (optionally with `ADMIN_USERNAME`, default `admin`). Giftly creates that account and moves your notification settings to it. You can then remove `ADMIN_PASSWORD` and any `NOTIFY_*` variables.
 
+## Wishlists
+
+Every admin has a personal wishlist (*Wishlist → Mine*): what they'd like to receive, in order of preference (↑/↓), with link, notes, and the shop's image and price, as for list gifts. Removing an item asks why: *I bought it*, *I don't want it any more*, or *I received it*.
+
+Other admins (*Wishlist → Others'*) can:
+- **Create a guest list from it:** choose the items. They stay **linked**, so when the owner edits an item the list follows, and new wishlist items join the list automatically (or wait for approval, per list). You can still add the list's own gifts, add notes, or hide a linked item in just that list.
+- **Take an item with "I'll give it":** it is reserved in every list and becomes a private gift in *Gifts to give* for the chosen occasion. From a checklist, *Pick from their wishlist* does the same.
+
+**The surprise is protected:**
+- The owner **never** sees what was reserved: their wishlist page is byte-for-byte the same either way, and removing a reserved item gives exactly the same answer as removing any other.
+- A list made from someone's wishlist is **never visible to them**, even if shared with the other admins, and its notifications never reach them. This rule is enforced by the app and tested, so you can't create a list from your own wishlist.
+- A wishlist item can only be reserved **once across every list** (and "I'll give it"); simultaneous attempts are safe.
+- If the owner removes an item someone already reserved, that guest keeps it in their picks with a note ("they already bought it — don't buy it"), and the list's organiser (or the admin giving it) is notified.
+- When a list is archived, or a gift from the wishlist is marked *given*, the item leaves the owner's active wishlist (as received).
+
+Lists also have an owner and can be **private** (only you) or **shared** (all admins). Lists from before 3.0 stay shared.
+
 ## Gifts to give
 
 A separate part of the admin (*Gifts to give*) to plan the gifts **you** give, not tied to the public lists.
@@ -176,6 +206,8 @@ Requires Node.js 24+:
 ADMIN_USERNAME=dev ADMIN_PASSWORD=dev-password npm run dev
 npm test        # end-to-end tests against a real server + parser unit tests
 ```
+
+To regenerate the README screenshots with mock data (needs podman or docker): `tools/screenshots/run.sh`.
 
 CI runs the tests on every push and pull request, and only builds the image if they pass. The image is also rebuilt every week, so `latest` gets Node and Alpine security fixes even without code changes. Dependabot proposes updates to the GitHub Actions and the base image.
 

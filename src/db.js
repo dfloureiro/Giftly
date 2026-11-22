@@ -194,6 +194,60 @@ const migrations = [
   ALTER TABLE users ADD COLUMN totp_last_counter INTEGER NOT NULL DEFAULT -1;
   ALTER TABLE users ADD COLUMN recovery_codes TEXT NOT NULL DEFAULT '[]';
   `,
+  // v12 (3.0): personal wishlists, lists created from them, list owners/privacy, reservations
+  // shared across lists for the same wishlist item, and links to "gifts to give".
+  `
+  CREATE TABLE wishlists (
+    id INTEGER PRIMARY KEY,
+    owner_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    visibility TEXT NOT NULL DEFAULT 'admins' CHECK (visibility IN ('admins', 'private')),
+    created_at INTEGER NOT NULL
+  );
+  CREATE TABLE wishlist_items (
+    id INTEGER PRIMARY KEY,
+    wishlist_id INTEGER NOT NULL REFERENCES wishlists(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    url TEXT NOT NULL DEFAULT '',
+    notes TEXT NOT NULL DEFAULT '',
+    position INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'removed', 'received')),
+    removed_reason TEXT CHECK (removed_reason IN ('bought', 'unwanted', 'received')),
+    removed_at INTEGER,
+    image_file TEXT,
+    image_source TEXT NOT NULL DEFAULT '',
+    preview_status TEXT NOT NULL DEFAULT '',
+    price TEXT NOT NULL DEFAULT '',
+    price_cents INTEGER,
+    price_currency TEXT,
+    price_checked_at INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX wishlist_items_list ON wishlist_items(wishlist_id, status, position);
+
+  ALTER TABLE lists ADD COLUMN owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
+  ALTER TABLE lists ADD COLUMN visibility TEXT NOT NULL DEFAULT 'shared';
+  ALTER TABLE lists ADD COLUMN source_wishlist_id INTEGER REFERENCES wishlists(id) ON DELETE SET NULL;
+  ALTER TABLE lists ADD COLUMN auto_add_new INTEGER NOT NULL DEFAULT 1;
+
+  -- A list item can be linked to a wishlist item (its name/link/image/price follow the wishlist).
+  ALTER TABLE items ADD COLUMN wishlist_item_id INTEGER REFERENCES wishlist_items(id) ON DELETE SET NULL;
+  ALTER TABLE items ADD COLUMN wish_notes TEXT NOT NULL DEFAULT '';
+  ALTER TABLE items ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0;   -- hidden in this list only
+  ALTER TABLE items ADD COLUMN pending INTEGER NOT NULL DEFAULT 0;  -- new in the wishlist, waiting for approval
+  CREATE INDEX items_wishlist ON items(wishlist_item_id);
+
+  -- At most one reservation per wishlist item, across every list (or a "I'll give it" gift).
+  CREATE TABLE wishlist_claims (
+    wishlist_item_id INTEGER PRIMARY KEY REFERENCES wishlist_items(id) ON DELETE CASCADE,
+    item_id INTEGER REFERENCES items(id) ON DELETE CASCADE,
+    gift_id INTEGER REFERENCES gifts(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL
+  );
+
+  ALTER TABLE gifts ADD COLUMN wishlist_item_id INTEGER REFERENCES wishlist_items(id) ON DELETE SET NULL;
+  ALTER TABLE people ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
+  `,
 ];
 
 {
@@ -250,29 +304,65 @@ export const settings = {
 
 // ---------- lists ----------
 
+/**
+ * LIST PRIVACY RULE (the only place it lives): an admin ($uid) sees a list when it is shared
+ * or theirs, AND it contains nothing from their own wishlist (a list made from someone's
+ * wishlist must never be visible to that person — it would reveal what was reserved).
+ */
+export const LIST_VISIBLE = `((l.visibility = 'shared' OR l.owner_id = $uid)
+  AND NOT EXISTS (SELECT 1 FROM wishlists w WHERE w.owner_id = $uid AND (
+        w.id = l.source_wishlist_id
+     OR EXISTS (SELECT 1 FROM items li JOIN wishlist_items lwi ON lwi.id = li.wishlist_item_id
+                WHERE li.list_id = l.id AND lwi.wishlist_id = w.id))))`;
+
 export const lists = {
-  all() {
+  /** Lists this admin can see, with counters. */
+  all(uid) {
     return db.prepare(`
       SELECT l.*,
-        (SELECT COUNT(*) FROM items i WHERE i.list_id = l.id) AS item_count,
+        (SELECT COUNT(*) FROM items i WHERE i.list_id = l.id AND i.pending = 0) AS item_count,
         (SELECT COUNT(*) FROM items i WHERE i.list_id = l.id AND i.reserved_name IS NOT NULL) AS reserved_count,
         (SELECT COUNT(*) FROM guests g WHERE g.list_id = l.id) AS guest_count
-      FROM lists l ORDER BY l.archived, l.created_at DESC`).all();
+      FROM lists l WHERE ${LIST_VISIBLE} ORDER BY l.archived, l.created_at DESC`).all({ uid });
   },
+  /** Raw access (guest pages, background jobs). Admin pages use `visible()`. */
   get(id) {
     return db.prepare('SELECT * FROM lists WHERE id = ?').get(id);
   },
+  visible(uid, id) {
+    return db.prepare(`SELECT l.* FROM lists l WHERE l.id = $id AND ${LIST_VISIBLE}`).get({ uid, id }) ?? null;
+  },
+  canSee: (uid, id) => !!lists.visible(uid, id),
   byToken(token) {
     return db.prepare('SELECT * FROM lists WHERE token = ?').get(token);
   },
-  create({ title, description }) {
+  create({ title, description, owner_id = null, visibility = 'shared', source_wishlist_id = null, auto_add_new = true }) {
     return Number(db.prepare(
-      'INSERT INTO lists (title, description, token, created_at) VALUES (?, ?, ?, ?)'
-    ).run(title, description, newToken(), now()).lastInsertRowid);
+      `INSERT INTO lists (title, description, token, owner_id, visibility, source_wishlist_id, auto_add_new, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(title, description, newToken(), owner_id, visibility, source_wishlist_id, auto_add_new ? 1 : 0, now()).lastInsertRowid);
   },
-  update(id, { title, description, archived }) {
-    db.prepare('UPDATE lists SET title = ?, description = ?, archived = ? WHERE id = ?')
-      .run(title, description, archived ? 1 : 0, id);
+  /**
+   * Only the owner changes visibility; an ownerless (pre-3.0) list becomes yours if you make
+   * it private. Archiving marks its reserved wishlist items as received.
+   */
+  update(id, { title, description, archived, visibility, auto_add_new }, uid) {
+    tx(() => {
+      const l = lists.get(id);
+      let owner = l.owner_id;
+      let vis = l.visibility;
+      if (visibility && (owner === uid || owner == null)) {
+        vis = visibility;
+        if (owner == null && visibility === 'private') owner = uid;
+      }
+      db.prepare('UPDATE lists SET title = ?, description = ?, archived = ?, visibility = ?, owner_id = ?, auto_add_new = ? WHERE id = ?')
+        .run(title, description, archived ? 1 : 0, vis, owner, auto_add_new === undefined ? l.auto_add_new : (auto_add_new ? 1 : 0), id);
+      if (archived && !l.archived) {
+        db.prepare(`UPDATE wishlist_items SET status = 'received', removed_reason = 'received', removed_at = ?
+          WHERE status = 'active' AND id IN (SELECT wishlist_item_id FROM items
+            WHERE list_id = ? AND wishlist_item_id IS NOT NULL AND reserved_name IS NOT NULL)`).run(now(), id);
+      }
+    });
   },
   /** New secret link: the old one stops working and everyone is logged out of this list. */
   regenerateToken(id) {
@@ -327,6 +417,7 @@ export const guests = {
   },
   delete(id) {
     tx(() => {
+      db.prepare('DELETE FROM wishlist_claims WHERE item_id IN (SELECT id FROM items WHERE reserved_guest_id = ?)').run(id);
       db.prepare(
         'UPDATE items SET reserved_guest_id = NULL, reserved_name = NULL, reserved_at = NULL, reserved_by_user_id = NULL WHERE reserved_guest_id = ?'
       ).run(id);
@@ -337,25 +428,52 @@ export const guests = {
 
 // ---------- items ----------
 
+// Linked items (wishlist_item_id) are only offered while the wishlist item is active and not
+// reserved anywhere (in any list, or as an admin's "I'll give it").
+const ITEM_JOIN = `LEFT JOIN wishlist_items wi ON wi.id = i.wishlist_item_id
+  LEFT JOIN wishlist_claims wc ON wc.wishlist_item_id = i.wishlist_item_id`;
+const ITEM_COLS = `i.*, wi.status AS wish_status, wi.removed_reason AS wish_removed_reason,
+  (wc.wishlist_item_id IS NOT NULL AND (wc.item_id IS NULL OR wc.item_id != i.id)) AS claimed_elsewhere`;
+const GUEST_OFFERABLE = `i.hidden = 0 AND i.pending = 0
+  AND (i.wishlist_item_id IS NULL OR (wi.status = 'active' AND wc.wishlist_item_id IS NULL))`;
+
 export const items = {
   get(id) {
-    return db.prepare('SELECT * FROM items WHERE id = ?').get(id);
+    return db.prepare(`SELECT ${ITEM_COLS} FROM items i ${ITEM_JOIN} WHERE i.id = ?`).get(id);
   },
+  /** Admin view of a list (includes hidden/pending items and wishlist state). */
   forList(listId) {
-    return db.prepare('SELECT * FROM items WHERE list_id = ? ORDER BY position, id').all(listId);
+    return db.prepare(`SELECT ${ITEM_COLS} FROM items i ${ITEM_JOIN} WHERE i.list_id = ? ORDER BY i.pending, i.position, i.id`).all(listId);
   },
   available(listId) {
-    return db.prepare(
-      'SELECT * FROM items WHERE list_id = ? AND reserved_name IS NULL ORDER BY position, id'
-    ).all(listId);
+    return db.prepare(`SELECT ${ITEM_COLS} FROM items i ${ITEM_JOIN}
+      WHERE i.list_id = ? AND i.reserved_name IS NULL AND ${GUEST_OFFERABLE} ORDER BY i.position, i.id`).all(listId);
   },
+  /** A guest's picks — kept even if the wishlist item was removed afterwards (with its reason). */
   reservedBy(guestId) {
-    return db.prepare('SELECT * FROM items WHERE reserved_guest_id = ? ORDER BY reserved_at').all(guestId);
+    return db.prepare(`SELECT ${ITEM_COLS} FROM items i ${ITEM_JOIN} WHERE i.reserved_guest_id = ? ORDER BY i.reserved_at`).all(guestId);
   },
-  reservedByOthers(listId, guestId) {
-    return db.prepare(
-      'SELECT COUNT(*) AS n FROM items WHERE list_id = ? AND reserved_name IS NOT NULL AND (reserved_guest_id IS NULL OR reserved_guest_id != ?)'
-    ).get(listId, guestId).n;
+  /** How many gifts guests of this list no longer see because someone (else) has them. */
+  takenByOthers(listId, guestId) {
+    return db.prepare(`SELECT COUNT(*) AS n FROM items i ${ITEM_JOIN}
+      WHERE i.list_id = ? AND i.hidden = 0 AND i.pending = 0
+        AND (i.reserved_guest_id IS NULL OR i.reserved_guest_id != ?)
+        AND (i.reserved_name IS NOT NULL OR (i.wishlist_item_id IS NOT NULL AND wi.status = 'active' AND wc.wishlist_item_id IS NOT NULL))`)
+      .get(listId, guestId).n;
+  },
+  /** Items a guest of this list could ever see (for the "this list is empty" message). */
+  guestVisibleCount(listId) {
+    return db.prepare(`SELECT COUNT(*) AS n FROM items i ${ITEM_JOIN} WHERE i.list_id = ? AND i.hidden = 0 AND i.pending = 0
+      AND (i.wishlist_item_id IS NULL OR wi.status = 'active' OR i.reserved_name IS NOT NULL)`).get(listId).n;
+  },
+  setListNotes(id, notes) {
+    db.prepare('UPDATE items SET notes = ? WHERE id = ?').run(notes, id);
+  },
+  setHidden(id, hidden) {
+    db.prepare('UPDATE items SET hidden = ? WHERE id = ?').run(hidden ? 1 : 0, id);
+  },
+  approve(id) {
+    db.prepare('UPDATE items SET pending = 0 WHERE id = ?').run(id);
   },
   create(listId, { title, url, notes, image_source = '' }) {
     const { p } = db.prepare('SELECT COALESCE(MAX(position), 0) + 1 AS p FROM items WHERE list_id = ?').get(listId);
@@ -400,8 +518,13 @@ export const items = {
     return tx(() => {
       const item = items.get(id);
       if (!item) return null;
+      if (item.claimed_elsewhere) return null; // that wishlist item is already someone's (another list / "I'll give it")
       const guest = guests.placeholder(item.list_id, name);
       if (item.reserved_guest_id === guest.id) return null; // already theirs
+      if (item.wishlist_item_id) {
+        db.prepare('INSERT OR REPLACE INTO wishlist_claims (wishlist_item_id, item_id, gift_id, created_at) VALUES (?, ?, NULL, ?)')
+          .run(item.wishlist_item_id, id, now());
+      }
       db.prepare('UPDATE items SET reserved_guest_id = ?, reserved_name = ?, reserved_at = ?, reserved_by_user_id = ? WHERE id = ?')
         .run(guest.id, guest.name, now(), userId ?? null, id);
       return guest;
@@ -417,18 +540,30 @@ export const items = {
   },
   /** Atomic: only succeeds if nobody else got there first. */
   reserve(id, guest) {
-    const r = db.prepare(
-      'UPDATE items SET reserved_guest_id = ?, reserved_name = ?, reserved_at = ?, reserved_by_user_id = NULL WHERE id = ? AND list_id = ? AND reserved_name IS NULL'
-    ).run(guest.id, guest.name, now(), id, guest.list_id);
-    return r.changes === 1;
+    return tx(() => {
+      const item = db.prepare(`SELECT ${ITEM_COLS} FROM items i ${ITEM_JOIN}
+        WHERE i.id = ? AND i.list_id = ? AND i.reserved_name IS NULL AND ${GUEST_OFFERABLE}`).get(id, guest.list_id);
+      if (!item) return false;
+      // Linked item: one reservation per wishlist item across every list (primary key).
+      if (item.wishlist_item_id) {
+        const claim = db.prepare('INSERT OR IGNORE INTO wishlist_claims (wishlist_item_id, item_id, created_at) VALUES (?, ?, ?)')
+          .run(item.wishlist_item_id, id, now());
+        if (claim.changes !== 1) return false;
+      }
+      return db.prepare(
+        'UPDATE items SET reserved_guest_id = ?, reserved_name = ?, reserved_at = ?, reserved_by_user_id = NULL WHERE id = ? AND reserved_name IS NULL'
+      ).run(guest.id, guest.name, now(), id).changes === 1;
+    });
   },
   unreserve(id, guest) {
+    db.prepare('DELETE FROM wishlist_claims WHERE item_id = ? AND item_id IN (SELECT id FROM items WHERE reserved_guest_id = ?)').run(id, guest.id);
     const r = db.prepare(
       'UPDATE items SET reserved_guest_id = NULL, reserved_name = NULL, reserved_at = NULL, reserved_by_user_id = NULL WHERE id = ? AND reserved_guest_id = ?'
     ).run(id, guest.id);
     return r.changes === 1;
   },
   release(id) {
+    db.prepare('DELETE FROM wishlist_claims WHERE item_id = ?').run(id);
     db.prepare('UPDATE items SET reserved_guest_id = NULL, reserved_name = NULL, reserved_at = NULL, reserved_by_user_id = NULL WHERE id = ?').run(id);
   },
   delete(id) {

@@ -6,8 +6,10 @@ import {
   VISIBILITIES, STATUSES,
 } from './giving.js';
 import { saveImageBuffer, removeImage } from './preview.js';
-import { enqueuePreview, clearPreview } from './previewQueue.js';
+import { enqueuePreview, clearPreview, releaseImage } from './previewQueue.js';
 import * as gv from './givingViews.js';
+import { users } from './accounts.js';
+import { wishItems } from './wishlist.js';
 
 /** Price typed by hand: "12,50" / "12.5" / "€ 12" → cents, or null (empty), or NaN (invalid). */
 export function parsePrice(v) {
@@ -61,6 +63,8 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
       notes: cleanMultiline(body.notes, 1000),
       gives_christmas: body.gives_christmas === '1',
       visibility: VISIBILITIES.includes(body.visibility) ? body.visibility : 'shared',
+      // Linked admin account (for wishlists): only if the field was in the form.
+      user_id: body.user_id === undefined ? undefined : (users.get(Number(body.user_id))?.id ?? null),
     };
     let error;
     if (!f.name) error = 'give.nameRequired';
@@ -264,7 +268,7 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
     try { file = saveImageBuffer(Buffer.from(m[2], 'base64')); } catch { return false; }
     const old = gifts.raw(giftId)?.image_file;
     gifts.setPreview(giftId, { image_file: file, preview_status: 'uploaded' });
-    removeImage(old);
+    releaseImage(old);
     return true;
   }
 
@@ -323,6 +327,7 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
     if (error) return giftError(ctx, error, to);
     if (ctx.body.remove_image === '1') f.image_source = '';
     gifts.update(uid, gift.id, f);
+    if (f.status === 'given' && gift.wishlist_item_id) wishItems.markReceived(gift.wishlist_item_id);
     if (ctx.body.also_present === '1') {
       const also = alsoFor(ctx, gift.person_id);
       gifts.setPeople(gift.id, [gift.person_id, ...also]);
@@ -340,6 +345,8 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
     const gift = gifts.get(uid, Number(ctx.params.id));
     if (!gift || !STATUSES.includes(ctx.body.status)) return notFound(ctx);
     gifts.setStatus(uid, gift.id, ctx.body.status);
+    // A wishlist gift handed over leaves the recipient's active wishlist.
+    if (ctx.body.status === 'given' && gift.wishlist_item_id) wishItems.markReceived(gift.wishlist_item_id);
     redirect(ctx.res, withMsg(back(ctx, `/admin/give/people/${gift.person_id}`), '', `gift-${gift.id}`));
   }, A);
 
@@ -353,7 +360,7 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
   route('POST', '/admin/give/gifts/:id/delete', (ctx) => {
     const gift = gifts.delete(uidOf(ctx), Number(ctx.params.id));
     if (!gift) return notFound(ctx);
-    removeImage(gift.image_file);
+    releaseImage(gift.image_file);
     redirect(ctx.res, withMsg(back(ctx, `/admin/give/people/${gift.person_id}`), 'deleted'));
   }, A);
 }

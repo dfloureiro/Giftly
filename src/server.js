@@ -10,9 +10,11 @@ import { tokens, csrfFor, safeEqual, rateLimit, resetRateLimit } from './securit
 import { makeT } from './i18n.js';
 import * as views from './views.js';
 import { IMAGE_DIR, IMAGE_FILE_RE, IMAGE_TYPES, removeImage, saveImageBuffer, sweepImages } from './preview.js';
-import { enqueuePreview, clearPreview, startPreviewQueue, allImageFiles } from './previewQueue.js';
+import { enqueuePreview, clearPreview, startPreviewQueue, allImageFiles, releaseImage } from './previewQueue.js';
 import { deleteUserData, gifts as givingGifts } from './giving.js';
 import { registerGivingRoutes } from './givingRoutes.js';
+import { registerWishlistRoutes } from './wishlistRoutes.js';
+import { wishlists, wishItems } from './wishlist.js';
 import { startReminders, parseReminderDays, remindUser } from './reminders.js';
 import { userChannels } from './notify.js';
 import { notify, notifyStatus, saveNotifySettings } from './notify.js';
@@ -173,6 +175,9 @@ const FLASH = {
   passwordChanged: ['success', 'account.passwordChanged'],
   welcome: ['success', 'account.welcome'],
   giftAdded: ['success', 'give.giftAdded'],
+  wishRemoved: ['success', 'wish.removedDone'],
+  giving: ['success', 'wish.givingDone'],
+  pickOccasion: ['error', 'give.pickOccasion'],
   reservedFor: ['success', 'admin.reservedDone'],
   twofaOff: ['success', 'tf.disabled'],
   twofaReset: ['success', 'tf.resetDone'],
@@ -245,8 +250,8 @@ route('GET', '/l/:token', (ctx) => {
     guest,
     available: items.available(list.id),
     mine: items.reservedBy(guest.id),
-    takenByOthers: items.reservedByOthers(list.id, guest.id),
-    total: items.forList(list.id).length,
+    takenByOthers: items.takenByOthers(list.id, guest.id),
+    total: items.guestVisibleCount(list.id),
     adminNames: adminNames(),
   }));
 });
@@ -290,7 +295,7 @@ route('POST', '/l/:token/unpick/:id', (ctx) => {
 
 route('GET', '/admin', (ctx) => {
   if (!ctx.user) return html(ctx.res, views.adminLoginPage(ctx, { noAccounts: users.count() === 0 }));
-  html(ctx.res, views.adminDashboard(ctx, { all: lists.all(), form: {} }));
+  html(ctx.res, views.adminDashboard(ctx, { all: lists.all(ctx.user.id), form: {} }));
 });
 
 route('POST', '/admin/login', async (ctx) => {
@@ -549,14 +554,16 @@ function validateList(ctx, body) {
     title: clean(body.title, 120),
     description: cleanMultiline(body.description, 2000),
     archived: body.archived === '1',
+    visibility: body.visibility === 'private' ? 'private' : 'shared',
+    auto_add_new: body.auto_add_new === undefined ? undefined : body.auto_add_new === '1',
   };
   return { form, error: form.title ? undefined : ctx.t('admin.titleRequired') };
 }
 
 route('POST', '/admin/lists', (ctx) => {
   const { form, error } = validateList(ctx, ctx.body);
-  if (error) return html(ctx.res, views.adminDashboard(ctx, { all: lists.all(), form, error, notify: notifyStatus() }), 400);
-  const id = lists.create(form);
+  if (error) return html(ctx.res, views.adminDashboard(ctx, { all: lists.all(ctx.user.id), form, error }), 400);
+  const id = lists.create({ ...form, owner_id: ctx.user.id });
   redirect(ctx.res, `/admin/lists/${id}?m=created`);
 }, { auth: 'admin' });
 
@@ -567,12 +574,14 @@ function renderAdminList(ctx, list, extra = {}, status = 200) {
     allGuests: guests.forList(list.id),
     baseUrl: baseUrl(ctx.req),
     adminNames: adminNames(),
+    sourceOwner: list.source_wishlist_id ? (wishlists.get(list.source_wishlist_id)?.owner_name ?? '') : '',
     ...extra,
   }), status);
 }
 
+/** A list this admin may see (private lists of others and lists from their own wishlist are 404). */
 function loadList(ctx) {
-  const list = lists.get(Number(ctx.params.id));
+  const list = lists.visible(ctx.user.id, Number(ctx.params.id));
   if (!list) notFound(ctx);
   return list;
 }
@@ -587,7 +596,7 @@ route('POST', '/admin/lists/:id', (ctx) => {
   if (!list) return;
   const { form, error } = validateList(ctx, ctx.body);
   if (error) return renderAdminList(ctx, list, { listForm: form, listError: error }, 400);
-  lists.update(list.id, form);
+  lists.update(list.id, form, ctx.user.id);
   redirect(ctx.res, `/admin/lists/${list.id}?m=saved`);
 }, { auth: 'admin' });
 
@@ -658,13 +667,16 @@ function applyUpload(itemId, dataUrl) {
   try { file = saveImageBuffer(Buffer.from(m[2], 'base64')); } catch { return false; }
   const old = items.get(itemId)?.image_file;
   items.setPreview(itemId, { image_file: file, preview_status: 'uploaded' });
-  removeImage(old);
+  releaseImage(old);
   return true;
 }
 
 function loadItem(ctx) {
   const item = items.get(Number(ctx.params.id));
-  if (!item) notFound(ctx);
+  if (!item || !lists.canSee(ctx.user.id, item.list_id)) {
+    notFound(ctx);
+    return null;
+  }
   return item;
 }
 
@@ -676,6 +688,13 @@ route('GET', '/admin/items/:id', (ctx) => {
 route('POST', '/admin/items/:id', (ctx) => {
   const item = loadItem(ctx);
   if (!item) return;
+  // Linked to a wishlist: name/link/image come from the wishlist; only this list's notes change here.
+  if (item.wishlist_item_id) {
+    items.setListNotes(item.id, cleanMultiline(ctx.body.notes, 1000));
+    const reservedFor = items.setManualReservation(item.id, clean(ctx.body.reserved_name, 60), ctx.user.id);
+    if (reservedFor) notifyAdminReservation(ctx, item.id, reservedFor);
+    return redirect(ctx.res, `/admin/lists/${item.list_id}?m=saved#item-${item.id}`);
+  }
   const { form, error } = validateItem(ctx, ctx.body);
   if (error) return html(ctx.res, views.adminItemPage(ctx, { item, list: lists.get(item.list_id), form, error }), 400);
   if (form.remove_image) form.image_source = '';
@@ -692,6 +711,28 @@ route('POST', '/admin/items/:id', (ctx) => {
   redirect(ctx.res, `/admin/lists/${item.list_id}?m=saved`);
 }, { auth: 'admin' });
 
+// Linked items: hide in this list only / approve or ignore items new in the wishlist.
+route('POST', '/admin/items/:id/hide', (ctx) => {
+  const item = loadItem(ctx);
+  if (!item) return;
+  items.setHidden(item.id, ctx.body.hidden === '1');
+  redirect(ctx.res, `/admin/lists/${item.list_id}#item-${item.id}`);
+}, { auth: 'admin' });
+
+route('POST', '/admin/items/:id/approve', (ctx) => {
+  const item = loadItem(ctx);
+  if (!item) return;
+  items.approve(item.id);
+  redirect(ctx.res, `/admin/lists/${item.list_id}#item-${item.id}`);
+}, { auth: 'admin' });
+
+route('POST', '/admin/items/:id/ignore', (ctx) => {
+  const item = loadItem(ctx);
+  if (!item || !item.pending) return item ? redirect(ctx.res, `/admin/lists/${item.list_id}`) : undefined;
+  items.delete(item.id);
+  redirect(ctx.res, `/admin/lists/${item.list_id}`);
+}, { auth: 'admin' });
+
 route('POST', '/admin/items/:id/preview', (ctx) => {
   const item = loadItem(ctx);
   if (!item) return;
@@ -703,10 +744,19 @@ route('POST', '/admin/items/:id/preview', (ctx) => {
 route('GET', '/admin/previews', (ctx) => {
   const ids = String(ctx.url.searchParams.get('ids') || '').split(',').map(Number).filter(Boolean).slice(0, 200);
   const out = {};
-  const isGift = ctx.url.searchParams.get('kind') === 'gift';
+  const kind = ctx.url.searchParams.get('kind');
+  const isGift = kind === 'gift';
   for (const id of ids) {
-    // Gifts to give are only reported if this admin may see them.
-    const it = isGift ? givingGifts.get(ctx.user.id, id) : items.get(id);
+    // Only report what this admin may see.
+    let it;
+    if (kind === 'wish') {
+      it = wishItems.get(id);
+      const w = it && wishlists.get(it.wishlist_id);
+      if (!w || (w.owner_id !== ctx.user.id && !wishlists.viewableByOther(ctx.user.id, w))) continue;
+    } else {
+      it = isGift ? givingGifts.get(ctx.user.id, id) : items.get(id);
+      if (it && !isGift && !lists.canSee(ctx.user.id, it.list_id)) continue;
+    }
     if (it) out[id] = { status: it.preview_status, image: it.image_file ? `/img/${it.image_file}` : null };
   }
   send(ctx.res, 200, JSON.stringify(out), { 'Content-Type': 'application/json' });
@@ -716,7 +766,7 @@ route('POST', '/admin/items/:id/delete', (ctx) => {
   const item = loadItem(ctx);
   if (!item) return;
   items.delete(item.id);
-  removeImage(item.image_file);
+  releaseImage(item.image_file);
   redirect(ctx.res, `/admin/lists/${item.list_id}?m=deleted`);
 }, { auth: 'admin' });
 
@@ -753,7 +803,7 @@ route('POST', '/admin/items/:id/move', (ctx) => {
 
 route('POST', '/admin/guests/:id/delete', (ctx) => {
   const guest = guests.get(Number(ctx.params.id));
-  if (!guest) return notFound(ctx);
+  if (!guest || !lists.canSee(ctx.user.id, guest.list_id)) return notFound(ctx);
   guests.delete(guest.id);
   redirect(ctx.res, `/admin/lists/${guest.list_id}?m=deleted`);
 }, { auth: 'admin' });
@@ -856,6 +906,7 @@ async function handle(req, res) {
 }
 
 registerGivingRoutes({ route, html, redirect, notFound, clean, cleanMultiline, cleanUrl });
+registerWishlistRoutes({ route, html, redirect, notFound, clean, cleanMultiline, cleanUrl });
 
 await bootstrapAccounts();
 

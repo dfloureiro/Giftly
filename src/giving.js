@@ -65,10 +65,10 @@ export const people = {
   },
   create(uid, f) {
     return Number(db.prepare(`INSERT INTO people
-      (name, birthday_month, birthday_day, birth_year, notes, gives_christmas, visibility, owner_id, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      (name, birthday_month, birthday_day, birth_year, notes, gives_christmas, visibility, owner_id, user_id, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       f.name, f.birthday_month ?? null, f.birthday_day ?? null, f.birth_year ?? null, f.notes ?? '', f.gives_christmas ? 1 : 0,
-      f.visibility ?? 'shared', uid, now(),
+      f.visibility ?? 'shared', uid, f.user_id ?? null, now(),
     ).lastInsertRowid);
   },
   /** Only the owner may change visibility (otherwise it is left as is). */
@@ -77,8 +77,9 @@ export const people = {
     if (!p) return false;
     const visibility = p.owner_id === uid ? f.visibility : p.visibility;
     db.prepare(`UPDATE people SET name = ?, birthday_month = ?, birthday_day = ?, birth_year = ?, notes = ?,
-      gives_christmas = ?, visibility = ? WHERE id = ?`).run(
-      f.name, f.birthday_month ?? null, f.birthday_day ?? null, f.birth_year ?? null, f.notes ?? '', f.gives_christmas ? 1 : 0, visibility, id,
+      gives_christmas = ?, visibility = ?, user_id = ? WHERE id = ?`).run(
+      f.name, f.birthday_month ?? null, f.birthday_day ?? null, f.birth_year ?? null, f.notes ?? '', f.gives_christmas ? 1 : 0, visibility,
+      f.user_id === undefined ? p.user_id : f.user_id, id,
     );
     return true;
   },
@@ -163,8 +164,17 @@ export const occasions = {
 
 // ---------- gifts ----------
 
+/** A gift for someone who is an admin (person linked to a user) is always private to its giver. */
+function forAnAdmin(personIds) {
+  const ids = personIds.map(Number).filter(Boolean);
+  if (!ids.length) return false;
+  return !!db.prepare(`SELECT 1 FROM people WHERE user_id IS NOT NULL AND id IN (${ids.map(() => '?').join(',')})`).get(...ids);
+}
+
 const GIFT_COLS = `g.*, p.name AS person_name, o.name AS occasion_name, o.type AS occasion_type, o.date AS occasion_date,
-  (SELECT group_concat(gpn.person_id) FROM gift_people gpn WHERE gpn.gift_id = g.id) AS people_ids_csv`;
+  (SELECT group_concat(gpn.person_id) FROM gift_people gpn WHERE gpn.gift_id = g.id) AS people_ids_csv,
+  (SELECT wg.status FROM wishlist_items wg WHERE wg.id = g.wishlist_item_id) AS wish_status,
+  (SELECT wg.removed_reason FROM wishlist_items wg WHERE wg.id = g.wishlist_item_id) AS wish_removed_reason`;
 
 /** Add `people` ([{ id, name }], main person first) to gift rows. */
 function withPeople(rows) {
@@ -208,6 +218,7 @@ export const gifts = {
   /** `f.person_ids` (optional) adds co-recipients for a joint gift; `f.person_id` is the main one. */
   create(uid, f) {
     const t = now();
+    if (forAnAdmin([f.person_id, ...(f.person_ids ?? [])])) f = { ...f, visibility: 'private' };
     return tx(() => {
       const id = Number(db.prepare(`INSERT INTO gifts
       (person_id, occasion_id, year, name, url, notes, status, price_cents, price_currency, price_source,
@@ -247,10 +258,11 @@ export const gifts = {
       if (f.price_cents != null) { cents = f.price_cents; cur = f.price_currency; source = 'manual'; }
       else if (f.clear_price) { cents = null; cur = null; source = ''; }
     }
+    const visibility = forAnAdmin(g.people.map((x) => x.id)) ? 'private' : (g.owner_id === uid ? f.visibility : g.visibility);
     db.prepare(`UPDATE gifts SET name = ?, url = ?, notes = ?, status = ?, visibility = ?, image_source = ?,
       price_cents = ?, price_currency = ?, price_source = ?,
       price_checked_at = CASE WHEN ? THEN NULL ELSE price_checked_at END, updated_at = ? WHERE id = ?`).run(
-      f.name, f.url, f.notes, f.status, g.owner_id === uid ? f.visibility : g.visibility, f.image_source ?? g.image_source,
+      f.name, f.url, f.notes, f.status, visibility, f.image_source ?? g.image_source,
       cents, cur, source, linkChanged ? 1 : 0, now(), id,
     );
     return true;

@@ -3,6 +3,7 @@
 import { config } from './config.js';
 import { items } from './db.js';
 import { gifts } from './giving.js';
+import { wishItems } from './wishlist.js';
 import { fetchPreview, removeImage, sweepImages } from './preview.js';
 
 const CONCURRENCY = 2;
@@ -39,7 +40,27 @@ const STORES = {
     pending: () => gifts.pendingPreviews(),
     files: () => gifts.allImageFiles(),
   },
+  // Wishlist items: list items linked to them get the same image/price (syncLinked).
+  wish: {
+    get: (id) => wishItems.get(id),
+    title: (r) => r.title,
+    save(id, u) {
+      const { priceCents, priceCurrency, ...rest } = u;
+      wishItems.setPreview(id, { ...rest, ...(priceCents != null && { price_cents: priceCents, price_currency: priceCurrency }) });
+    },
+    stale: (olderThan) => wishItems.stalePrices(olderThan, 50),
+    pending: () => wishItems.pendingPreviews(),
+    files: () => wishItems.allImageFiles(),
+  },
 };
+
+/**
+ * Delete a stored image only when no record uses it any more (list items linked to a
+ * wishlist item share its file). Call after the database no longer points to it.
+ */
+export function releaseImage(file) {
+  if (file && !allImageFiles().includes(file)) removeImage(file);
+}
 
 /**
  * Fetch a record's preview in the background.
@@ -76,8 +97,8 @@ export function clearPreview(id, status = 'removed', kind = 'item') {
   const store = STORES[kind];
   const rec = store.get(id);
   if (!rec) return;
-  removeImage(rec.image_file);
   store.save(id, { image_file: null, preview_status: status });
+  releaseImage(rec.image_file);
 }
 
 function pump() {
@@ -104,7 +125,7 @@ async function run({ id, kind, keepImage, prevStatus }) {
   const rec = store.get(id);
   // Deleted, or its links changed while we were fetching: discard.
   if (!rec || rec.url !== before.url || rec.image_source !== before.image_source) {
-    removeImage(result?.file);
+    releaseImage(result?.file);
     return;
   }
   const update = { price_checked_at: Date.now() };
@@ -112,16 +133,14 @@ async function run({ id, kind, keepImage, prevStatus }) {
   // one never loses what we have (e.g. an uploaded photo for a shop that blocks us).
   if (!keepImage) update.preview_status = status !== 'ok' && rec.image_file ? (prevStatus || 'ok') : status;
   if (result) {
-    if (!keepImage && result.file && rec.image_file !== result.file) {
-      removeImage(rec.image_file);
-      update.image_file = result.file;
-    }
+    if (!keepImage && result.file && rec.image_file !== result.file) update.image_file = result.file;
     // Bare links get the hostname as a placeholder title: replace it.
     if (result.title && rec.url && store.title(rec) === hostOf(rec.url)) update.title = result.title;
     // Shop prices: keep the last known one if this read found none.
     if (result.price) Object.assign(update, { price: result.price, priceCents: result.priceCents, priceCurrency: result.priceCurrency });
   }
   store.save(id, update);
+  if (update.image_file) releaseImage(rec.image_file); // the old one, if nothing else uses it
 }
 
 /** Daily price check for list gifts still available and gift ideas with a link. */

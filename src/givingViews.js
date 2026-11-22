@@ -2,6 +2,8 @@
 import { h, raw, layout, csrfField, postButton, adminHeader, uploadField } from './views.js';
 import { config } from './config.js';
 import { STATUSES, VISIBILITIES, daysBetween, today } from './giving.js';
+import { users } from './accounts.js';
+import { wishlists } from './wishlist.js';
 
 const locale = (ctx) => (ctx.lang === 'en' ? 'en-GB' : 'pt-PT');
 
@@ -124,6 +126,7 @@ function giftRow(ctx, g, { back, showOccasion = false, others = [], anchor = tru
       <div class="gift-title">
         <strong>${g.name}</strong> ${privateBadge(ctx, g)}
       </div>
+      ${g.wishlist_item_id ? h`<p class="small muted">🎀 ${ctx.t('wish.fromWishlist')}${g.wish_status === 'removed' || (g.wish_status === 'received' && g.status !== 'given') ? h` · <strong class="warn">${ctx.t(`wish.removedFlag.${g.wish_removed_reason}`)}</strong>` : ''}</p>` : ''}
       ${g.joint ? h`<p class="small joint-line">👥 ${forPerson ? ctx.t('give.jointWith', { names: withWhom.map((x) => x.name).join(' & ') }) : ctx.t('give.jointFor', { names: g.people.map((x) => x.name).join(' & ') })}</p>` : ''}
       <div class="meta small">
         ${g.price_cents != null ? h`<span class="price">${money(ctx, g.price_cents, g.price_currency)}</span>` : ''}
@@ -259,7 +262,14 @@ function personFields(ctx, v = {}, { canSetVisibility = true } = {}) {
       <textarea name="notes" rows="2" maxlength="1000" placeholder="${ctx.t('give.personNotesPlaceholder')}">${v.notes || ''}</textarea>
     </label>
     <label class="check"><input type="checkbox" name="gives_christmas" value="1"${v.gives_christmas ? raw(' checked') : ''}> 🎄 ${ctx.t('give.givesChristmas')}</label>
-    ${visibilityField(ctx, v.visibility, { disabled: !canSetVisibility })}`;
+    ${visibilityField(ctx, v.visibility, { disabled: !canSetVisibility })}
+    <label>${ctx.t('wish.personIsAdmin')}
+      <select name="user_id">
+        <option value="">—</option>
+        ${users.all().map((u) => h`<option value="${u.id}"${v.user_id === u.id ? raw(' selected') : ''}>${u.name} (${u.username})</option>`)}
+      </select>
+      <span class="small muted">${ctx.t('wish.personIsAdminHint')}</span>
+    </label>`;
 }
 
 export function peoplePage(ctx, { list, form, error }) {
@@ -378,6 +388,14 @@ ${list.length ? h`<ul class="lists">
   });
 }
 
+/** "Pick from their wishlist" for people who are admins with a visible wishlist (not yourself). */
+function pickFromWishlist(ctx, person, occasionValue) {
+  if (!person.user_id || person.user_id === ctx.user.id) return '';
+  const w = wishlists.byOwner(person.user_id);
+  if (!w || w.visibility !== 'admins') return '';
+  return h`<p class="small"><a href="/admin/wishlists/${w.id}?occasion=${encodeURIComponent(occasionValue)}">🎀 ${ctx.t('wish.pickFromWishlist')}</a></p>`;
+}
+
 export function checklistPage(ctx, { occasion, rows, orphans, total, done, spent, onlyMissing, candidates, occasionForm, occasionError }) {
   const back = `/admin/give/occasions/${occasion.id}${onlyMissing ? '?missing=1' : ''}`;
   const shown = onlyMissing ? rows.filter((r) => !r.done) : rows;
@@ -408,6 +426,7 @@ ${!rows.length ? h`<p class="empty">${ctx.t('give.noParticipants')}</p>` : ''}
       <a href="/admin/give/people/${r.person.id}"><strong>${r.done ? '✓ ' : ''}${r.person.name}</strong></a> ${privateBadge(ctx, r.person)}
       ${postButton(ctx, `/admin/give/occasions/${occasion.id}/participants/${r.person.id}/remove`, '✕', { cls: 'link small', confirm: ctx.t('give.removeParticipantConfirm', { name: r.person.name }) })}
     </div>
+    ${pickFromWishlist(ctx, r.person, `occasion:${occasion.id}`)}
     ${r.previous.length ? h`<p class="small muted">${ctx.t('give.lastYear')}: ${r.previous.map((g) => g.name).join(', ')}</p>` : ''}
     ${r.gifts.length ? h`<ul class="gifts">${r.gifts.map((g) => giftRow(ctx, g, { back, others: participants, anchor: firstTime(g.id), forPerson: r.person.id }))}</ul>` : ''}
     ${addGiftForm(ctx, { personId: r.person.id, back, occasion: `occasion:${occasion.id}`, others: participants.filter((p) => p.id !== r.person.id) })}

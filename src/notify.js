@@ -5,7 +5,7 @@
 // is logged and never breaks the guest's request, and an invalid setting never stops the app.
 import { config } from './config.js';
 import { makeT } from './i18n.js';
-import { db, settings } from './db.js';
+import { db, settings, lists } from './db.js';
 import { users } from './accounts.js';
 
 const env = process.env;
@@ -243,8 +243,11 @@ function sendToUser(userId, msg) {
  */
 export async function notify(event, data = {}, { onlyUserId, exceptUserId } = {}) {
   const msg = message(event, data);
+  // List events only reach admins who can see that list (private lists, lists made from
+  // someone's wishlist: never their owner).
   const targets = onlyUserId
     ? [onlyUserId]
-    : users.all().filter((u) => u.id !== exceptUserId && eventSet({ events: u.notify_events }).has(event)).map((u) => u.id);
+    : users.all().filter((u) => u.id !== exceptUserId && eventSet({ events: u.notify_events }).has(event)
+        && (!data.list || lists.canSee(u.id, data.list.id))).map((u) => u.id);
   return (await Promise.all(targets.map((id) => sendToUser(id, msg)))).flat();
 }

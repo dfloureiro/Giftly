@@ -65,7 +65,7 @@ function layout(ctx, { title, body, bodyClass = '' }) {
 <link rel="manifest" href="/site.webmanifest">
 <meta name="theme-color" content="#C8553D">
 <meta name="apple-mobile-web-app-title" content="${site}">
-<link rel="stylesheet" href="/static/style.css?v=16">
+<link rel="stylesheet" href="/static/style.css?v=17">
 <script src="/static/app.js?v=4" defer></script>
 </head>
 <body class="${bodyClass}">
@@ -145,6 +145,7 @@ function itemBody(ctx, it) {
   const host = it.url ? hostOf(it.url) : '';
   return h`
     <h3>${it.title}</h3>
+    ${it.wish_notes ? h`<p class="notes">${it.wish_notes}</p>` : ''}
     ${it.notes ? h`<p class="notes">${it.notes}</p>` : ''}
     <div class="meta">
       ${it.price ? h`<span class="price" title="${ctx.t('price.fromShop')}">${it.price}</span>` : ''}
@@ -175,6 +176,7 @@ ${mine.length ? h`
     ${mine.map((it) => h`<li class="item picked">
       ${thumb(ctx, it)}
       <div class="body">${itemBody(ctx, it)}
+        ${it.wish_status && it.wish_status !== 'active' ? h`<p class="flash flash-error small">${ctx.t(`wish.guestRemoved.${it.wish_removed_reason === 'unwanted' ? 'unwanted' : 'bought'}`)}</p>` : ''}
         ${it.reserved_by_user_id ? h`<p class="small muted reserved-for-you">🎀 ${ctx.t('list.reservedForYou', { name: adminNames[it.reserved_by_user_id] || '—' })}</p>` : ''}</div>
       ${postButton(ctx, `/l/${list.token}/unpick/${it.id}`, ctx.t('list.unpick'), { cls: 'secondary', confirm: ctx.t('list.unpickConfirm', { title: it.title }) })}
     </li>`)}
@@ -232,6 +234,7 @@ function adminHeader(ctx, backHref, backLabel) {
   <nav class="admin-nav" aria-label="${ctx.t('admin.title')}">
     ${tab('/admin', ctx.t('admin.lists'), path === '/admin' || path.startsWith('/admin/lists') || path.startsWith('/admin/items'))}
     ${tab('/admin/give', ctx.t('give.tab'), path.startsWith('/admin/give'))}
+    ${tab('/admin/wishlist', ctx.t('wish.tab'), path.startsWith('/admin/wishlist'))}
     ${tab('/admin/profile', ctx.t('account.profile'), path.startsWith('/admin/profile'))}
     ${tab('/admin/users', ctx.t('account.admins'), path.startsWith('/admin/users'))}
   </nav>
@@ -243,8 +246,15 @@ function adminHeader(ctx, backHref, backLabel) {
 ${backHref ? h`<p class="backline"><a href="${backHref}" class="back">${backLabel}</a></p>` : ''}`;
 }
 
-function listFields(ctx, v, { withArchived = false } = {}) {
+function listFields(ctx, v, { withArchived = false, canSetVisibility = true } = {}) {
   return h`
+    ${canSetVisibility ? h`<label>${ctx.t('give.visibility')}
+      <select name="visibility">
+        <option value="shared"${v.visibility !== 'private' ? raw(' selected') : ''}>${ctx.t('lists.vis.shared')}</option>
+        <option value="private"${v.visibility === 'private' ? raw(' selected') : ''}>${ctx.t('lists.vis.private')}</option>
+      </select>
+    </label>` : ''}
+    ${v.source_wishlist_id ? h`<label class="check"><input type="hidden" name="auto_add_new" value="0"><input type="checkbox" name="auto_add_new" value="1"${v.auto_add_new ? raw(' checked') : ''}> ${ctx.t('wish.autoAdd')}</label>` : ''}
     <label>${ctx.t('admin.listTitle')}
       <input name="title" required maxlength="120" value="${v.title || ''}" placeholder="${ctx.t('admin.listTitlePlaceholder')}">
     </label>
@@ -266,6 +276,8 @@ ${all.length ? h`
     <a href="/admin/lists/${l.id}">
       <strong>${l.title}</strong>
       ${l.archived ? h`<span class="badge">${ctx.t('admin.archivedBadge')}</span>` : ''}
+      ${l.visibility === 'private' ? h`<span class="badge private">🔒 ${ctx.t('give.private')}</span>` : ''}
+      ${l.source_wishlist_id ? h`<span class="badge">🎀 ${ctx.t('wish.fromWishlistShort')}</span>` : ''}
       <span class="small muted">${l.item_count} ${ctx.t('admin.items').toLowerCase()} (${l.reserved_count} ${ctx.t('admin.reserved')}) · ${l.guest_count} ${ctx.t('admin.guests').toLowerCase()}</span>
     </a>
   </li>`)}
@@ -354,13 +366,18 @@ function uploadField(ctx) {
   </div>`;
 }
 
-export function adminListPage(ctx, { list, allItems, allGuests, baseUrl, listForm, listError, itemError, adminNames = {} }) {
-  const lf = listForm || list;
+export function adminListPage(ctx, { list, allItems: everything, allGuests, baseUrl, listForm, listError, itemError, adminNames = {}, sourceOwner = '' }) {
+  const lf = { ...list, ...(listForm || {}) };
+  const allItems = everything.filter((i) => !i.pending);
+  const pending = everything.filter((i) => i.pending);
+  const canSetVisibility = list.owner_id == null || list.owner_id === ctx.user.id;
   return layout(ctx, {
     title: list.title,
     body: h`
 ${adminHeader(ctx)}
-<h1>${list.title} ${list.archived ? h`<span class="badge">${ctx.t('admin.archivedBadge')}</span>` : ''}</h1>
+<h1>${list.title} ${list.archived ? h`<span class="badge">${ctx.t('admin.archivedBadge')}</span>` : ''}
+  ${list.visibility === 'private' ? h`<span class="badge private">🔒 ${ctx.t('give.private')}</span>` : ''}</h1>
+${list.source_wishlist_id ? h`<p class="small muted">🎀 ${ctx.t('wish.listFrom', { name: sourceOwner })}</p>` : ''}
 <section class="share card">
   <p>${ctx.t('admin.shareHint')}</p>
   <div class="copy-row">
@@ -379,14 +396,18 @@ ${adminHeader(ctx)}
       <div class="body">
         ${itemBody(ctx, it)}
         ${previewStatus(ctx, it)}
-        <p class="status">${it.reserved_name
+        ${it.wishlist_item_id ? h`<p class="small muted">🎀 ${ctx.t('wish.fromWishlist')}${it.hidden ? h` · <strong>${ctx.t('wish.hiddenHere')}</strong>` : ''}${it.wish_status && it.wish_status !== 'active' ? h` · <strong class="warn">${ctx.t(`wish.removedFlag.${it.wish_removed_reason}`)}</strong>` : ''}</p>` : ''}
+        <p class="status">${it.claimed_elsewhere && !it.reserved_name
+          ? h`<span class="muted">🎀 ${ctx.t('wish.claimedElsewhere')}</span>`
+          : it.reserved_name
           ? h`🎀 ${ctx.t('admin.reservedBy', { name: it.reserved_name })} <span class="muted">· ${fmtDate(ctx, it.reserved_at)}${it.reserved_by_user_id ? ` · ${ctx.t('admin.byAdmin', { name: adminNames[it.reserved_by_user_id] || '—' })}` : ''}${it.reserved_guest_id ? '' : ` · ${ctx.t('admin.manual')}`}</span>`
           : h`<span class="muted">${ctx.t('admin.free')}</span>`}</p>
       </div>
       <div class="actions">
         <a class="button secondary" href="/admin/items/${it.id}">${ctx.t('admin.edit')}</a>
         ${it.reserved_name ? postButton(ctx, `/admin/items/${it.id}/release`, ctx.t('admin.release'), { cls: 'secondary', confirm: ctx.t('admin.releaseConfirm') }) : ''}
-        ${it.reserved_name ? '' : h`<details class="reserve-for">
+        ${it.wishlist_item_id ? postButton(ctx, `/admin/items/${it.id}/hide`, it.hidden ? ctx.t('wish.unhide') : ctx.t('wish.hide'), { cls: 'secondary', extra: `<input type="hidden" name="hidden" value="${it.hidden ? '0' : '1'}">` }) : ''}
+        ${it.reserved_name || it.claimed_elsewhere ? '' : h`<details class="reserve-for">
           <summary class="button secondary">${ctx.t('admin.reserveButton')}</summary>
           <form method="post" action="/admin/items/${it.id}/reserve" class="stack">
             ${csrfField(ctx)}
@@ -405,6 +426,16 @@ ${adminHeader(ctx)}
   </ul>
   <datalist id="guests-${list.id}">${allGuests.map((g) => h`<option value="${g.name}"></option>`)}</datalist>` : h`<p class="empty">${ctx.t('admin.noItems')}</p>`}
 </section>
+
+${pending.length ? h`<section class="card">
+  <h2>🎀 ${ctx.t('wish.newInWishlist')}</h2>
+  <p class="small muted">${ctx.t('wish.newInWishlistHint')}</p>
+  <ul class="plain">
+    ${pending.map((it) => h`<li class="row"><span class="grow">${it.title}${it.price ? h` <span class="muted">· ${it.price}</span>` : ''}</span>
+      ${postButton(ctx, `/admin/items/${it.id}/approve`, ctx.t('admin.add'), { cls: 'primary' })}
+      ${postButton(ctx, `/admin/items/${it.id}/ignore`, ctx.t('wish.ignore'), { cls: 'secondary' })}</li>`)}
+  </ul>
+</section>` : ''}
 
 <section class="card">
   <h2>${ctx.t('admin.addItem')}</h2>
@@ -445,7 +476,7 @@ ${adminHeader(ctx)}
   ${listError ? h`<div class="flash flash-error" role="alert">${listError}</div>` : ''}
   <form method="post" action="/admin/lists/${list.id}" class="stack">
     ${csrfField(ctx)}
-    ${listFields(ctx, lf, { withArchived: true })}
+    ${listFields(ctx, lf, { withArchived: true, canSetVisibility })}
     <button type="submit" class="primary">${ctx.t('admin.save')}</button>
   </form>
   <hr>
@@ -456,6 +487,29 @@ ${adminHeader(ctx)}
 
 export function adminItemPage(ctx, { item, list, form, error }) {
   const v = form || item;
+  // Linked to a wishlist: its name/link/image follow the wishlist; only this list's notes and the reservation here.
+  if (item.wishlist_item_id) {
+    return layout(ctx, {
+      title: ctx.t('admin.editItem'),
+      body: h`
+${adminHeader(ctx, `/admin/lists/${list.id}`, ctx.t('admin.backToList'))}
+<section class="card">
+  <h1>${item.title}</h1>
+  <p class="small muted">🎀 ${ctx.t('wish.linkedEditHint')}</p>
+  <form method="post" action="/admin/items/${item.id}" class="stack">
+    ${csrfField(ctx)}
+    <label>${ctx.t('wish.listNotes')}
+      <input name="notes" maxlength="1000" value="${item.notes || ''}">
+    </label>
+    ${item.claimed_elsewhere ? h`<p class="small muted">🎀 ${ctx.t('wish.claimedElsewhere')}</p>` : h`<label>${ctx.t('admin.reservedName')}
+      <input name="reserved_name" maxlength="60" value="${item.reserved_name || ''}">
+      <span class="small muted">${ctx.t('admin.reservedNameHint')}</span>
+    </label>`}
+    <button type="submit" class="primary">${ctx.t('admin.save')}</button>
+  </form>
+</section>`,
+    });
+  }
   return layout(ctx, {
     title: ctx.t('admin.editItem'),
     body: h`
