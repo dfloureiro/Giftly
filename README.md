@@ -24,6 +24,9 @@ Self-hosted gift lists for families and friends.
 <p align="center">
   <img src="docs/screenshots/admin-list.png" alt="Admin page of a list: share link, every gift with who reserved it and when, and edit/release/reorder/delete actions" width="720">
 </p>
+<p align="center">
+  <img src="docs/screenshots/notifications.png" alt="Notification settings in the admin: which events to be notified about, and ntfy, Telegram and webhook channels" width="480">
+</p>
 </details>
 
 Available in **Portuguese (pt-PT)** and **English**. The language follows the visitor's browser, and every page has a PT/EN switch.
