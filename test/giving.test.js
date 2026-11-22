@@ -1,7 +1,7 @@
 // "Gifts to give": end-to-end tests, focused on the shared/private rule between admins.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startServer, loginAdmin, inviteAdmin } from './helpers.js';
+import { startServer, loginAdmin, inviteAdmin, webhookReceiver, sleep } from './helpers.js';
 
 let server, diogo, maria;
 before(async () => {
@@ -208,4 +208,29 @@ test('removing an admin removes their private entries and keeps shared ones', as
   const list = await page(diogo, '/admin/give/people');
   assert.match(list, /Left Shared/);
   assert.ok(!list.includes('Left Private'));
+});
+
+test('profile reminders: validation, test button needs a channel, then sends what is due', async () => {
+  const bad = await maria.post('/admin/profile/reminders', { reminder_days: 'soon' }, { from: '/admin/profile' });
+  assert.equal(bad.status, 400);
+  const ok = await maria.post('/admin/profile/reminders', { reminder_days: '7, 1' }, { from: '/admin/profile' });
+  assert.match(ok.location, /m=saved/);
+  assert.match(await page(maria, '/admin/profile'), /value="7, 1"/);
+
+  const noChannel = await maria.post('/admin/profile/reminders/test', {}, { from: '/admin/profile' });
+  assert.match(noChannel.location, /remindersNoChannel/);
+
+  const hook = await webhookReceiver();
+  try {
+    await maria.post('/admin/profile/notifications', { webhook_url: hook.url }, { from: '/admin/profile' });
+    const tomorrow = inDays(1);
+    await addPerson(maria, { name: 'Remind Me', birthday_day: String(Number(tomorrow.slice(8))), birthday_month: String(Number(tomorrow.slice(5, 7))) });
+    const sent = await maria.post('/admin/profile/reminders/test', {}, { from: '/admin/profile' });
+    assert.match(sent.location, /remindersSent/);
+    for (let i = 0; i < 30 && !hook.calls.some((c) => /Remind Me/.test(c.title)); i++) await sleep(100);
+    assert.ok(hook.calls.some((c) => c.event === 'reminder' && /Remind Me/.test(c.title)));
+  } finally {
+    await hook.close();
+    await maria.post('/admin/profile/notifications', {}, { from: '/admin/profile' });
+  }
 });

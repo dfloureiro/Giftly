@@ -220,6 +220,12 @@ function message(event, { list, guest, item }) {
   };
 }
 
+/** Channels a user has set up (names), e.g. to tell them to configure one first. */
+export const userChannels = (userId) => buildChannels(userNotifySettings(userId)).map((c) => c.name);
+
+/** Send a ready-made message ({ event, title, message, click?, data? }) to one user. */
+export const notifyUser = (userId, msg) => sendToUser(userId, { data: {}, ...msg });
+
 function sendToUser(userId, msg) {
   const channels = buildChannels(userNotifySettings(userId));
   return Promise.all(channels.map((c) =>

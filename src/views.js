@@ -507,7 +507,7 @@ function accountFields(ctx, v) {
     </label>`;
 }
 
-export function profilePage(ctx, { user, notify, notifyErrors = [], profileForm, profileError, passwordError }) {
+export function profilePage(ctx, { user, notify, notifyErrors = [], profileForm, profileError, passwordError, remindersError }) {
   return layout(ctx, {
     title: ctx.t('account.profile'),
     body: h`
@@ -535,7 +535,22 @@ ${adminHeader(ctx)}
   </form>
 </section>
 
-${notifySection(ctx, notify, notifyErrors)}`,
+${notifySection(ctx, notify, notifyErrors)}
+
+<section class="card" id="reminders">
+  <h2>${ctx.t('remind.heading')}</h2>
+  <p class="small muted">${ctx.t('remind.intro', { hour: String(config.reminderHour).padStart(2, '0') })}</p>
+  ${remindersError ? h`<div class="flash flash-error" role="alert">${remindersError}</div>` : ''}
+  <form method="post" action="/admin/profile/reminders" class="stack">
+    ${csrfField(ctx)}
+    <label>${ctx.t('remind.days')}
+      <input name="reminder_days" value="${user.reminder_days.split(',').filter(Boolean).join(', ')}" placeholder="14, 3" inputmode="numeric" autocomplete="off">
+      <span class="small muted">${ctx.t('remind.daysHint')}</span>
+    </label>
+    <button type="submit" class="primary">${ctx.t('admin.save')}</button>
+  </form>
+  ${postButton(ctx, '/admin/profile/reminders/test', ctx.t('remind.testButton'), { cls: 'secondary' })}
+</section>`,
   });
 }
 

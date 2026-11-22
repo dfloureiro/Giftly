@@ -12,7 +12,7 @@ Self-hosted gift lists for families and friends.
 - Gifts with a link show the **shop's product image and price** automatically. Prices are re-checked daily and are never typed by hand.
 - **Several admins**, each with their own account, and optional **notifications** (ntfy, Telegram, Discord/Slack webhook) when someone picks a gift.
 - The admin always shows everything: who picked what and when, and who joined.
-- **Gifts to give:** keep track of the gifts *you* give: people, birthdays, Christmas and other occasions, with a checklist per occasion, what each person got last year, and shared or private entries per admin.
+- **Gifts to give:** keep track of the gifts *you* give: people, birthdays, Christmas and other occasions, with a checklist per occasion, what each person got last year, shared or private entries per admin, and **reminders** when a gift is still missing.
 
 <p align="center">
   <img src="docs/screenshots/guest-list.png" alt="A guest's view of a gift list: their own pick at the top, available gifts with images, prices and shop links below" width="720">
@@ -88,6 +88,7 @@ docker run -d --name giftly -p 3000:3000 \
 | `COOKIE_SECURE` | `auto` | `auto` sets `Secure` cookies when the request came over HTTPS. |
 | `SESSION_SECRET` | generated | Generated once and stored in `/data` if not set. |
 | `CURRENCY` | `EUR` | Currency for prices typed by hand in *Gifts to give*. |
+| `REMINDER_HOUR` | `9` | Hour of the day (0–23, in `TZ`) when daily reminders are sent. |
 | `PORT` | `3000` | |
 
 ## Admin accounts
@@ -115,6 +116,8 @@ A separate part of the admin (*Gifts to give*) to plan the gifts **you** give, n
 - **Upcoming:** the next 60 days, with "has a gift / ideas / no gift yet" for each occasion.
 - **Gifts** can have a link, notes, an image (read from the link or uploaded) and a price. The price comes from the shop's page when it shows one, and is kept up to date while the gift is still an idea. It freezes once the gift is bought, so totals reflect what you paid. When the shop shows no price, you type it. `CURRENCY` (default `EUR`) is used for typed prices.
 - **Shared or private:** every person, occasion and gift is *shared* (all admins see it) or *private* (only whoever created it). A private gift for a shared person, for example a surprise for the other admin, stays hidden from them everywhere, including progress and totals. Only the creator can change who sees an entry. Removing an admin deletes their private entries and keeps the shared ones.
+
+**Reminders:** once a day (at `REMINDER_HOUR`, default 9:00 in `TZ`) each admin gets a message on their own notification channels for every birthday or occasion that is coming up and still has no gift bought, for example *"In 14 days: Ana's birthday. No gift bought yet (2 ideas noted)."* or *"In 3 days: Christmas 2026. 6 of 18 people still without a gift."*. Each admin chooses how many days before in their **Profile** (default 14 and 3; empty turns reminders off) and can send today's reminders on demand to check. Reminders only include what that admin can see, so shared occasions remind everyone and private ones only their owner. Each reminder is sent once; if the server was off on the exact day, it goes out on the next run.
 
 The privacy is enforced by the app; whoever has access to the server or the `/data` volume can read the database.
 

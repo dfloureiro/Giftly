@@ -155,6 +155,18 @@ const migrations = [
   CREATE INDEX gifts_person ON gifts(person_id, year);
   CREATE INDEX gifts_occasion ON gifts(occasion_id);
   `,
+  // v8: reminders. Each user picks how many days before (empty = off); every reminder is
+  // sent at most once per (user, occasion, threshold).
+  `
+  ALTER TABLE users ADD COLUMN reminder_days TEXT NOT NULL DEFAULT '14,3';
+  CREATE TABLE reminder_log (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    key TEXT NOT NULL,
+    days_before INTEGER NOT NULL,
+    sent_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, key, days_before)
+  );
+  `,
 ];
 
 {

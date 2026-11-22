@@ -68,6 +68,9 @@ export const users = {
   setPassword(id, passwordHash) {
     db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, id);
   },
+  setReminderDays(id, days) {
+    db.prepare('UPDATE users SET reminder_days = ? WHERE id = ?').run(days, id);
+  },
   setNotifyEvents(id, events) {
     db.prepare('UPDATE users SET notify_events = ? WHERE id = ?').run(events, id);
   },

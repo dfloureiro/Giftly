@@ -13,6 +13,8 @@ import { IMAGE_DIR, IMAGE_FILE_RE, IMAGE_TYPES, removeImage, saveImageBuffer, sw
 import { enqueuePreview, clearPreview, startPreviewQueue, allImageFiles } from './previewQueue.js';
 import { deleteUserData, gifts as givingGifts } from './giving.js';
 import { registerGivingRoutes } from './givingRoutes.js';
+import { startReminders, parseReminderDays, remindUser } from './reminders.js';
+import { userChannels } from './notify.js';
 import { notify, notifyStatus, saveNotifySettings } from './notify.js';
 import { users, sessions, links, checkLogin, hashPassword, verifyPassword, validateAccount, SESSION_DAYS } from './accounts.js';
 import { bootstrapAccounts } from './bootstrap.js';
@@ -168,6 +170,9 @@ const FLASH = {
   passwordChanged: ['success', 'account.passwordChanged'],
   welcome: ['success', 'account.welcome'],
   giftAdded: ['success', 'give.giftAdded'],
+  remindersSent: ['success', 'remind.testSent'],
+  remindersNone: ['success', 'remind.testNone'],
+  remindersNoChannel: ['error', 'remind.noChannel'],
   notifyOk: ['success', 'notify.testOk'],
   notifySaved: ['success', 'admin.saved'],
   notifyFail: ['error', 'notify.testFail'],
@@ -336,6 +341,21 @@ route('POST', '/admin/profile/notifications', (ctx) => {
     return renderProfile(ctx, { notify: status, notifyErrors: errors }, 400);
   }
   redirect(ctx.res, '/admin/profile?m=notifySaved#notifications');
+}, { auth: 'admin' });
+
+route('POST', '/admin/profile/reminders', (ctx) => {
+  const raw = clean(ctx.body.reminder_days, 60);
+  const days = parseReminderDays(raw);
+  if (raw && !days.length) return renderProfile(ctx, { remindersError: ctx.t('remind.badDays') }, 400);
+  users.setReminderDays(ctx.user.id, days.slice().reverse().join(','));
+  redirect(ctx.res, '/admin/profile?m=saved#reminders');
+}, { auth: 'admin' });
+
+// Sends whatever is due today again (ignoring what was already sent), only to this user.
+route('POST', '/admin/profile/reminders/test', async (ctx) => {
+  if (!userChannels(ctx.user.id).length) return redirect(ctx.res, '/admin/profile?m=remindersNoChannel#reminders');
+  const n = await remindUser(ctx.user, { ignoreLog: true });
+  redirect(ctx.res, `/admin/profile?m=${n ? 'remindersSent' : 'remindersNone'}&n=${n}#reminders`);
 }, { auth: 'admin' });
 
 route('POST', '/admin/profile/notify-test', async (ctx) => {
@@ -725,6 +745,7 @@ const server = http.createServer((req, res) => {
 
 server.listen({ port: config.port, host: config.host }, () => {
   startPreviewQueue();
+  startReminders();
   const { address, port } = server.address();
   console.log(`giftly listening on ${address}:${port} (lang=${config.lang}, data=${config.dataDir})`);
 });

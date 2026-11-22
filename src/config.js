@@ -30,6 +30,9 @@ export const config = {
   siteTitle: env.SITE_TITLE || '',
   // Currency for prices typed by hand (shop prices keep their own currency).
   currency: /^[A-Z]{3}$/.test(env.CURRENCY || '') ? env.CURRENCY : 'EUR',
+  // Hour of the day (0–23, in TZ) when daily reminders are sent.
+  reminderHour: Number.isInteger(Number(env.REMINDER_HOUR)) && env.REMINDER_HOUR !== '' && Number(env.REMINDER_HOUR) >= 0 && Number(env.REMINDER_HOUR) <= 23
+    ? Number(env.REMINDER_HOUR) : 9,
   lang: (env.APP_LANG || 'pt').toLowerCase().startsWith('en') ? 'en' : 'pt',
   timeZone: env.TZ || 'Europe/Lisbon',
   // Trust X-Forwarded-* / CF-Connecting-IP headers (set when behind Cloudflare Tunnel or a reverse proxy).
