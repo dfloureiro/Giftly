@@ -60,8 +60,8 @@ function layout(ctx, { title, body, bodyClass = '' }) {
 <meta name="robots" content="noindex, nofollow">
 <title>${title ? `${title} · ${site}` : site}</title>
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/static/style.css?v=1">
-<script src="/static/app.js?v=1" defer></script>
+<link rel="stylesheet" href="/static/style.css?v=2">
+<script src="/static/app.js?v=2" defer></script>
 </head>
 <body class="${bodyClass}">
 <nav class="lang" aria-label="Language">
@@ -119,6 +119,18 @@ export function joinPage(ctx, { list, name = '', error } = {}) {
   });
 }
 
+function thumb(ctx, it, { admin = false } = {}) {
+  if (it.image_file) return h`<div class="thumb"><img src="/img/${it.image_file}" alt="" loading="lazy" decoding="async"></div>`;
+  const pending = admin && it.preview_status === 'pending';
+  return h`<div class="thumb empty${pending ? ' pending' : ''}"${pending ? h` data-preview-id="${it.id}"` : ''} aria-hidden="true">🎁</div>`;
+}
+
+function previewStatus(ctx, it) {
+  if (it.preview_status === 'pending') return h`<p class="small muted" data-preview-status="${it.id}">${ctx.t('preview.pending')}</p>`;
+  if (it.preview_status === 'failed') return h`<p class="small muted">${ctx.t('preview.failed')}</p>`;
+  return '';
+}
+
 function itemBody(ctx, it) {
   const host = it.url ? hostOf(it.url) : '';
   return h`
@@ -151,6 +163,7 @@ ${mine.length ? h`
   <p class="small muted">${ctx.t('list.mineHint')}</p>
   <ul class="items">
     ${mine.map((it) => h`<li class="item picked">
+      ${thumb(ctx, it)}
       <div class="body">${itemBody(ctx, it)}</div>
       ${postButton(ctx, `/l/${list.token}/unpick/${it.id}`, ctx.t('list.unpick'), { cls: 'secondary', confirm: ctx.t('list.unpickConfirm', { title: it.title }) })}
     </li>`)}
@@ -164,6 +177,7 @@ ${mine.length ? h`
   ${available.length ? h`
   <ul class="items">
     ${available.map((it) => h`<li class="item">
+      ${thumb(ctx, it)}
       <div class="body">${itemBody(ctx, it)}</div>
       ${postButton(ctx, `/l/${list.token}/pick/${it.id}`, ctx.t('list.pick'), { cls: 'primary', confirm: ctx.t('list.pickConfirm', { title: it.title }) })}
     </li>`)}
@@ -278,8 +292,10 @@ ${adminHeader(ctx, '/admin', ctx.t('admin.back'))}
   ${allItems.length ? h`
   <ul class="items admin-items">
     ${allItems.map((it, idx) => h`<li class="item ${it.reserved_name ? 'picked' : ''}" id="item-${it.id}">
+      ${thumb(ctx, it, { admin: true })}
       <div class="body">
         ${itemBody(ctx, it)}
+        ${previewStatus(ctx, it)}
         <p class="status">${it.reserved_name
           ? h`🎀 ${ctx.t('admin.reservedBy', { name: it.reserved_name })} <span class="muted">· ${fmtDate(ctx, it.reserved_at)}${it.reserved_guest_id ? '' : ` · ${ctx.t('admin.manual')}`}</span>`
           : h`<span class="muted">${ctx.t('admin.free')}</span>`}</p>
@@ -355,12 +371,27 @@ ${adminHeader(ctx, `/admin/lists/${list.id}`, ctx.t('admin.backToList'))}
   <form method="post" action="/admin/items/${item.id}" class="stack">
     ${csrfField(ctx)}
     ${itemFields(ctx, v)}
+    <fieldset class="image-field">
+      <legend>${ctx.t('preview.image')}</legend>
+      <div class="image-row">
+        ${thumb(ctx, item, { admin: true })}
+        <div class="grow">
+          ${previewStatus(ctx, item)}
+          <label>${ctx.t('preview.imageSource')}
+            <input name="image_source" type="url" maxlength="2000" value="${v.image_source || ''}" placeholder="https://…/foto.jpg">
+            <span class="small muted">${ctx.t('preview.imageSourceHint')}</span>
+          </label>
+          ${item.image_file ? h`<label class="check"><input type="checkbox" name="remove_image" value="1"> ${ctx.t('preview.remove')}</label>` : ''}
+        </div>
+      </div>
+    </fieldset>
     <label>${ctx.t('admin.reservedName')}
       <input name="reserved_name" maxlength="60" value="${v.reserved_name || ''}">
       <span class="small muted">${ctx.t('admin.reservedNameHint')}</span>
     </label>
     <button type="submit" class="primary">${ctx.t('admin.save')}</button>
   </form>
+  ${item.url || item.image_source ? h`<hr>${postButton(ctx, `/admin/items/${item.id}/preview`, ctx.t('preview.refresh'), { cls: 'secondary' })}` : ''}
 </section>`,
   });
 }

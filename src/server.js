@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { readFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -7,6 +8,8 @@ import { db, lists, guests, items } from './db.js';
 import { tokens, csrfFor, safeEqual, rateLimit, resetRateLimit } from './security.js';
 import { makeT } from './i18n.js';
 import * as views from './views.js';
+import { IMAGE_DIR, IMAGE_FILE_RE, IMAGE_TYPES, removeImage, sweepImages } from './preview.js';
+import { enqueuePreview, clearPreview, startPreviewQueue } from './previewQueue.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const GUEST_COOKIE = 'giftly_guest';
@@ -103,7 +106,7 @@ function cleanUrl(v) {
 // ---------- response helpers ----------
 
 const SECURITY_HEADERS = {
-  'Content-Security-Policy': "default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+  'Content-Security-Policy': "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'no-referrer',
   'X-Frame-Options': 'DENY',
@@ -316,21 +319,25 @@ route('POST', '/admin/lists/:id/new-link', (ctx) => {
 
 route('POST', '/admin/lists/:id/delete', (ctx) => {
   lists.delete(Number(ctx.params.id));
+  sweepImages(items.allImageFiles());
   redirect(ctx.res, '/admin?m=deleted');
 }, { auth: 'admin' });
 
 function validateItem(ctx, body) {
   const { url, error: urlError } = cleanUrl(body.url);
+  const { url: imageSource, error: imageError } = cleanUrl(body.image_source);
   const form = {
     title: clean(body.title, 200),
     url: url ?? String(body.url ?? ''),
+    image_source: imageSource ?? String(body.image_source ?? ''),
+    remove_image: body.remove_image === '1',
     notes: clean(body.notes, 1000),
     price: clean(body.price, 40),
     reserved_name: clean(body.reserved_name, 60),
   };
   let error;
   if (!form.title) error = ctx.t('admin.titleRequired');
-  else if (urlError) error = ctx.t('admin.badUrl');
+  else if (urlError || imageError) error = ctx.t('admin.badUrl');
   return { form, error };
 }
 
@@ -339,7 +346,7 @@ route('POST', '/admin/lists/:id/items', (ctx) => {
   if (!list) return;
   const { form, error } = validateItem(ctx, ctx.body);
   if (error) return renderAdminList(ctx, list, { itemError: error }, 400);
-  items.create(list.id, form);
+  enqueuePreview(items.create(list.id, form));
   redirect(ctx.res, `/admin/lists/${list.id}?m=added&n=1`);
 }, { auth: 'admin' });
 
@@ -357,7 +364,7 @@ route('POST', '/admin/lists/:id/items/bulk', (ctx) => {
     }
     const { form, error } = validateItem(ctx, { title, url, notes, price });
     if (error) continue;
-    items.create(list.id, form);
+    enqueuePreview(items.create(list.id, form));
     n++;
   }
   redirect(ctx.res, `/admin/lists/${list.id}?m=added&n=${n}`);
@@ -379,15 +386,37 @@ route('POST', '/admin/items/:id', (ctx) => {
   if (!item) return;
   const { form, error } = validateItem(ctx, ctx.body);
   if (error) return html(ctx.res, views.adminItemPage(ctx, { item, list: lists.get(item.list_id), form, error }), 400);
+  if (form.remove_image) form.image_source = '';
   items.update(item.id, form);
   items.setManualReservation(item.id, form.reserved_name);
+  if (form.remove_image) clearPreview(item.id);
+  else if (form.url !== item.url || form.image_source !== item.image_source) enqueuePreview(item.id);
   redirect(ctx.res, `/admin/lists/${item.list_id}?m=saved`);
+}, { auth: 'admin' });
+
+route('POST', '/admin/items/:id/preview', (ctx) => {
+  const item = loadItem(ctx);
+  if (!item) return;
+  enqueuePreview(item.id);
+  redirect(ctx.res, `/admin/items/${item.id}`);
+}, { auth: 'admin' });
+
+// Polled by app.js while previews are loading: { "<id>": { status, image } }
+route('GET', '/admin/previews', (ctx) => {
+  const ids = String(ctx.url.searchParams.get('ids') || '').split(',').map(Number).filter(Boolean).slice(0, 200);
+  const out = {};
+  for (const id of ids) {
+    const it = items.get(id);
+    if (it) out[id] = { status: it.preview_status, image: it.image_file ? `/img/${it.image_file}` : null, title: it.title, price: it.price };
+  }
+  send(ctx.res, 200, JSON.stringify(out), { 'Content-Type': 'application/json' });
 }, { auth: 'admin' });
 
 route('POST', '/admin/items/:id/delete', (ctx) => {
   const item = loadItem(ctx);
   if (!item) return;
   items.delete(item.id);
+  removeImage(item.image_file);
   redirect(ctx.res, `/admin/lists/${item.list_id}?m=deleted`);
 }, { auth: 'admin' });
 
@@ -430,6 +459,20 @@ async function handle(req, res) {
   if (req.method === 'GET' && STATIC[path]) {
     const [type, body] = STATIC[path];
     return send(res, 200, body, { 'Content-Type': type, 'Cache-Control': 'public, max-age=86400' });
+  }
+
+  // Stored preview images: random names, never change → cache forever.
+  if (req.method === 'GET' && path.startsWith('/img/')) {
+    const file = path.slice(5);
+    if (IMAGE_FILE_RE.test(file)) {
+      try {
+        const body = await readFile(join(IMAGE_DIR, file));
+        return send(res, 200, body, {
+          'Content-Type': IMAGE_TYPES[file.split('.').pop()],
+          'Cache-Control': 'public, max-age=31536000, immutable',
+        });
+      } catch { /* fall through to 404 */ }
+    }
   }
 
   const cookies = parseCookies(req.headers.cookie);
@@ -497,6 +540,7 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(config.port, config.host, () => {
+  startPreviewQueue();
   console.log(`giftly listening on http://${config.host}:${config.port} (lang=${config.lang}, data=${config.dataDir})`);
 });
 

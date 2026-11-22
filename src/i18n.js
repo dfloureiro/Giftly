@@ -1,5 +1,12 @@
 const strings = {
   pt: {
+    'preview.pending': "A carregar imagem do link…",
+    'preview.failed': "Não foi possível obter a imagem deste link. Podes colar o link de uma imagem ao editar.",
+    'preview.image': "Imagem",
+    'preview.imageSource': "Link da imagem (opcional)",
+    'preview.imageSourceHint': "Por omissão usamos a imagem da página da loja. Cola aqui o link de uma foto para a substituir.",
+    'preview.remove': "Remover imagem",
+    'preview.refresh': "Voltar a carregar imagem do link",
     'home.yourLists': 'As listas em que já entraste:',
     'home.askForLink': 'Para veres uma lista de prendas, abre o link que te enviaram.',
     'join.intro': 'Escreve o teu nome para veres a lista e escolheres uma prenda.',
@@ -103,6 +110,13 @@ const strings = {
     'error.home': 'Ir para o início',
   },
   en: {
+    'preview.pending': "Loading image from link…",
+    'preview.failed': "Could not get an image from this link. You can paste an image link when editing.",
+    'preview.image': "Image",
+    'preview.imageSource': "Image link (optional)",
+    'preview.imageSourceHint': "By default we use the shop page's image. Paste a picture link here to replace it.",
+    'preview.remove': "Remove image",
+    'preview.refresh': "Reload image from link",
     'home.yourLists': 'Lists you have joined:',
     'home.askForLink': 'To see a gift list, open the link you were sent.',
     'join.intro': 'Enter your name to see the list and pick a gift.',

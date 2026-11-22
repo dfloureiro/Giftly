@@ -33,6 +33,8 @@ export const config = {
   timeZone: env.TZ || 'Europe/Lisbon',
   // Trust X-Forwarded-* / CF-Connecting-IP headers (set when behind Cloudflare Tunnel or a reverse proxy).
   trustProxy: ['1', 'true', 'yes'].includes(String(env.TRUST_PROXY ?? 'true').toLowerCase()),
+  // Fetch product pages to show an image for each gift.
+  previews: !['0', 'false', 'no'].includes(String(env.LINK_PREVIEWS ?? 'true').toLowerCase()),
   // 'auto' = Secure cookies when the request arrived over HTTPS.
   cookieSecure: (env.COOKIE_SECURE || 'auto').toLowerCase(),
 };

@@ -45,6 +45,12 @@ const migrations = [
   CREATE INDEX items_list ON items(list_id, position);
   CREATE INDEX guests_list ON guests(list_id);
   `,
+  // v2: link previews
+  `
+  ALTER TABLE items ADD COLUMN image_file TEXT;
+  ALTER TABLE items ADD COLUMN image_source TEXT NOT NULL DEFAULT '';
+  ALTER TABLE items ADD COLUMN preview_status TEXT NOT NULL DEFAULT '';
+  `,
 ];
 
 {
@@ -172,15 +178,27 @@ export const items = {
       'SELECT COUNT(*) AS n FROM items WHERE list_id = ? AND reserved_name IS NOT NULL AND (reserved_guest_id IS NULL OR reserved_guest_id != ?)'
     ).get(listId, guestId).n;
   },
-  create(listId, { title, url, notes, price }) {
+  create(listId, { title, url, notes, price, image_source = '' }) {
     const { p } = db.prepare('SELECT COALESCE(MAX(position), 0) + 1 AS p FROM items WHERE list_id = ?').get(listId);
     return Number(db.prepare(
-      'INSERT INTO items (list_id, title, url, notes, price, position, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    ).run(listId, title, url, notes, price, p, now()).lastInsertRowid);
+      'INSERT INTO items (list_id, title, url, notes, price, image_source, position, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(listId, title, url, notes, price, image_source, p, now()).lastInsertRowid);
   },
-  update(id, { title, url, notes, price }) {
-    db.prepare('UPDATE items SET title = ?, url = ?, notes = ?, price = ? WHERE id = ?')
-      .run(title, url, notes, price, id);
+  update(id, { title, url, notes, price, image_source = '' }) {
+    db.prepare('UPDATE items SET title = ?, url = ?, notes = ?, price = ?, image_source = ? WHERE id = ?')
+      .run(title, url, notes, price, image_source, id);
+  },
+  setPreview(id, fields) {
+    const keys = Object.keys(fields).filter((k) => ['image_file', 'preview_status', 'title', 'price'].includes(k));
+    if (!keys.length) return;
+    db.prepare(`UPDATE items SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`)
+      .run(...keys.map((k) => fields[k]), id);
+  },
+  pendingPreviews() {
+    return db.prepare("SELECT id FROM items WHERE preview_status = 'pending'").all().map((r) => r.id);
+  },
+  allImageFiles() {
+    return db.prepare('SELECT image_file FROM items WHERE image_file IS NOT NULL').all().map((r) => r.image_file);
   },
   /** Admin sets/clears the reservation by free-text name (e.g. someone who told you in person). */
   setManualReservation(id, name) {
