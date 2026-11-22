@@ -1,5 +1,9 @@
 const strings = {
   pt: {
+    "give.joint": "Prenda conjunta",
+    "give.jointHint": "Esta prenda também é para estas pessoas (por exemplo, um casal no Natal). Conta como prenda para todas e entra uma só vez no total gasto.",
+    "give.jointWith": "Conjunta com {names}",
+    "give.jointFor": "Para {names}",
     "remind.today": "Hoje",
     "remind.tomorrow": "Amanhã",
     "remind.inDays": "Daqui a {n} dias",
@@ -286,6 +290,10 @@ const strings = {
     'error.home': 'Ir para o início',
   },
   en: {
+    "give.joint": "Joint gift",
+    "give.jointHint": "This gift is also for these people (for example a couple at Christmas). It counts as a gift for all of them and once in the total spent.",
+    "give.jointWith": "Joint with {names}",
+    "give.jointFor": "For {names}",
     "remind.today": "Today",
     "remind.tomorrow": "Tomorrow",
     "remind.inDays": "In {n} days",

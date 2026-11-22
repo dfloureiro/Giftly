@@ -167,6 +167,17 @@ const migrations = [
     PRIMARY KEY (user_id, key, days_before)
   );
   `,
+  // v9: joint gifts — a gift can be for several people (e.g. a couple at Christmas).
+  // gifts.person_id stays as the "main" person; gift_people lists everyone (main included).
+  `
+  CREATE TABLE gift_people (
+    gift_id INTEGER NOT NULL REFERENCES gifts(id) ON DELETE CASCADE,
+    person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    PRIMARY KEY (gift_id, person_id)
+  );
+  CREATE INDEX gift_people_person ON gift_people(person_id);
+  INSERT INTO gift_people (gift_id, person_id) SELECT id, person_id FROM gifts;
+  `,
 ];
 
 {

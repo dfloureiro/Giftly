@@ -98,15 +98,33 @@ function giftFields(ctx, v = {}) {
     ${visibilityField(ctx, v.visibility, { disabled: v.id && !isOwner(ctx, v) })}`;
 }
 
-function giftRow(ctx, g, { back, showOccasion = false } = {}) {
+/** "Joint gift" picker: other people this gift is also for. */
+function jointPicker(ctx, others, checked = []) {
+  if (!others.length) return '';
+  const on = new Set(checked);
+  return h`<details class="joint"${on.size ? raw(' open') : ''}>
+    <summary>👥 ${ctx.t('give.joint')}</summary>
+    <p class="small muted">${ctx.t('give.jointHint')}</p>
+    <div class="joint-people">
+      ${others.map((p) => h`<label class="check"><input type="checkbox" name="also" value="${p.id}"${on.has(p.id) ? raw(' checked') : ''}> ${p.name}</label>`)}
+    </div>
+  </details>`;
+}
+
+function giftRow(ctx, g, { back, showOccasion = false, others = [], anchor = true, forPerson = null } = {}) {
+  // Candidates for the joint picker: everyone offered here plus whoever it is already for.
+  const co = g.people.filter((x) => x.id !== g.person_id);
+  const pickable = [...new Map([...others, ...co].filter((x) => x.id !== g.person_id).map((x) => [x.id, x])).values()];
+  const withWhom = forPerson ? g.people.filter((x) => x.id !== forPerson) : g.people;
   const host = g.url ? hostOf(g.url) : '';
   const occasionLabel = g.occasion_id ? g.occasion_name : ctx.t('give.birthdayYear', { year: g.year });
-  return h`<li class="gift" id="gift-${g.id}">
+  return h`<li class="gift"${anchor ? h` id="gift-${g.id}"` : ''}>
     ${giftThumb(ctx, g)}
     <div class="body">
       <div class="gift-title">
         <strong>${g.name}</strong> ${privateBadge(ctx, g)}
       </div>
+      ${g.joint ? h`<p class="small joint-line">👥 ${forPerson ? ctx.t('give.jointWith', { names: withWhom.map((x) => x.name).join(' & ') }) : ctx.t('give.jointFor', { names: g.people.map((x) => x.name).join(' & ') })}</p>` : ''}
       <div class="meta small">
         ${g.price_cents != null ? h`<span class="price">${money(ctx, g.price_cents, g.price_currency)}</span>` : ''}
         ${g.url ? h`<a href="${g.url}" target="_blank" rel="noopener noreferrer nofollow">${host} ↗</a>` : ''}
@@ -127,6 +145,8 @@ function giftRow(ctx, g, { back, showOccasion = false } = {}) {
           <form method="post" action="/admin/give/gifts/${g.id}" class="stack">
             ${csrfField(ctx)}<input type="hidden" name="back" value="${back}">
             ${giftFields(ctx, g)}
+            <input type="hidden" name="also_present" value="1">
+            ${jointPicker(ctx, pickable, co.map((x) => x.id))}
             ${uploadField(ctx)}
             <label>${ctx.t('preview.imageSource')}
               <input name="image_source" type="url" maxlength="2000" value="${g.image_source || ''}" placeholder="https://…/foto.jpg">
@@ -147,7 +167,7 @@ function giftRow(ctx, g, { back, showOccasion = false } = {}) {
 const escAttr = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 /** "Add a gift" form. `occasion` fixes the occasion (checklist); otherwise `choices` gives a select. */
-function addGiftForm(ctx, { personId, back, occasion, choices = [], open = false }) {
+function addGiftForm(ctx, { personId, back, occasion, choices = [], open = false, others = [] }) {
   return h`<details class="add-gift"${open ? raw(' open') : ''}>
     <summary>＋ ${ctx.t('give.addGift')}</summary>
     <form method="post" action="/admin/give/gifts" class="stack">
@@ -163,6 +183,7 @@ function addGiftForm(ctx, { personId, back, occasion, choices = [], open = false
             ${choices.length ? '' : h`<span class="small muted">${ctx.t('give.noOccasionChoices')}</span>`}
           </label>`}
       ${giftFields(ctx)}
+      ${jointPicker(ctx, others)}
       ${uploadField(ctx)}
       <button type="submit" class="primary">${ctx.t('admin.add')}</button>
     </form>
@@ -265,7 +286,7 @@ ${list.length ? h`<ul class="lists">
   });
 }
 
-export function personPage(ctx, { person, next, history, choices, personForm, personError }) {
+export function personPage(ctx, { person, next, history, choices, others = [], personForm, personError }) {
   const back = `/admin/give/people/${person.id}`;
   // Group the history by year → occasion, newest first.
   const groups = [];
@@ -293,10 +314,10 @@ export function personPage(ctx, { person, next, history, choices, personForm, pe
 ${person.notes ? h`<p class="description">${person.notes}</p>` : ''}
 
 <section>
-  ${addGiftForm(ctx, { personId: person.id, back, choices, open: !history.length })}
+  ${addGiftForm(ctx, { personId: person.id, back, choices, open: !history.length, others })}
   ${groups.length ? groups.map((grp) => h`
     <h2 id="year-${grp.year}">${grp.label}</h2>
-    <ul class="gifts">${grp.gifts.map((g) => giftRow(ctx, g, { back }))}</ul>`)
+    <ul class="gifts">${grp.gifts.map((g) => giftRow(ctx, g, { back, others, forPerson: person.id }))}</ul>`)
   : h`<p class="empty">${ctx.t('give.noGiftsYet')}</p>`}
 </section>
 
@@ -361,6 +382,9 @@ export function checklistPage(ctx, { occasion, rows, orphans, total, done, spent
   const back = `/admin/give/occasions/${occasion.id}${onlyMissing ? '?missing=1' : ''}`;
   const shown = onlyMissing ? rows.filter((r) => !r.done) : rows;
   const pct = total ? Math.round((done / total) * 100) : 0;
+  const participants = rows.map((r) => r.person);
+  const seen = new Set(); // a joint gift shows in several rows; only the first gets the #anchor
+  const firstTime = (id) => !seen.has(id) && seen.add(id);
   return page(ctx, {
     title: occasion.name,
     active: 'occasions',
@@ -385,11 +409,11 @@ ${!rows.length ? h`<p class="empty">${ctx.t('give.noParticipants')}</p>` : ''}
       ${postButton(ctx, `/admin/give/occasions/${occasion.id}/participants/${r.person.id}/remove`, '✕', { cls: 'link small', confirm: ctx.t('give.removeParticipantConfirm', { name: r.person.name }) })}
     </div>
     ${r.previous.length ? h`<p class="small muted">${ctx.t('give.lastYear')}: ${r.previous.map((g) => g.name).join(', ')}</p>` : ''}
-    ${r.gifts.length ? h`<ul class="gifts">${r.gifts.map((g) => giftRow(ctx, g, { back }))}</ul>` : ''}
-    ${addGiftForm(ctx, { personId: r.person.id, back, occasion: `occasion:${occasion.id}` })}
+    ${r.gifts.length ? h`<ul class="gifts">${r.gifts.map((g) => giftRow(ctx, g, { back, others: participants, anchor: firstTime(g.id), forPerson: r.person.id }))}</ul>` : ''}
+    ${addGiftForm(ctx, { personId: r.person.id, back, occasion: `occasion:${occasion.id}`, others: participants.filter((p) => p.id !== r.person.id) })}
   </li>`)}
 </ul>
-${orphans.length ? h`<h2>${ctx.t('give.otherGifts')}</h2><ul class="gifts">${orphans.map((g) => giftRow(ctx, g, { back }))}</ul>` : ''}
+${orphans.length ? h`<h2>${ctx.t('give.otherGifts')}</h2><ul class="gifts">${orphans.map((g) => giftRow(ctx, g, { back, others: participants }))}</ul>` : ''}
 
 ${candidates.length ? h`<section class="card">
   <form method="post" action="/admin/give/occasions/${occasion.id}/participants" class="row">

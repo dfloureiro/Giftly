@@ -245,3 +245,8 @@ ul.checklist > li:not(.done) { border-left: 5px solid var(--line); }
 .progress-card progress { width: 100%; height: 10px; accent-color: var(--ok); }
 .progress-card p { margin: .3rem 0; }
 form.inline.status-form { display: flex; gap: 6px; align-items: center; }
+
+/* joint gifts */
+details.joint > summary { font-size: .9rem; }
+.joint-people { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; }
+.joint-line { margin: 2px 0 0; color: var(--muted); }

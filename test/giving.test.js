@@ -234,3 +234,60 @@ test('profile reminders: validation, test button needs a channel, then sends wha
     await maria.post('/admin/profile/notifications', {}, { from: '/admin/profile' });
   }
 });
+
+test('joint gift: one Christmas gift for a couple counts for both (once in totals); birthdays stay individual', async () => {
+  const bd = (n) => ({ birthday_day: String(Number(inDays(n).slice(8))), birthday_month: String(Number(inDays(n).slice(5, 7))) });
+  const ana = await addPerson(diogo, { name: 'Couple Ana', ...bd(5) });
+  const rui = await addPerson(diogo, { name: 'Couple Rui', ...bd(6) });
+  const xmas = await addOccasion(diogo, { name: 'Couple Christmas', date: inDays(30), people: [ana, rui] });
+
+  const joint = await addGift(maria, { person: ana, occasion: `occasion:${xmas}`, also: String(rui), name: 'Weekend away', status: 'bought', price: '40' });
+  const list = await page(diogo, `/admin/give/occasions/${xmas}`);
+  assert.match(list, /2 of 2 people already have a gift/);
+  assert.match(list, /Total spent: €40\.00/, 'counted once');
+  assert.equal(list.split(`id="gift-${joint}"`).length - 1, 1, 'anchor rendered once');
+  assert.match(await page(diogo, `/admin/give/people/${rui}`), /Weekend away[\s\S]*Joint with Couple Ana/);
+
+  // Individual birthday gift for Ana only; Rui's birthday still has none.
+  await addGift(maria, { person: ana, occasion: `birthday:${inDays(5).slice(0, 4)}`, name: 'Ana birthday book', status: 'bought' });
+  const up = await page(maria, '/admin/give');
+  const near = (name) => {
+    const i = up.indexOf(name.replace("'", '&#39;')); // the page escapes the apostrophe
+    assert.ok(i >= 0, `${name} listed`);
+    return up.slice(i, i + 500);
+  };
+  assert.match(near("Couple Ana's birthday"), /has a gift/);
+  assert.match(near("Couple Rui's birthday"), /no gift yet/, 'the joint Christmas gift does not count for a birthday');
+  assert.ok(!(await page(maria, `/admin/give/people/${rui}`)).includes('Ana birthday book'));
+
+  // Deleting Ana keeps the joint gift for Rui.
+  await diogo.post(`/admin/give/people/${ana}/delete`, {}, { from: '/admin/give/people' });
+  assert.match(await page(diogo, `/admin/give/people/${rui}`), /Weekend away/);
+});
+
+test('joint gift with a private person: hidden from the other admin; you cannot add people you cannot see', async () => {
+  const shared = await addPerson(diogo, { name: 'Open Partner' });
+  const hidden = await addPerson(diogo, { name: 'Hidden Partner', visibility: 'private' });
+  const occ = await addOccasion(diogo, { name: 'Joint privacy', date: inDays(40), people: [shared] });
+  await addGift(diogo, { person: shared, occasion: `occasion:${occ}`, also: String(hidden), name: 'Secret joint', status: 'bought' });
+  assert.ok(!(await page(maria, `/admin/give/people/${shared}`)).includes('Secret joint'));
+  assert.match(await page(maria, `/admin/give/occasions/${occ}`), /0 of 1 people/);
+
+  // Maria tries to make her gift joint with Diogo's private person: silently ignored.
+  const g = await addGift(maria, { person: shared, occasion: `occasion:${occ}`, also: String(hidden), name: 'Maria gift' });
+  assert.ok(!(await page(diogo, `/admin/give/people/${hidden}`)).includes('Maria gift'));
+  assert.ok(g > 0);
+});
+
+test('marking "gives Christmas" adds the person to this year\'s Christmas if it exists', async () => {
+  const cy = TODAY > `${YEAR}-12-25` ? YEAR + 1 : YEAR;
+  const r = await diogo.post('/admin/give/occasions/christmas', { year: String(cy) }, { from: '/admin/give/occasions' });
+  const id = idFrom(r.location, 'occasions');
+  await addPerson(diogo, { name: 'New Xmas Friend', gives_christmas: '1' });
+  const later = await addPerson(diogo, { name: 'Later Xmas Friend' });
+  assert.ok(!(await page(diogo, `/admin/give/occasions/${id}`)).includes('<strong>Later Xmas Friend</strong>'));
+  await diogo.post(`/admin/give/people/${later}`, { name: 'Later Xmas Friend', gives_christmas: '1' }, { from: `/admin/give/people/${later}` });
+  const html = await page(diogo, `/admin/give/occasions/${id}`);
+  assert.match(html, /<strong>New Xmas Friend<\/strong>/);
+  assert.match(html, /<strong>Later Xmas Friend<\/strong>/);
+});

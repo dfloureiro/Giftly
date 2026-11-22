@@ -78,6 +78,7 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
     const { f, error } = personForm(ctx.body);
     if (error) return html(ctx.res, gv.peoplePage(ctx, { list: withNextBirthday(people.list(uidOf(ctx))), form: f, error: ctx.t(error) }), 400);
     const id = people.create(uidOf(ctx), f);
+    if (f.gives_christmas) joinCurrentChristmas(uidOf(ctx), id);
     redirect(ctx.res, `/admin/give/people/${id}?m=created`);
   }, A);
 
@@ -89,6 +90,7 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
       next,
       history: gifts.forPerson(uid, person.id),
       choices: occasionChoices(uid, person, next),
+      others: people.list(uid).filter((p) => p.id !== person.id),
       ...extra,
     }), status);
   }
@@ -106,6 +108,7 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
     const { f, error } = personForm(ctx.body);
     if (error) return renderPerson(ctx, person, { personForm: f, personError: ctx.t(error) }, 400);
     people.update(uid, person.id, f);
+    if (f.gives_christmas && !person.gives_christmas) joinCurrentChristmas(uid, person.id);
     redirect(ctx.res, `/admin/give/people/${person.id}?m=saved`);
   }, A);
 
@@ -267,6 +270,19 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
 
   const giftError = (ctx, error, to) => html(ctx.res, gv.errorBack(ctx, ctx.t(error), to), 400);
 
+  /** Other people a joint gift is also for ("also" checkboxes); only people this admin can see. */
+  function alsoFor(ctx, mainId) {
+    const uid = uidOf(ctx);
+    return [].concat(ctx.body.also ?? []).map(Number)
+      .filter((id) => id && id !== mainId && people.get(uid, id));
+  }
+
+  /** "Gives Christmas" people join this year's Christmas automatically if it exists and hasn't passed. */
+  function joinCurrentChristmas(uid, personId) {
+    const xmas = occasions.christmasOf(uid, christmasYear());
+    if (xmas && xmas.date >= today()) occasions.addParticipant(uid, xmas.id, personId);
+  }
+
   route('POST', '/admin/give/gifts', (ctx) => {
     const uid = uidOf(ctx);
     const person = people.get(uid, Number(ctx.body.person_id));
@@ -290,7 +306,9 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
     } else {
       return giftError(ctx, 'give.pickOccasion', to);
     }
-    const id = gifts.create(uid, { ...f, person_id: person.id, occasion_id: occasionId, year });
+    const also = alsoFor(ctx, person.id);
+    if (occasionId) for (const pid of also) occasions.addParticipant(uid, occasionId, pid);
+    const id = gifts.create(uid, { ...f, person_id: person.id, person_ids: also, occasion_id: occasionId, year });
     applyUpload(id, ctx.body.image_data);
     enqueuePreview(id, { kind: 'gift' });
     redirect(ctx.res, withMsg(to, 'giftAdded', `gift-${id}`));
@@ -305,6 +323,11 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
     if (error) return giftError(ctx, error, to);
     if (ctx.body.remove_image === '1') f.image_source = '';
     gifts.update(uid, gift.id, f);
+    if (ctx.body.also_present === '1') {
+      const also = alsoFor(ctx, gift.person_id);
+      gifts.setPeople(gift.id, [gift.person_id, ...also]);
+      if (gift.occasion_id) for (const pid of also) occasions.addParticipant(uid, gift.occasion_id, pid);
+    }
     const uploaded = applyUpload(gift.id, ctx.body.image_data);
     if (!uploaded && ctx.body.remove_image === '1') clearPreview(gift.id, 'removed', 'gift');
     if (!uploaded && f.image_source && f.image_source !== gift.image_source) enqueuePreview(gift.id, { force: true, kind: 'gift' });

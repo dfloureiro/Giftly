@@ -2,7 +2,8 @@
 //
 // PRIVACY RULE (the only place it lives): a row is visible to user U when
 //   visibility = 'shared'  OR  owner_id = U
-// and a gift is only visible when its person (and its occasion, if any) is visible too.
+// and a gift is only visible when ALL its people (joint gifts can have several) and its
+// occasion, if any, are visible too.
 // Every read in this module goes through `visible()` / `GIFT_VISIBLE`, including counts
 // and totals, so private entries never leak into another admin's views.
 import { db, tx } from './db.js';
@@ -12,7 +13,11 @@ const now = () => Date.now();
 
 /** SQL condition: row `alias` is visible to the user bound as $uid. */
 const visible = (alias) => `(${alias}.visibility = 'shared' OR ${alias}.owner_id = $uid)`;
-const GIFT_VISIBLE = `${visible('g')} AND ${visible('p')} AND (g.occasion_id IS NULL OR ${visible('o')})`;
+const GIFT_VISIBLE = `${visible('g')} AND ${visible('p')} AND (g.occasion_id IS NULL OR ${visible('o')})
+  AND NOT EXISTS (SELECT 1 FROM gift_people gpv JOIN people pv ON pv.id = gpv.person_id
+                  WHERE gpv.gift_id = g.id AND NOT ${visible('pv')})`;
+/** SQL condition: the gift is (also) for person $pid. */
+const FOR_PERSON = 'EXISTS (SELECT 1 FROM gift_people gpf WHERE gpf.gift_id = g.id AND gpf.person_id = $pid)';
 const GIFT_FROM = `FROM gifts g JOIN people p ON p.id = g.person_id LEFT JOIN occasions o ON o.id = g.occasion_id`;
 
 export const VISIBILITIES = ['shared', 'private'];
@@ -79,7 +84,14 @@ export const people = {
   },
   delete(uid, id) {
     if (!people.get(uid, id)) return false;
-    db.prepare('DELETE FROM people WHERE id = ?').run(id);
+    tx(() => {
+      // Joint gifts whose main person this is move to another of their people (not deleted).
+      for (const { gift_id } of db.prepare('SELECT gift_id FROM gift_people WHERE person_id = ?').all(id)) {
+        const other = db.prepare('SELECT person_id FROM gift_people WHERE gift_id = ? AND person_id != ? LIMIT 1').get(gift_id, id);
+        if (other) db.prepare('UPDATE gifts SET person_id = ? WHERE id = ? AND person_id = ?').run(other.person_id, gift_id, id);
+      }
+      db.prepare('DELETE FROM people WHERE id = ?').run(id);
+    });
     return true;
   },
 };
@@ -151,36 +163,53 @@ export const occasions = {
 
 // ---------- gifts ----------
 
-const GIFT_COLS = 'g.*, p.name AS person_name, o.name AS occasion_name, o.type AS occasion_type, o.date AS occasion_date';
+const GIFT_COLS = `g.*, p.name AS person_name, o.name AS occasion_name, o.type AS occasion_type, o.date AS occasion_date,
+  (SELECT group_concat(gpn.person_id) FROM gift_people gpn WHERE gpn.gift_id = g.id) AS people_ids_csv`;
+
+/** Add `people` ([{ id, name }], main person first) to gift rows. */
+function withPeople(rows) {
+  const list = Array.isArray(rows) ? rows : [rows];
+  const nameOf = db.prepare('SELECT id, name FROM people WHERE id = ?');
+  for (const g of list) {
+    if (!g) continue;
+    const ids = String(g.people_ids_csv || g.person_id).split(',').map(Number);
+    ids.sort((a, b) => (a === g.person_id ? -1 : b === g.person_id ? 1 : a - b));
+    g.people = ids.map((id) => nameOf.get(id)).filter(Boolean);
+    g.joint = g.people.length > 1;
+  }
+  return rows;
+}
 
 export const gifts = {
   get(uid, id) {
-    return db.prepare(`SELECT ${GIFT_COLS} ${GIFT_FROM} WHERE g.id = $id AND ${GIFT_VISIBLE}`).get({ uid, id }) ?? null;
+    return withPeople(db.prepare(`SELECT ${GIFT_COLS} ${GIFT_FROM} WHERE g.id = $id AND ${GIFT_VISIBLE}`).get({ uid, id }) ?? null);
   },
   /** For background jobs (images/prices): no user context, never shown to anyone directly. */
   raw: (id) => db.prepare('SELECT * FROM gifts WHERE id = ?').get(id),
   forPerson(uid, personId) {
-    return db.prepare(`SELECT ${GIFT_COLS} ${GIFT_FROM} WHERE g.person_id = $pid AND ${GIFT_VISIBLE}
-      ORDER BY g.year DESC, COALESCE(o.date, '') DESC, g.id`).all({ uid, pid: personId });
+    return withPeople(db.prepare(`SELECT ${GIFT_COLS} ${GIFT_FROM} WHERE ${FOR_PERSON} AND ${GIFT_VISIBLE}
+      ORDER BY g.year DESC, COALESCE(o.date, '') DESC, g.id`).all({ uid, pid: personId }));
   },
   forOccasion(uid, occasionId) {
-    return db.prepare(`SELECT ${GIFT_COLS} ${GIFT_FROM} WHERE g.occasion_id = $oid AND ${GIFT_VISIBLE}
-      ORDER BY g.id`).all({ uid, oid: occasionId });
+    return withPeople(db.prepare(`SELECT ${GIFT_COLS} ${GIFT_FROM} WHERE g.occasion_id = $oid AND ${GIFT_VISIBLE}
+      ORDER BY g.id`).all({ uid, oid: occasionId }));
   },
   forBirthday(uid, personId, year) {
-    return db.prepare(`SELECT ${GIFT_COLS} ${GIFT_FROM} WHERE g.person_id = $pid AND g.occasion_id IS NULL AND g.year = $y
-      AND ${GIFT_VISIBLE} ORDER BY g.id`).all({ uid, pid: personId, y: year });
+    return withPeople(db.prepare(`SELECT ${GIFT_COLS} ${GIFT_FROM} WHERE ${FOR_PERSON} AND g.occasion_id IS NULL AND g.year = $y
+      AND ${GIFT_VISIBLE} ORDER BY g.id`).all({ uid, pid: personId, y: year }));
   },
   /** What a person got for the same kind of occasion the year before. */
   previous(uid, personId, { type, year }) {
     if (type === 'birthday') return gifts.forBirthday(uid, personId, year - 1);
     if (type !== 'christmas') return [];
-    return db.prepare(`SELECT ${GIFT_COLS} ${GIFT_FROM} WHERE g.person_id = $pid AND o.type = 'christmas'
-      AND substr(o.date, 1, 4) = $y AND ${GIFT_VISIBLE} ORDER BY g.id`).all({ uid, pid: personId, y: String(year - 1) });
+    return withPeople(db.prepare(`SELECT ${GIFT_COLS} ${GIFT_FROM} WHERE ${FOR_PERSON} AND o.type = 'christmas'
+      AND substr(o.date, 1, 4) = $y AND ${GIFT_VISIBLE} ORDER BY g.id`).all({ uid, pid: personId, y: String(year - 1) }));
   },
+  /** `f.person_ids` (optional) adds co-recipients for a joint gift; `f.person_id` is the main one. */
   create(uid, f) {
     const t = now();
-    return Number(db.prepare(`INSERT INTO gifts
+    return tx(() => {
+      const id = Number(db.prepare(`INSERT INTO gifts
       (person_id, occasion_id, year, name, url, notes, status, price_cents, price_currency, price_source,
        visibility, owner_id, image_source, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
@@ -188,6 +217,20 @@ export const gifts = {
       f.price_cents ?? null, f.price_cents != null ? f.price_currency : null, f.price_cents != null ? 'manual' : '',
       f.visibility ?? 'shared', uid, f.image_source ?? '', t, t,
     ).lastInsertRowid);
+      gifts.setPeople(id, [f.person_id, ...(f.person_ids ?? [])]);
+      return id;
+    });
+  },
+  /** Replace who a gift is for (first id = main person). Ids must already be checked as visible. */
+  setPeople(id, personIds) {
+    const ids = [...new Set(personIds.map(Number).filter(Boolean))];
+    if (!ids.length) return;
+    tx(() => {
+      db.prepare('DELETE FROM gift_people WHERE gift_id = ?').run(id);
+      const ins = db.prepare('INSERT INTO gift_people (gift_id, person_id) VALUES (?, ?)');
+      for (const pid of ids) ins.run(id, pid);
+      db.prepare('UPDATE gifts SET person_id = ? WHERE id = ?').run(ids[0], id);
+    });
   },
   /**
    * Edit a gift. Price rule: the shop's price (from the link) wins; a typed price is only
@@ -262,7 +305,7 @@ export function checklist(uid, occasion) {
   const year = Number(occasion.date.slice(0, 4));
   const all = gifts.forOccasion(uid, occasion.id);
   const rows = occasions.participants(uid, occasion.id).map((person) => {
-    const mine = all.filter((g) => g.person_id === person.id);
+    const mine = all.filter((g) => g.people.some((x) => x.id === person.id));
     return {
       person,
       gifts: mine,
@@ -272,7 +315,7 @@ export function checklist(uid, occasion) {
   });
   // Gifts for people who are no longer participants still count (and are listed).
   const ids = new Set(rows.map((r) => r.person.id));
-  const orphans = all.filter((g) => !ids.has(g.person_id));
+  const orphans = all.filter((g) => !g.people.some((x) => ids.has(x.id)));
   return {
     rows,
     orphans,
