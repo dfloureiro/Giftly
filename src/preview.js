@@ -18,7 +18,7 @@ export const IMAGE_DIR = join(config.dataDir, 'images');
 mkdirSync(IMAGE_DIR, { recursive: true });
 
 const UA = 'Mozilla/5.0 (compatible; GiftlyLinkPreview/1.0; +https://github.com/dfloureiro/giftly)';
-const PAGE_LIMIT = 1.5 * 1024 * 1024;
+const PAGE_LIMIT = 3 * 1024 * 1024;
 const IMAGE_LIMIT = 5 * 1024 * 1024;
 const TIMEOUT_MS = 10_000;
 
@@ -130,6 +130,48 @@ function findProduct(node) {
   return findProduct(node['@graph']);
 }
 
+/**
+ * Fallback for shops that don't publish og:image (notably Amazon):
+ * look for well-known product-image markup in the page body.
+ */
+function imageFromMarkup(html) {
+  // Amazon: main product image (#landingImage) or book cover (#imgBlkFront).
+  for (const id of ['landingImage', 'imgBlkFront', 'ebooksImgBlkFront']) {
+    const tag = html.match(new RegExp(`<img\\b[^>]*\\bid=["']${id}["'][^>]*>`, 'i'));
+    if (!tag) continue;
+    const a = attrs(tag[0]);
+    if (a['data-old-hires']) return resizeKnownCdn(a['data-old-hires']);
+    if (a['data-a-dynamic-image']) {
+      try {
+        // {"url": [w, h], ...} — take the largest.
+        const best = Object.entries(JSON.parse(a['data-a-dynamic-image']))
+          .sort(([, x], [, y]) => y[0] * y[1] - x[0] * x[1])[0];
+        if (best) return resizeKnownCdn(best[0]);
+      } catch { /* ignore */ }
+    }
+    if (a.src && !a.src.startsWith('data:')) return resizeKnownCdn(a.src);
+  }
+  // schema.org microdata: <img itemprop="image" src="…"> / <link itemprop="image" href="…">
+  for (const m of html.matchAll(/<(?:img|link)\b[^>]*\bitemprop=["']image["'][^>]*>/gi)) {
+    const a = attrs(m[0]);
+    const src = a.src || a.href || a['data-src'];
+    if (src && !src.startsWith('data:')) return src;
+  }
+  return undefined;
+}
+
+/** Ask Amazon's image CDN for a ~500px version instead of the 1500px original. */
+function resizeKnownCdn(url) {
+  try {
+    const u = new URL(url);
+    if (/(^|\.)media-amazon\.com$|(^|\.)ssl-images-amazon\.com$/.test(u.hostname)) {
+      u.pathname = u.pathname.replace(/\._[^/]+_\.(jpg|jpeg|png|webp)$/i, '._AC_SL500_.$1');
+      return u.toString();
+    }
+  } catch { /* ignore */ }
+  return url;
+}
+
 export function parseMeta(html, baseUrl) {
   const meta = {};
   for (const m of html.matchAll(/<meta\b[^>]*>/gi)) {
@@ -151,7 +193,8 @@ export function parseMeta(html, baseUrl) {
   const ldImage = product && [].concat(product.image || [])[0];
   const image = meta['og:image:secure_url'] || meta['og:image'] || meta['og:image:url'] ||
     meta['twitter:image'] || meta['twitter:image:src'] ||
-    (typeof ldImage === 'string' ? ldImage : ldImage?.url) || linkImage || meta.image;
+    (typeof ldImage === 'string' ? ldImage : ldImage?.url) || linkImage || meta.image ||
+    imageFromMarkup(html);
 
   const titleTag = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
   const title = meta['og:title'] || meta['twitter:title'] || product?.name || (titleTag && decode(titleTag[1]).trim());

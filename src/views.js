@@ -127,7 +127,7 @@ function thumb(ctx, it, { admin = false } = {}) {
 
 function previewStatus(ctx, it) {
   if (it.preview_status === 'pending') return h`<p class="small muted" data-preview-status="${it.id}">${ctx.t('preview.pending')}</p>`;
-  if (it.preview_status === 'failed') return h`<p class="small muted">${ctx.t('preview.failed')}</p>`;
+  if (it.preview_status === 'failed' || it.preview_status === 'none') return h`<p class="small muted">${ctx.t('preview.failed')}</p>`;
   return '';
 }
 
