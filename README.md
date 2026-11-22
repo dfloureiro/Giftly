@@ -9,6 +9,23 @@ Self-hosted gift lists for families and friends.
 - Optional **notifications** (ntfy, Telegram, Discord/Slack webhook) when someone picks a gift.
 - The admin always shows everything: who picked what and when, and who joined.
 
+<p align="center">
+  <img src="docs/screenshots/guest-list.png" alt="A guest's view of a gift list: their own pick at the top, available gifts with images, prices and shop links below" width="720">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/join-mobile.png" alt="Joining a list on a phone: only a name is needed" width="240">
+  &nbsp;
+  <img src="docs/screenshots/guest-mobile-dark.png" alt="The gift list on a phone in dark mode" width="240">
+</p>
+
+<details>
+<summary><strong>Admin view</strong></summary>
+<p align="center">
+  <img src="docs/screenshots/admin-list.png" alt="Admin page of a list: share link, every gift with who reserved it and when, and edit/release/reorder/delete actions" width="720">
+</p>
+</details>
+
 Available in **Portuguese (pt-PT)** and **English**. The language follows the visitor's browser, and every page has a PT/EN switch.
 
 No accounts, no email, no tracking. It is a single small container with a SQLite file, and the code has zero npm dependencies.
