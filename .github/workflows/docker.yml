@@ -14,18 +14,21 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Smoke test
         run: |
           docker build -t giftly-test .
-          docker run -d --name t -e ADMIN_PASSWORD=ci-password-123 -p 3000:3000 giftly-test
+          # No published ports: checks run inside the container, so nothing on the runner can clash.
+          docker run -d --name t -e ADMIN_PASSWORD=ci-password-123 giftly-test
           trap 'docker logs t; docker rm -f t' EXIT
-          for i in $(seq 1 20); do curl -fsS 127.0.0.1:3000/healthz && break; sleep 1; done
-          for url in 127.0.0.1:3000 localhost:3000; do
-            body=$(curl -fsS "$url/")
+          check() { docker exec t wget -qO- "http://$1:3000$2"; }
+          for i in $(seq 1 20); do check 127.0.0.1 /healthz && break; sleep 1; done
+          for host in 127.0.0.1 localhost; do
+            body=$(check "$host" /)
             grep -q Giftly <<<"$body"
           done
+          docker exec t sh -c 'ps -o user,args | grep -q "^node .*server.js"'   # runs unprivileged
 
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
