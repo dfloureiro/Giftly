@@ -187,6 +187,13 @@ const migrations = [
     SELECT g.id FROM guests g WHERE g.list_id = items.list_id AND g.name = items.reserved_name
   ) WHERE reserved_guest_id IS NULL AND reserved_name IS NOT NULL;
   `,
+  // v11: optional two-factor authentication (TOTP) per admin, with one-time recovery codes.
+  `
+  ALTER TABLE users ADD COLUMN totp_secret TEXT;
+  ALTER TABLE users ADD COLUMN totp_pending TEXT;
+  ALTER TABLE users ADD COLUMN totp_last_counter INTEGER NOT NULL DEFAULT -1;
+  ALTER TABLE users ADD COLUMN recovery_codes TEXT NOT NULL DEFAULT '[]';
+  `,
 ];
 
 {

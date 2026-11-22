@@ -258,3 +258,12 @@ details.reserve-for > summary::-webkit-details-marker { display: none; }
 details.reserve-for[open] { display: block; flex: 1 1 100%; }
 details.reserve-for > form { margin-top: .6rem; }
 .reserved-for-you { margin: .3rem 0 0; }
+
+/* two-factor */
+ol.steps { padding-left: 1.2rem; display: grid; gap: 1rem; margin: 0; }
+ol.steps li > form { margin-top: .5rem; }
+.qr { margin: .8rem 0; }
+.qr svg { display: block; background: #fff; border-radius: 8px; max-width: 100%; height: auto; }
+code.secret { font-size: 1rem; letter-spacing: .05em; word-break: break-all; }
+ul.recovery-codes { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 16px; }
+ul.recovery-codes code { font-size: 1.05rem; }

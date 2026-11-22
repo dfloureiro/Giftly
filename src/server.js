@@ -16,12 +16,15 @@ import { registerGivingRoutes } from './givingRoutes.js';
 import { startReminders, parseReminderDays, remindUser } from './reminders.js';
 import { userChannels } from './notify.js';
 import { notify, notifyStatus, saveNotifySettings } from './notify.js';
-import { users, sessions, links, checkLogin, hashPassword, verifyPassword, validateAccount, SESSION_DAYS } from './accounts.js';
+import { users, sessions, links, checkLogin, hashPassword, verifyPassword, validateAccount, checkSecondFactor, SESSION_DAYS } from './accounts.js';
+import { newSecret, verifyTotp, otpauthUri, newRecoveryCodes } from './totp.js';
+import { qrSvg } from './qr.js';
 import { bootstrapAccounts } from './bootstrap.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const GUEST_COOKIE = 'giftly_guest';
 const SESSION_COOKIE = 'giftly_session';
+const TWO_FACTOR_COOKIE = 'giftly_2fa';
 const LANG_COOKIE = 'giftly_lang';
 const LANGS = ['pt', 'en'];
 const DAY = 86_400_000;
@@ -171,6 +174,9 @@ const FLASH = {
   welcome: ['success', 'account.welcome'],
   giftAdded: ['success', 'give.giftAdded'],
   reservedFor: ['success', 'admin.reservedDone'],
+  twofaOff: ['success', 'tf.disabled'],
+  twofaReset: ['success', 'tf.resetDone'],
+  recoveryUsed: ['error', 'tf.recoveryUsed'],
   remindersSent: ['success', 'remind.testSent'],
   remindersNone: ['success', 'remind.testNone'],
   remindersNoChannel: ['error', 'remind.noChannel'],
@@ -305,10 +311,99 @@ route('POST', '/admin/logout', (ctx) => {
   redirect(ctx.res, '/admin', [cookie(ctx.req, SESSION_COOKIE, '', 0)]);
 }, { auth: 'admin' });
 
-function startSession(ctx, userId, to) {
+/**
+ * Log a user in. If they use two-factor authentication and haven't given a code yet,
+ * ask for it first (the password step is remembered for 5 minutes in a signed cookie).
+ */
+function startSession(ctx, userId, to, { secondFactorDone = false } = {}) {
+  const user = users.get(userId);
+  if (user?.totp_secret && !secondFactorDone) {
+    const pending = tokens.signTwoFactor({ u: userId, to, exp: Date.now() + 5 * 60_000 });
+    return redirect(ctx.res, '/admin/login/2fa', [cookie(ctx.req, TWO_FACTOR_COOKIE, pending, 5 * 60_000)]);
+  }
   const token = sessions.create(userId);
-  redirect(ctx.res, to, [cookie(ctx.req, SESSION_COOKIE, token, SESSION_DAYS * DAY)]);
+  redirect(ctx.res, to, [
+    cookie(ctx.req, SESSION_COOKIE, token, SESSION_DAYS * DAY),
+    cookie(ctx.req, TWO_FACTOR_COOKIE, '', 0),
+  ]);
 }
+
+// ----- two-factor: login step -----
+
+const pendingTwoFactor = (ctx) => {
+  const p = tokens.verifyTwoFactor(ctx.cookies[TWO_FACTOR_COOKIE]);
+  const user = p && users.get(p.u);
+  return user?.totp_secret ? { user, to: String(p.to || '/admin') } : null;
+};
+
+route('GET', '/admin/login/2fa', (ctx) => {
+  if (!pendingTwoFactor(ctx)) return redirect(ctx.res, '/admin');
+  html(ctx.res, views.twoFactorLoginPage(ctx));
+});
+
+route('POST', '/admin/login/2fa', (ctx) => {
+  const pending = pendingTwoFactor(ctx);
+  if (!pending) return redirect(ctx.res, '/admin');
+  const key = `2fa:${pending.user.id}`;
+  if (!rateLimit(key, 6, 15 * 60_000)) return html(ctx.res, views.twoFactorLoginPage(ctx, { error: ctx.t('login.tooMany') }), 429);
+  const how = checkSecondFactor(pending.user, ctx.body.code);
+  if (!how) return html(ctx.res, views.twoFactorLoginPage(ctx, { error: ctx.t('tf.badCode') }), 401);
+  resetRateLimit(key);
+  const to = !pending.to.startsWith('/admin') ? '/admin' : how === 'recovery'
+    ? `/admin/profile/2fa?m=recoveryUsed&n=${users.recoveryHashes(pending.user.id).length}`
+    : pending.to;
+  startSession(ctx, pending.user.id, to, { secondFactorDone: true });
+});
+
+// ----- two-factor: set up and manage (profile) -----
+
+function renderTwoFactor(ctx, extra = {}, status = 200) {
+  const user = users.get(ctx.user.id);
+  if (user.totp_secret) {
+    return html(ctx.res, views.twoFactorManagePage(ctx, { user, remaining: users.recoveryHashes(user.id).length, required: config.require2fa, ...extra }), status);
+  }
+  const secret = users.totpPending(user.id, newSecret());
+  const uri = otpauthUri({ secret, account: user.username, issuer: config.siteTitle || 'Giftly' });
+  html(ctx.res, views.twoFactorSetupPage(ctx, { secret, qr: qrSvg(uri, { label: ctx.t('tf.qrLabel') }), required: config.require2fa, ...extra }), status);
+}
+
+route('GET', '/admin/profile/2fa', (ctx) => renderTwoFactor(ctx), { auth: 'admin' });
+
+route('POST', '/admin/profile/2fa/confirm', (ctx) => {
+  const user = users.get(ctx.user.id);
+  if (user.totp_secret || !user.totp_pending) return redirect(ctx.res, '/admin/profile/2fa');
+  const counter = verifyTotp(user.totp_pending, ctx.body.code);
+  if (counter == null) return renderTwoFactor(ctx, { error: ctx.t('tf.badCode') }, 400);
+  const { codes, hashes } = newRecoveryCodes();
+  users.enableTotp(user.id, { secret: user.totp_pending, counter, recoveryHashes: hashes });
+  sessions.deleteForUser(user.id, ctx.cookies[SESSION_COOKIE]); // other devices must log in with a code
+  html(ctx.res, views.recoveryCodesPage(ctx, { codes, justEnabled: true }));
+}, { auth: 'admin' });
+
+route('POST', '/admin/profile/2fa/recovery', (ctx) => {
+  if (!checkSecondFactor(users.get(ctx.user.id), ctx.body.code)) return renderTwoFactor(ctx, { error: ctx.t('tf.badCode') }, 400);
+  const { codes, hashes } = newRecoveryCodes();
+  users.setRecoveryHashes(ctx.user.id, hashes);
+  html(ctx.res, views.recoveryCodesPage(ctx, { codes }));
+}, { auth: 'admin' });
+
+route('POST', '/admin/profile/2fa/disable', async (ctx) => {
+  if (config.require2fa) return renderTwoFactor(ctx, { error: ctx.t('tf.requiredCantDisable') }, 403);
+  const user = users.get(ctx.user.id);
+  if (!(await verifyPassword(ctx.body.password ?? '', user.password_hash))) return renderTwoFactor(ctx, { error: ctx.t('account.badCurrent') }, 400);
+  if (!checkSecondFactor(user, ctx.body.code)) return renderTwoFactor(ctx, { error: ctx.t('tf.badCode') }, 400);
+  users.disableTotp(user.id);
+  redirect(ctx.res, '/admin/profile?m=twofaOff');
+}, { auth: 'admin' });
+
+// Another admin turns off someone's 2FA (lost phone and recovery codes).
+route('POST', '/admin/users/:id/2fa/disable', (ctx) => {
+  const target = users.get(Number(ctx.params.id));
+  if (!target || target.id === ctx.user.id) return notFound(ctx);
+  users.disableTotp(target.id);
+  sessions.deleteForUser(target.id);
+  redirect(ctx.res, '/admin/users?m=twofaReset');
+}, { auth: 'admin' });
 
 // ----- profile -----
 
@@ -736,6 +831,11 @@ async function handle(req, res) {
   else sessionCookie = ctx.cookies[GUEST_COOKIE] || '';
 
   if (r.auth === 'admin' && !ctx.isAdmin) return redirect(res, '/admin');
+  // REQUIRE_2FA: logged-in admins without two-factor can only set it up (or log out).
+  if (config.require2fa && ctx.user && !ctx.user.totp_secret && path.startsWith('/admin')
+      && !path.startsWith('/admin/profile/2fa') && path !== '/admin/logout') {
+    return redirect(res, '/admin/profile/2fa?required=1');
+  }
   if (r.auth === 'guest') {
     const list = lists.byToken(ctx.params.token);
     ctx.session = list && !list.archived ? sessionFor(ctx, list) : null;

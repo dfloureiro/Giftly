@@ -30,6 +30,8 @@ export const config = {
   siteTitle: env.SITE_TITLE || '',
   // Currency for prices typed by hand (shop prices keep their own currency).
   currency: /^[A-Z]{3}$/.test(env.CURRENCY || '') ? env.CURRENCY : 'EUR',
+  // Require two-factor authentication for every admin (default: optional per user).
+  require2fa: ['1', 'true', 'yes'].includes(String(env.REQUIRE_2FA ?? 'false').toLowerCase()),
   // Hour of the day (0–23, in TZ) when daily reminders are sent.
   reminderHour: Number.isInteger(Number(env.REMINDER_HOUR)) && env.REMINDER_HOUR !== '' && Number(env.REMINDER_HOUR) >= 0 && Number(env.REMINDER_HOUR) <= 23
     ? Number(env.REMINDER_HOUR) : 9,

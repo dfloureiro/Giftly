@@ -5,6 +5,8 @@ const b64 = (buf) => Buffer.from(buf).toString('base64url');
 
 // Admin sessions are random tokens stored in the database (see accounts.js);
 // guest sessions are signed cookies.
+// Short-lived proof that the password was right, while the second factor is asked.
+const twoFactorKey = createHash('sha256').update(config.sessionSecret + '\0two-factor').digest();
 const guestKey = createHash('sha256').update(config.sessionSecret + '\0guest').digest();
 
 function sign(key, payload) {
@@ -30,6 +32,8 @@ function verify(key, token) {
 }
 
 export const tokens = {
+  signTwoFactor: (p) => sign(twoFactorKey, p),
+  verifyTwoFactor: (t) => verify(twoFactorKey, t),
   signGuest: (p) => sign(guestKey, p),
   verifyGuest: (t) => verify(guestKey, t),
 };

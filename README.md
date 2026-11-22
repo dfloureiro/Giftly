@@ -87,6 +87,7 @@ docker run -d --name giftly -p 3000:3000 \
 | `TRUST_PROXY` | `true` | Trust `CF-Connecting-IP` / `X-Forwarded-*`. Set to `false` if the app is exposed directly. |
 | `COOKIE_SECURE` | `auto` | `auto` sets `Secure` cookies when the request came over HTTPS. |
 | `SESSION_SECRET` | generated | Generated once and stored in `/data` if not set. |
+| `REQUIRE_2FA` | `false` | Require two-factor authentication for every admin. |
 | `CURRENCY` | `EUR` | Currency for prices typed by hand in *Gifts to give*. |
 | `REMINDER_HOUR` | `9` | Hour of the day (0–23, in `TZ`) when daily reminders are sent. |
 | `PORT` | `3000` | |
@@ -102,6 +103,8 @@ Each admin has their own account (username and password, no email needed).
   docker exec giftly node scripts/reset-password.js <username>
   docker exec giftly node scripts/invite.js          # or: a link to create a new admin account
   ```
+- **Two-factor authentication (optional):** in *Profile → Two-factor authentication*, scan the QR code with any authenticator app (Google Authenticator, Aegis, 1Password, Bitwarden…) and confirm with a code. You get 10 single-use recovery codes. Logins then ask for the 6-digit code; a code can't be reused, and attempts are rate limited. New-password links also ask for the code. If someone loses their phone and recovery codes, another admin can turn their 2FA off in *Admins*, or run `docker exec giftly node scripts/disable-2fa.js <username>`.
+- **Require 2FA for everyone:** set `REQUIRE_2FA=true`. Admins without 2FA can only set it up after logging in, and nobody can turn it off.
 - Passwords are hashed with scrypt; sessions and links are random tokens and only their hashes are stored. Logins are rate limited.
 
 **Upgrading from 1.x:** keep `ADMIN_PASSWORD` set for the first start of 2.0 (optionally with `ADMIN_USERNAME`, default `admin`). Giftly creates that account and moves your notification settings to it. You can then remove `ADMIN_PASSWORD` and any `NOTIFY_*` variables.

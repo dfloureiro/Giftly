@@ -5,6 +5,7 @@
 import { randomBytes, scrypt as scryptCb, timingSafeEqual, createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 import { db, tx } from './db.js';
+import { verifyTotp, useRecoveryCode } from './totp.js';
 
 const scrypt = promisify(scryptCb);
 const now = () => Date.now();
@@ -75,7 +76,50 @@ export const users = {
     db.prepare('UPDATE users SET notify_events = ? WHERE id = ?').run(events, id);
   },
   delete: (id) => db.prepare('DELETE FROM users WHERE id = ?').run(id),
+
+  // ----- two-factor authentication -----
+  /** The secret being set up (created once, kept until confirmed or cancelled). */
+  totpPending(id, newSecret) {
+    const u = users.get(id);
+    if (u.totp_pending) return u.totp_pending;
+    db.prepare('UPDATE users SET totp_pending = ? WHERE id = ?').run(newSecret, id);
+    return newSecret;
+  },
+  enableTotp(id, { secret, counter, recoveryHashes }) {
+    db.prepare(`UPDATE users SET totp_secret = ?, totp_pending = NULL, totp_last_counter = ?, recovery_codes = ?
+      WHERE id = ?`).run(secret, counter, JSON.stringify(recoveryHashes), id);
+  },
+  disableTotp(id) {
+    db.prepare("UPDATE users SET totp_secret = NULL, totp_pending = NULL, totp_last_counter = -1, recovery_codes = '[]' WHERE id = ?").run(id);
+  },
+  /** Remember the last accepted TOTP step, so a code can't be used twice. */
+  setTotpCounter(id, counter) {
+    db.prepare('UPDATE users SET totp_last_counter = ? WHERE id = ?').run(counter, id);
+  },
+  recoveryHashes: (id) => JSON.parse(users.get(id)?.recovery_codes || '[]'),
+  setRecoveryHashes(id, hashes) {
+    db.prepare('UPDATE users SET recovery_codes = ? WHERE id = ?').run(JSON.stringify(hashes), id);
+  },
 };
+
+/**
+ * Check a second-factor code for a user: a 6-digit TOTP (not reused) or a one-time recovery
+ * code (then used up). Returns 'totp' | 'recovery' | null.
+ */
+export function checkSecondFactor(user, code) {
+  if (!user?.totp_secret) return null;
+  const counter = verifyTotp(user.totp_secret, code, { after: user.totp_last_counter });
+  if (counter != null) {
+    users.setTotpCounter(user.id, counter);
+    return 'totp';
+  }
+  const left = useRecoveryCode(users.recoveryHashes(user.id), code);
+  if (left) {
+    users.setRecoveryHashes(user.id, left);
+    return 'recovery';
+  }
+  return null;
+}
 
 /** Returns a translation key for an invalid username/name/password, or null. */
 export function validateAccount({ username, name, password, confirm }, { exceptUserId = 0, requirePassword = true } = {}) {

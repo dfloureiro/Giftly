@@ -65,7 +65,7 @@ function layout(ctx, { title, body, bodyClass = '' }) {
 <link rel="manifest" href="/site.webmanifest">
 <meta name="theme-color" content="#C8553D">
 <meta name="apple-mobile-web-app-title" content="${site}">
-<link rel="stylesheet" href="/static/style.css?v=15">
+<link rel="stylesheet" href="/static/style.css?v=16">
 <script src="/static/app.js?v=4" defer></script>
 </head>
 <body class="${bodyClass}">
@@ -550,6 +550,14 @@ ${adminHeader(ctx)}
 
 ${notifySection(ctx, notify, notifyErrors)}
 
+<section class="card" id="two-factor">
+  <h2>${ctx.t('tf.heading')}</h2>
+  <p>${user.totp_secret ? h`<span class="pill ok">✓ ${ctx.t('tf.on')}</span>` : h`<span class="pill">${ctx.t('tf.off')}</span>`}
+    ${config.require2fa ? h` <span class="small muted">${ctx.t('tf.requiredNote')}</span>` : ''}</p>
+  <p class="small muted">${ctx.t('tf.intro')}</p>
+  <a class="button secondary" href="/admin/profile/2fa">${user.totp_secret ? ctx.t('tf.manage') : ctx.t('tf.enable')}</a>
+</section>
+
 <section class="card" id="reminders">
   <h2>${ctx.t('remind.heading')}</h2>
   <p class="small muted">${ctx.t('remind.intro', { hour: String(config.reminderHour).padStart(2, '0') })}</p>
@@ -589,11 +597,12 @@ ${newLink ? h`
   <thead><tr><th>${ctx.t('account.name')}</th><th>${ctx.t('account.username')}</th><th></th></tr></thead>
   <tbody>
     ${all.map((u) => h`<tr>
-      <td>${u.name}${u.id === ctx.user.id ? h` <span class="badge">${ctx.t('account.you')}</span>` : ''}</td>
+      <td>${u.name}${u.id === ctx.user.id ? h` <span class="badge">${ctx.t('account.you')}</span>` : ''}${u.totp_secret ? h` <span class="badge" title="${ctx.t('tf.on')}">2FA</span>` : ''}</td>
       <td><code>${u.username}</code></td>
       <td class="row-actions">${u.id === ctx.user.id
         ? h`<a href="/admin/profile">${ctx.t('account.profile')}</a>`
         : h`${postButton(ctx, `/admin/users/${u.id}/reset-link`, ctx.t('account.resetLink'), { cls: 'link' })}
+            ${u.totp_secret ? postButton(ctx, `/admin/users/${u.id}/2fa/disable`, ctx.t('tf.resetOther'), { cls: 'link', confirm: ctx.t('tf.resetOtherConfirm', { name: u.name }) }) : ''}
             ${postButton(ctx, `/admin/users/${u.id}/delete`, ctx.t('admin.delete'), { cls: 'link danger', confirm: ctx.t('account.deleteConfirm', { name: u.name }) })}`}</td>
     </tr>`)}
   </tbody>
@@ -646,6 +655,112 @@ export function resetPage(ctx, { token, user, error }) {
     ${passwordFields(ctx)}
     <button type="submit" class="primary">${ctx.t('account.setPassword')}</button>
   </form>
+</section>`,
+  });
+}
+
+// ---------- two-factor authentication ----------
+
+function codeInput(ctx, { autofocus = true, recovery = false } = {}) {
+  return h`<label>${recovery ? ctx.t('tf.codeOrRecovery') : ctx.t('tf.code')}
+    <input name="code" required inputmode="${recovery ? 'text' : 'numeric'}" autocomplete="one-time-code" maxlength="12" autocapitalize="none" spellcheck="false"${autofocus ? raw(' autofocus') : ''}>
+  </label>`;
+}
+
+export function twoFactorLoginPage(ctx, { error } = {}) {
+  return layout(ctx, {
+    title: ctx.t('tf.heading'),
+    bodyClass: 'center',
+    body: h`
+<section class="card narrow">
+  <img class="logo" src="/favicon.svg" alt="" width="72" height="72">
+  <h1>${ctx.t('tf.loginTitle')}</h1>
+  <p class="muted">${ctx.t('tf.loginIntro')}</p>
+  ${error ? h`<div class="flash flash-error" role="alert">${error}</div>` : ''}
+  <form method="post" action="/admin/login/2fa" class="stack">
+    ${codeInput(ctx, { recovery: true })}
+    <button type="submit" class="primary">${ctx.t('login.submit')}</button>
+  </form>
+  <p class="small muted">${ctx.t('tf.lostPhone')}</p>
+</section>`,
+  });
+}
+
+export function twoFactorSetupPage(ctx, { secret, qr, required, error }) {
+  const grouped = secret.match(/.{1,4}/g).join(' ');
+  return layout(ctx, {
+    title: ctx.t('tf.heading'),
+    body: h`
+${adminHeader(ctx)}
+<h1>${ctx.t('tf.setupTitle')}</h1>
+${required ? h`<div class="flash flash-error" role="alert">${ctx.t('tf.requiredFlash')}</div>` : ''}
+${error ? h`<div class="flash flash-error" role="alert">${error}</div>` : ''}
+<section class="card">
+  <ol class="steps">
+    <li>${ctx.t('tf.step1')}</li>
+    <li>${ctx.t('tf.step2')}
+      <div class="qr">${raw(qr)}</div>
+      <details><summary class="small">${ctx.t('tf.cantScan')}</summary>
+        <p class="small">${ctx.t('tf.manualKey')}</p>
+        <p><code class="secret">${grouped}</code></p>
+      </details>
+    </li>
+    <li>${ctx.t('tf.step3')}
+      <form method="post" action="/admin/profile/2fa/confirm" class="stack">
+        ${csrfField(ctx)}
+        ${codeInput(ctx)}
+        <button type="submit" class="primary">${ctx.t('tf.activate')}</button>
+      </form>
+    </li>
+  </ol>
+</section>`,
+  });
+}
+
+export function twoFactorManagePage(ctx, { remaining, required, error }) {
+  return layout(ctx, {
+    title: ctx.t('tf.heading'),
+    body: h`
+${adminHeader(ctx)}
+<h1>${ctx.t('tf.heading')} <span class="pill ok">✓ ${ctx.t('tf.on')}</span></h1>
+${error ? h`<div class="flash flash-error" role="alert">${error}</div>` : ''}
+<section class="card">
+  <h2>${ctx.t('tf.recoveryHeading')}</h2>
+  <p>${ctx.t('tf.recoveryLeft', { n: remaining })}</p>
+  <form method="post" action="/admin/profile/2fa/recovery" class="stack">
+    ${csrfField(ctx)}
+    ${codeInput(ctx, { autofocus: false })}
+    <button type="submit" class="secondary">${ctx.t('tf.newRecovery')}</button>
+  </form>
+</section>
+<section class="card">
+  <h2>${ctx.t('tf.disableHeading')}</h2>
+  ${required ? h`<p class="small muted">${ctx.t('tf.requiredCantDisable')}</p>` : h`
+  <form method="post" action="/admin/profile/2fa/disable" class="stack">
+    ${csrfField(ctx)}
+    <label>${ctx.t('account.currentPassword')}
+      <input type="password" name="password" required autocomplete="current-password">
+    </label>
+    ${codeInput(ctx, { autofocus: false, recovery: true })}
+    <button type="submit" class="danger">${ctx.t('tf.disable')}</button>
+  </form>`}
+</section>
+<p><a href="/admin/profile">← ${ctx.t('account.profile')}</a></p>`,
+  });
+}
+
+export function recoveryCodesPage(ctx, { codes, justEnabled = false }) {
+  return layout(ctx, {
+    title: ctx.t('tf.recoveryHeading'),
+    body: h`
+${adminHeader(ctx)}
+${justEnabled ? h`<div class="flash flash-success" role="status">${ctx.t('tf.enabledDone')}</div>` : ''}
+<h1>${ctx.t('tf.recoveryHeading')}</h1>
+<section class="card">
+  <p><strong>${ctx.t('tf.saveTheseCodes')}</strong></p>
+  <ul class="recovery-codes">${codes.map((c) => h`<li><code>${c}</code></li>`)}</ul>
+  <p class="small muted">${ctx.t('tf.codesOnce')}</p>
+  <a class="button primary" href="/admin/profile">${ctx.t('tf.savedContinue')}</a>
 </section>`,
   });
 }
