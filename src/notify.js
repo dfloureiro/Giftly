@@ -69,7 +69,7 @@ function buildChannels(s) {
     channels.push({
       name: 'ntfy',
       send: ({ title, message, click }) => post(`${ntfy.origin}/`, {
-        topic: ntfy.topic, title, message, tags: ['gift'], ...(click && { click }),
+        topic: ntfy.topic, title, message, tags: ['gift'], ...(click && { click }), ...(iconUrl() && { icon: iconUrl() }),
       }, s.ntfy_token ? { Authorization: `Bearer ${s.ntfy_token}` } : {}),
     });
   }
@@ -87,6 +87,8 @@ function buildChannels(s) {
       name: 'webhook',
       // `content` → Discord, `text` → Slack; the rest is for custom integrations.
       send: ({ title, message, click, event, data }) => post(s.webhook_url, {
+        username: 'Giftly',
+        ...(iconUrl() && { avatar_url: iconUrl(), icon_url: iconUrl() }),
         content: `**${title}**\n${message}`,
         text: `*${title}*\n${message}`,
         event, title, message, url: click, ...data,
@@ -147,6 +149,11 @@ async function post(url, body, headers = {}) {
   });
   if (!res.ok) throw new Error(`HTTP ${res.status} ${(await res.text()).slice(0, 200)}`);
 }
+
+const iconUrl = () => {
+  const base = (env.BASE_URL || '').replace(/\/$/, '');
+  return base ? `${base}/icon-192.png` : undefined;
+};
 
 function adminUrl(list) {
   const base = (env.BASE_URL || '').replace(/\/$/, '');

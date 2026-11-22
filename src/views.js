@@ -59,8 +59,13 @@ function layout(ctx, { title, body, bodyClass = '' }) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>${title ? `${title} · ${site}` : site}</title>
-<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/static/style.css?v=5">
+<link rel="icon" href="/favicon.ico" sizes="32x32">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/site.webmanifest">
+<meta name="theme-color" content="#C8553D">
+<meta name="apple-mobile-web-app-title" content="${site}">
+<link rel="stylesheet" href="/static/style.css?v=6">
 <script src="/static/app.js?v=3" defer></script>
 </head>
 <body class="${bodyClass}">
@@ -85,7 +90,7 @@ export function homePage(ctx, { sessions }) {
     bodyClass: 'center',
     body: h`
 <section class="card narrow">
-  <div class="logo" aria-hidden="true">🎁</div>
+  <img class="logo" src="/favicon.svg" alt="" width="72" height="72">
   <h1>${site}</h1>
   ${sessions.length ? h`
     <p class="muted">${ctx.t('home.yourLists')}</p>
@@ -103,7 +108,7 @@ export function joinPage(ctx, { list, name = '', error } = {}) {
     bodyClass: 'center',
     body: h`
 <section class="card narrow">
-  <div class="logo" aria-hidden="true">🎁</div>
+  <img class="logo" src="/favicon.svg" alt="" width="72" height="72">
   <h1>${list.title}</h1>
   ${list.description ? h`<p class="description">${list.description}</p>` : ''}
   <p class="muted">${ctx.t('join.intro')}</p>

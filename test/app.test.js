@@ -19,6 +19,24 @@ test('health check and security headers', async () => {
   assert.equal(home.headers.get('x-frame-options'), 'DENY');
 });
 
+test('app icons and web manifest are served', async () => {
+  const c = new Client(server.base);
+  for (const [path, type] of [
+    ['/favicon.ico', 'image/x-icon'], ['/favicon.svg', 'image/svg+xml'], ['/apple-touch-icon.png', 'image/png'],
+    ['/icon-192.png', 'image/png'], ['/icon-512.png', 'image/png'], ['/site.webmanifest', 'application/manifest+json'],
+  ]) {
+    const r = await c.get(path);
+    assert.equal(r.status, 200, path);
+    assert.equal(r.headers.get('content-type'), type, path);
+  }
+  const manifest = JSON.parse((await c.get('/site.webmanifest')).text);
+  assert.equal(manifest.name, 'Giftly');
+  const home = (await c.get('/')).text;
+  assert.match(home, /rel="apple-touch-icon" href="\/apple-touch-icon.png"/);
+  assert.match(home, /rel="manifest" href="\/site.webmanifest"/);
+  assert.match((await c.get('/')).headers.get('content-security-policy'), /manifest-src 'self'/);
+});
+
 test('admin pages require login, wrong password is refused', async () => {
   const c = new Client(server.base);
   const r = await c.get('/admin/lists/1');

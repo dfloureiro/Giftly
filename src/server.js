@@ -24,7 +24,15 @@ const DAY = 86_400_000;
 const STATIC = {
   '/static/style.css': ['text/css; charset=utf-8', readFileSync(join(ROOT, 'public/style.css'))],
   '/static/app.js': ['text/javascript; charset=utf-8', readFileSync(join(ROOT, 'public/app.js'))],
-  '/static/favicon.svg': ['image/svg+xml', readFileSync(join(ROOT, 'public/favicon.svg'))],
+  // App icons live at the root, where browsers and phones look for them by default.
+  ...Object.fromEntries([
+    ['favicon.ico', 'image/x-icon'],
+    ['favicon.svg', 'image/svg+xml'],
+    ['apple-touch-icon.png', 'image/png'],
+    ['icon-192.png', 'image/png'],
+    ['icon-512.png', 'image/png'],
+    ['site.webmanifest', 'application/manifest+json'],
+  ].map(([file, type]) => [`/${file}`, [type, readFileSync(join(ROOT, 'public/icons', file))]])),
 };
 
 // ---------- request helpers ----------
@@ -107,7 +115,7 @@ function cleanUrl(v) {
 // ---------- response helpers ----------
 
 const SECURITY_HEADERS = {
-  'Content-Security-Policy': "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+  'Content-Security-Policy': "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:; manifest-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'no-referrer',
   'X-Frame-Options': 'DENY',

@@ -1,4 +1,8 @@
-# 🎁 Giftly
+<p align="center">
+  <img src="public/icons/icon-192.png" alt="Giftly" width="96" height="96">
+</p>
+
+<h1 align="center">Giftly</h1>
 
 Self-hosted gift lists for families and friends.
 
