@@ -17,17 +17,15 @@ function loadSecret() {
   return secret;
 }
 
-if (!env.ADMIN_PASSWORD || env.ADMIN_PASSWORD.length < 8) {
-  console.error('ADMIN_PASSWORD must be set (at least 8 characters).');
-  process.exit(1);
-}
 
 export const config = {
   port: env.PORT ? Number(env.PORT) : 3000, // 0 = random free port (tests)
   // Unset = Node's default: all interfaces, IPv6 and IPv4 (dual-stack) when available.
   host: env.HOST || undefined,
   dataDir,
-  adminPassword: env.ADMIN_PASSWORD,
+  // Only used on first start, to create the first account when none exists.
+  bootstrapUsername: (env.ADMIN_USERNAME || 'admin').trim().toLowerCase(),
+  bootstrapPassword: env.ADMIN_PASSWORD || '',
   sessionSecret: loadSecret(),
   siteTitle: env.SITE_TITLE || '',
   lang: (env.APP_LANG || 'pt').toLowerCase().startsWith('en') ? 'en' : 'pt',

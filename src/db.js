@@ -64,6 +64,44 @@ const migrations = [
   `
   ALTER TABLE lists ADD COLUMN anonymous INTEGER NOT NULL DEFAULT 0;
   `,
+  // v6: user accounts (replace the single ADMIN_PASSWORD), per-user notifications;
+  // anonymous lists were dropped (all admins see who reserved what).
+  `
+  CREATE TABLE users (
+    id INTEGER PRIMARY KEY,
+    username TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    notify_events TEXT NOT NULL DEFAULT 'pick,unpick',
+    created_at INTEGER NOT NULL
+  );
+  CREATE TABLE sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX sessions_user ON sessions(user_id);
+  -- Invites create a new account; with user_id set, the token is a password reset for that user.
+  CREATE TABLE invites (
+    id INTEGER PRIMARY KEY,
+    token_hash TEXT NOT NULL UNIQUE,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    expires_at INTEGER NOT NULL,
+    used_at INTEGER,
+    created_at INTEGER NOT NULL
+  );
+  CREATE TABLE notification_channels (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    type TEXT NOT NULL,
+    config TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    UNIQUE (user_id, type)
+  );
+  ALTER TABLE lists DROP COLUMN anonymous;
+  `,
 ];
 
 {
@@ -133,14 +171,14 @@ export const lists = {
   byToken(token) {
     return db.prepare('SELECT * FROM lists WHERE token = ?').get(token);
   },
-  create({ title, description, anonymous }) {
+  create({ title, description }) {
     return Number(db.prepare(
-      'INSERT INTO lists (title, description, anonymous, token, created_at) VALUES (?, ?, ?, ?, ?)'
-    ).run(title, description, anonymous ? 1 : 0, newToken(), now()).lastInsertRowid);
+      'INSERT INTO lists (title, description, token, created_at) VALUES (?, ?, ?, ?)'
+    ).run(title, description, newToken(), now()).lastInsertRowid);
   },
-  update(id, { title, description, archived, anonymous }) {
-    db.prepare('UPDATE lists SET title = ?, description = ?, archived = ?, anonymous = ? WHERE id = ?')
-      .run(title, description, archived ? 1 : 0, anonymous ? 1 : 0, id);
+  update(id, { title, description, archived }) {
+    db.prepare('UPDATE lists SET title = ?, description = ?, archived = ? WHERE id = ?')
+      .run(title, description, archived ? 1 : 0, id);
   },
   /** New secret link: the old one stops working and everyone is logged out of this list. */
   regenerateToken(id) {

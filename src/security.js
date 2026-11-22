@@ -3,9 +3,8 @@ import { config } from './config.js';
 
 const b64 = (buf) => Buffer.from(buf).toString('base64url');
 
-// Admin sessions are signed with a key that includes the admin password,
-// so changing ADMIN_PASSWORD invalidates existing admin sessions.
-const adminKey = createHash('sha256').update(config.sessionSecret + '\0' + config.adminPassword).digest();
+// Admin sessions are random tokens stored in the database (see accounts.js);
+// guest sessions are signed cookies.
 const guestKey = createHash('sha256').update(config.sessionSecret + '\0guest').digest();
 
 function sign(key, payload) {
@@ -31,8 +30,6 @@ function verify(key, token) {
 }
 
 export const tokens = {
-  signAdmin: (p) => sign(adminKey, p),
-  verifyAdmin: (t) => verify(adminKey, t),
   signGuest: (p) => sign(guestKey, p),
   verifyGuest: (t) => verify(guestKey, t),
 };

@@ -42,7 +42,7 @@ test('admin pages require login, wrong password is refused', async () => {
   const r = await c.get('/admin/lists/1');
   assert.equal(r.status, 303);
   assert.equal(r.location, '/admin');
-  const bad = await c.request('/admin/login', { method: 'POST', form: { password: 'nope' } });
+  const bad = await c.request('/admin/login', { method: 'POST', form: { username: 'admin', password: 'nope' } });
   assert.equal(bad.status, 401);
 });
 
@@ -188,52 +188,22 @@ test('language follows the browser and can be switched', async () => {
   assert.match((await c.get('/')).text, /<html lang="pt-PT"/);
 });
 
-test('anonymous lists hide who picked, in the admin and in notifications', async () => {
-  const hook = await webhookReceiver();
-  try {
-    const admin = await loginAdmin(server.base);
-    await admin.post('/admin/notifications', { webhook_url: hook.url, event_pick: '1' }, { from: '/admin' });
-    const { id, token } = await createList(admin, { title: 'My own list', anonymous: true, gifts: ['Surprise'] });
-    const guest = await joinList(server.base, token, 'Secret Santa');
-    const [gift] = await pickableIds(guest, token);
-    await guest.post(`/l/${token}/pick/${gift}`, {}, { from: `/l/${token}` });
-
-    const listPage = (await admin.get(`/admin/lists/${id}`)).text;
-    assert.match(listPage, /🎀 Reserved/);
-    assert.ok(!/Reserved by/.test(listPage));
-    assert.equal(listPage.split('Secret Santa').length - 1, 1, 'name only in the people table');
-    const editPage = (await admin.get(`/admin/items/${gift}`)).text;
-    assert.ok(!editPage.includes('Secret Santa'));
-    assert.ok(!editPage.includes('name="reserved_name"'));
-
-    for (let i = 0; i < 20 && !hook.calls.length; i++) await sleep(100);
-    assert.equal(hook.calls.length, 1);
-    assert.equal(hook.calls[0].event, 'pick');
-    assert.equal(hook.calls[0].guest, undefined);
-    assert.ok(!JSON.stringify(hook.calls[0]).includes('Secret Santa'));
-  } finally {
-    await hook.close();
-    const admin = await loginAdmin(server.base);
-    await admin.post('/admin/notifications', { event_pick: '1' }, { from: '/admin' });
-  }
-});
-
 test('notification settings: invalid topic is refused, secrets are never shown', async () => {
   const admin = await loginAdmin(server.base);
-  const bad = await admin.post('/admin/notifications', { ntfy_url: 'bad*topic&' }, { from: '/admin' });
+  const bad = await admin.post('/admin/profile/notifications', { ntfy_url: 'bad*topic&' }, { from: '/admin/profile' });
   assert.equal(bad.status, 400);
-  await admin.post('/admin/notifications', { ntfy_url: 'giftly-test_topic', ntfy_token: 'super-secret-token' }, { from: '/admin' });
-  const page = (await admin.get('/admin')).text;
+  await admin.post('/admin/profile/notifications', { ntfy_url: 'giftly-test_topic', ntfy_token: 'super-secret-token' }, { from: '/admin/profile' });
+  const page = (await admin.get('/admin/profile')).text;
   assert.match(page, /Active: ntfy/);
   assert.ok(!page.includes('super-secret-token'));
-  await admin.post('/admin/notifications', { ntfy_url: '', clear_ntfy_token: '1' }, { from: '/admin' });
-  assert.ok(!(await admin.get('/admin')).text.includes('Active:'));
+  await admin.post('/admin/profile/notifications', { ntfy_url: '', clear_ntfy_token: '1' }, { from: '/admin/profile' });
+  assert.ok(!(await admin.get('/admin/profile')).text.includes('Active:'));
 });
 
 // Keep last: it exhausts the admin login attempts for 127.0.0.1.
 test('admin login is rate limited', async () => {
   const c = new Client(server.base);
   let last;
-  for (let i = 0; i < 9; i++) last = await c.request('/admin/login', { method: 'POST', form: { password: 'wrong' } });
+  for (let i = 0; i < 9; i++) last = await c.request('/admin/login', { method: 'POST', form: { username: 'admin', password: 'wrong' } });
   assert.equal(last.status, 429);
 });

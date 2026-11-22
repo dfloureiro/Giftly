@@ -8,14 +8,17 @@ import { fileURLToPath } from 'node:url';
 import http from 'node:http';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+export const ADMIN_USERNAME = 'admin';
 export const ADMIN_PASSWORD = 'test-password-123';
 
-export async function startServer(extraEnv = {}) {
-  const dataDir = await mkdtemp(join(tmpdir(), 'giftly-test-'));
+/** Start a server. Pass `dataDir` to restart on existing data (it is then not deleted on stop). */
+export async function startServer(extraEnv = {}, { dataDir: existing } = {}) {
+  const dataDir = existing ?? await mkdtemp(join(tmpdir(), 'giftly-test-'));
   const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', 'src/server.js'], {
     cwd: ROOT,
     env: {
       ...process.env,
+      ADMIN_USERNAME,
       ADMIN_PASSWORD,
       DATA_DIR: dataDir,
       PORT: '0',
@@ -41,11 +44,12 @@ export async function startServer(extraEnv = {}) {
   });
   return {
     base: `http://127.0.0.1:${port}`,
+    dataDir,
     logs: () => log,
-    async stop() {
+    async stop({ keepData = !!existing } = {}) {
       child.kill('SIGTERM');
       await new Promise((r) => child.once('exit', r));
-      await rm(dataDir, { recursive: true, force: true });
+      if (!keepData) await rm(dataDir, { recursive: true, force: true });
     },
   };
 }
@@ -90,16 +94,27 @@ export class Client {
   }
 }
 
-export async function loginAdmin(base) {
+export async function loginAdmin(base, { username = ADMIN_USERNAME, password = ADMIN_PASSWORD } = {}) {
   const admin = new Client(base);
-  const r = await admin.request('/admin/login', { method: 'POST', form: { password: ADMIN_PASSWORD } });
-  if (r.status !== 303) throw new Error(`admin login failed: ${r.status}`);
+  const r = await admin.request('/admin/login', { method: 'POST', form: { username, password } });
+  if (r.status !== 303) throw new Error(`admin login failed for ${username}: ${r.status}`);
   return admin;
 }
 
+/** Create a second admin through an invite link; returns a logged-in client. */
+export async function inviteAdmin(base, inviter, { username, name = username, password = 'second-password-1' }) {
+  const page = await inviter.post('/admin/users/invite', {}, { from: '/admin/users' });
+  const token = /\/invite\/([A-Za-z0-9_-]{16,64})/.exec(page.text)?.[1];
+  if (!token) throw new Error('no invite link in page');
+  const c = new Client(base);
+  const r = await c.request(`/invite/${token}`, { method: 'POST', form: { username, name, password, confirm: password } });
+  if (r.status !== 303) throw new Error(`invite accept failed: ${r.status}\n${r.text.slice(0, 500)}`);
+  return c;
+}
+
 /** Create a list (and optional gifts) through the admin; returns { id, token }. */
-export async function createList(admin, { title = 'Test list', anonymous = false, gifts = [] } = {}) {
-  const r = await admin.post('/admin/lists', { title, ...(anonymous && { anonymous: '1' }) }, { from: '/admin' });
+export async function createList(admin, { title = 'Test list', gifts = [] } = {}) {
+  const r = await admin.post('/admin/lists', { title }, { from: '/admin' });
   const id = Number(/\/admin\/lists\/(\d+)/.exec(r.location)?.[1]);
   if (gifts.length) {
     await admin.post(`/admin/lists/${id}/items/bulk`, { lines: gifts.join('\n') }, { from: `/admin/lists/${id}` });

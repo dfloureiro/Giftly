@@ -12,6 +12,7 @@ WORKDIR /app
 COPY package.json ./
 COPY src ./src
 COPY public ./public
+COPY scripts ./scripts
 COPY docker-entrypoint.sh /usr/local/bin/
 
 RUN mkdir -p /data && chown node:node /data

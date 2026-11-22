@@ -6,15 +6,18 @@ import { dirname, join } from 'node:path';
 import { config } from './config.js';
 import { db, lists, guests, items } from './db.js';
 import { tokens, csrfFor, safeEqual, rateLimit, resetRateLimit } from './security.js';
+
 import { makeT } from './i18n.js';
 import * as views from './views.js';
 import { IMAGE_DIR, IMAGE_FILE_RE, IMAGE_TYPES, removeImage, saveImageBuffer, sweepImages } from './preview.js';
 import { enqueuePreview, clearPreview, startPreviewQueue } from './previewQueue.js';
 import { notify, notifyStatus, saveNotifySettings } from './notify.js';
+import { users, sessions, links, checkLogin, hashPassword, verifyPassword, validateAccount, SESSION_DAYS } from './accounts.js';
+import { bootstrapAccounts } from './bootstrap.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const GUEST_COOKIE = 'giftly_guest';
-const ADMIN_COOKIE = 'giftly_admin';
+const SESSION_COOKIE = 'giftly_session';
 const LANG_COOKIE = 'giftly_lang';
 const LANGS = ['pt', 'en'];
 const DAY = 86_400_000;
@@ -155,6 +158,8 @@ const FLASH = {
   deleted: ['success', 'admin.deleted'],
   released: ['success', 'admin.released'],
   newLink: ['success', 'admin.newLinkDone'],
+  passwordChanged: ['success', 'account.passwordChanged'],
+  welcome: ['success', 'account.welcome'],
   notifyOk: ['success', 'notify.testOk'],
   notifySaved: ['success', 'admin.saved'],
   notifyFail: ['error', 'notify.testFail'],
@@ -260,50 +265,160 @@ route('POST', '/l/:token/unpick/:id', (ctx) => {
 // ----- admin -----
 
 route('GET', '/admin', (ctx) => {
-  if (!ctx.isAdmin) return html(ctx.res, views.adminLoginPage(ctx));
-  html(ctx.res, views.adminDashboard(ctx, { all: lists.all(), form: {}, notify: notifyStatus() }));
+  if (!ctx.user) return html(ctx.res, views.adminLoginPage(ctx, { noAccounts: users.count() === 0 }));
+  html(ctx.res, views.adminDashboard(ctx, { all: lists.all(), form: {} }));
 });
 
-route('POST', '/admin/login', (ctx) => {
-  const ip = clientIp(ctx.req);
-  const key = `admin:${ip}`;
-  if (!rateLimit(key, 8, 15 * 60_000)) {
-    return html(ctx.res, views.adminLoginPage(ctx, { error: ctx.t('login.tooMany') }), 429);
-  }
-  if (!safeEqual(ctx.body.password || '', config.adminPassword)) {
-    return html(ctx.res, views.adminLoginPage(ctx, { error: ctx.t('admin.bad') }), 401);
-  }
-  resetRateLimit(key);
-  const token = tokens.signAdmin({ a: 1, exp: Date.now() + 14 * DAY });
-  redirect(ctx.res, '/admin', [cookie(ctx.req, ADMIN_COOKIE, token, 14 * DAY)]);
+route('POST', '/admin/login', async (ctx) => {
+  const username = clean(ctx.body.username, 64).toLowerCase();
+  const ipKey = `login:${clientIp(ctx.req)}`;
+  const userKey = `login-user:${username}`;
+  const fail = (error, status) => html(ctx.res, views.adminLoginPage(ctx, { username, error }), status);
+  if (!rateLimit(ipKey, 8, 15 * 60_000) || !rateLimit(userKey, 10, 15 * 60_000)) return fail(ctx.t('login.tooMany'), 429);
+  const user = await checkLogin(username, String(ctx.body.password ?? ''));
+  if (!user) return fail(ctx.t('account.badLogin'), 401);
+  resetRateLimit(ipKey);
+  resetRateLimit(userKey);
+  startSession(ctx, user.id, '/admin');
 });
-
-route('POST', '/admin/notifications', (ctx) => {
-  const { errors, values } = saveNotifySettings(ctx.body);
-  if (errors.length) {
-    const notify = notifyStatus();
-    notify.values = { ...notify.values, ...values, events: values.events.split(',').filter(Boolean) };
-    return html(ctx.res, views.adminDashboard(ctx, { all: lists.all(), form: {}, notify, notifyErrors: errors }), 400);
-  }
-  redirect(ctx.res, '/admin?m=notifySaved#notifications');
-}, { auth: 'admin' });
-
-route('POST', '/admin/notify-test', async (ctx) => {
-  const results = await notify('test');
-  const ok = results.length && results.every((r) => r.ok);
-  redirect(ctx.res, `/admin?m=${ok ? 'notifyOk' : 'notifyFail'}#notifications`);
-}, { auth: 'admin' });
 
 route('POST', '/admin/logout', (ctx) => {
-  redirect(ctx.res, '/admin', [cookie(ctx.req, ADMIN_COOKIE, '', 0)]);
+  sessions.delete(ctx.cookies[SESSION_COOKIE]);
+  redirect(ctx.res, '/admin', [cookie(ctx.req, SESSION_COOKIE, '', 0)]);
 }, { auth: 'admin' });
+
+function startSession(ctx, userId, to) {
+  const token = sessions.create(userId);
+  redirect(ctx.res, to, [cookie(ctx.req, SESSION_COOKIE, token, SESSION_DAYS * DAY)]);
+}
+
+// ----- profile -----
+
+function renderProfile(ctx, extra = {}, status = 200) {
+  html(ctx.res, views.profilePage(ctx, { user: ctx.user, notify: notifyStatus(ctx.user.id), ...extra }), status);
+}
+
+route('GET', '/admin/profile', (ctx) => renderProfile(ctx), { auth: 'admin' });
+
+route('POST', '/admin/profile', (ctx) => {
+  const form = { username: clean(ctx.body.username, 64), name: clean(ctx.body.name, 80) };
+  const error = validateAccount(form, { exceptUserId: ctx.user.id, requirePassword: false });
+  if (error) return renderProfile(ctx, { profileForm: form, profileError: ctx.t(error) }, 400);
+  users.updateProfile(ctx.user.id, form);
+  redirect(ctx.res, '/admin/profile?m=saved');
+}, { auth: 'admin' });
+
+route('POST', '/admin/profile/password', async (ctx) => {
+  const { current = '', password = '', confirm = '' } = ctx.body;
+  if (!(await verifyPassword(current, ctx.user.password_hash))) {
+    return renderProfile(ctx, { passwordError: ctx.t('account.badCurrent') }, 400);
+  }
+  const error = validateAccount({ password, confirm });
+  if (error) return renderProfile(ctx, { passwordError: ctx.t(error) }, 400);
+  users.setPassword(ctx.user.id, await hashPassword(password));
+  sessions.deleteForUser(ctx.user.id, ctx.cookies[SESSION_COOKIE]); // log out other devices
+  redirect(ctx.res, '/admin/profile?m=passwordChanged');
+}, { auth: 'admin' });
+
+route('POST', '/admin/profile/notifications', (ctx) => {
+  const { errors, values } = saveNotifySettings(ctx.user.id, ctx.body);
+  if (errors.length) {
+    const status = notifyStatus(ctx.user.id);
+    status.values = { ...status.values, ...values, events: values.events.split(',').filter(Boolean) };
+    return renderProfile(ctx, { notify: status, notifyErrors: errors }, 400);
+  }
+  redirect(ctx.res, '/admin/profile?m=notifySaved#notifications');
+}, { auth: 'admin' });
+
+route('POST', '/admin/profile/notify-test', async (ctx) => {
+  const results = await notify('test', {}, { onlyUserId: ctx.user.id });
+  const ok = results.length && results.every((r) => r.ok);
+  redirect(ctx.res, `/admin/profile?m=${ok ? 'notifyOk' : 'notifyFail'}#notifications`);
+}, { auth: 'admin' });
+
+// ----- users, invites and password resets -----
+
+function renderUsers(ctx, extra = {}, status = 200) {
+  html(ctx.res, views.usersPage(ctx, { all: users.all(), invites: links.pendingInvites(), ...extra }), status);
+}
+
+route('GET', '/admin/users', (ctx) => renderUsers(ctx), { auth: 'admin' });
+
+// The link is shown once, in this response (only its hash is stored).
+route('POST', '/admin/users/invite', (ctx) => {
+  const token = links.create({ createdBy: ctx.user.id });
+  renderUsers(ctx, { newLink: { kind: 'invite', url: `${baseUrl(ctx.req)}/invite/${token}` } });
+}, { auth: 'admin' });
+
+route('POST', '/admin/users/invites/:id/revoke', (ctx) => {
+  links.revoke(Number(ctx.params.id));
+  redirect(ctx.res, '/admin/users?m=deleted');
+}, { auth: 'admin' });
+
+route('POST', '/admin/users/:id/reset-link', (ctx) => {
+  const target = users.get(Number(ctx.params.id));
+  if (!target) return notFound(ctx);
+  const token = links.create({ createdBy: ctx.user.id, userId: target.id });
+  renderUsers(ctx, { newLink: { kind: 'reset', user: target, url: `${baseUrl(ctx.req)}/reset/${token}` } });
+}, { auth: 'admin' });
+
+route('POST', '/admin/users/:id/delete', (ctx) => {
+  const target = users.get(Number(ctx.params.id));
+  if (!target) return notFound(ctx);
+  if (target.id === ctx.user.id) return renderUsers(ctx, { error: ctx.t('account.cantDeleteSelf') }, 400);
+  users.delete(target.id); // cascades to sessions, channels and pending reset links
+  redirect(ctx.res, '/admin/users?m=deleted');
+}, { auth: 'admin' });
+
+// Public pages opened from an invite / reset link.
+function linkLimited(ctx) {
+  return !rateLimit(`link:${clientIp(ctx.req)}`, 20, 15 * 60_000);
+}
+
+route('GET', '/invite/:token', (ctx) => {
+  const link = links.find(ctx.params.token, 'invite');
+  if (!link) return html(ctx.res, views.errorPage(ctx, ctx.t('account.badLink')), 404);
+  html(ctx.res, views.invitePage(ctx, { token: ctx.params.token }));
+});
+
+route('POST', '/invite/:token', async (ctx) => {
+  if (linkLimited(ctx)) return html(ctx.res, views.errorPage(ctx, ctx.t('login.tooMany')), 429);
+  const link = links.find(ctx.params.token, 'invite');
+  if (!link) return html(ctx.res, views.errorPage(ctx, ctx.t('account.badLink')), 404);
+  const form = { username: clean(ctx.body.username, 64), name: clean(ctx.body.name, 80) };
+  const error = validateAccount({ ...form, password: ctx.body.password ?? '', confirm: ctx.body.confirm ?? '' });
+  if (error) return html(ctx.res, views.invitePage(ctx, { token: ctx.params.token, form, error: ctx.t(error) }), 400);
+  const passwordHash = await hashPassword(ctx.body.password);
+  if (!links.consume(link.id)) return html(ctx.res, views.errorPage(ctx, ctx.t('account.badLink')), 404);
+  const id = users.create({ ...form, passwordHash });
+  startSession(ctx, id, '/admin/profile?m=welcome');
+});
+
+route('GET', '/reset/:token', (ctx) => {
+  const link = links.find(ctx.params.token, 'reset');
+  if (!link) return html(ctx.res, views.errorPage(ctx, ctx.t('account.badLink')), 404);
+  html(ctx.res, views.resetPage(ctx, { token: ctx.params.token, user: users.get(link.user_id) }));
+});
+
+route('POST', '/reset/:token', async (ctx) => {
+  if (linkLimited(ctx)) return html(ctx.res, views.errorPage(ctx, ctx.t('login.tooMany')), 429);
+  const link = links.find(ctx.params.token, 'reset');
+  if (!link) return html(ctx.res, views.errorPage(ctx, ctx.t('account.badLink')), 404);
+  const user = users.get(link.user_id);
+  const error = validateAccount({ password: ctx.body.password ?? '', confirm: ctx.body.confirm ?? '' });
+  if (error) return html(ctx.res, views.resetPage(ctx, { token: ctx.params.token, user, error: ctx.t(error) }), 400);
+  const passwordHash = await hashPassword(ctx.body.password);
+  if (!links.consume(link.id)) return html(ctx.res, views.errorPage(ctx, ctx.t('account.badLink')), 404);
+  users.setPassword(user.id, passwordHash);
+  sessions.deleteForUser(user.id); // everywhere logged out, then logged in here
+  startSession(ctx, user.id, '/admin?m=passwordChanged');
+});
 
 function validateList(ctx, body) {
   const form = {
     title: clean(body.title, 120),
     description: cleanMultiline(body.description, 2000),
     archived: body.archived === '1',
-    anonymous: body.anonymous === '1',
   };
   return { form, error: form.title ? undefined : ctx.t('admin.titleRequired') };
 }
@@ -434,8 +549,7 @@ route('POST', '/admin/items/:id', (ctx) => {
   if (error) return html(ctx.res, views.adminItemPage(ctx, { item, list: lists.get(item.list_id), form, error }), 400);
   if (form.remove_image) form.image_source = '';
   items.update(item.id, form);
-  // Anonymous lists don't show (or let the admin edit) who reserved a gift.
-  if (!lists.get(item.list_id)?.anonymous) items.setManualReservation(item.id, form.reserved_name);
+  items.setManualReservation(item.id, form.reserved_name);
   const uploaded = applyUpload(item.id, ctx.body.image_data);
   if (!uploaded && form.remove_image) clearPreview(item.id);
   if (!uploaded && form.image_source && form.image_source !== item.image_source) {
@@ -545,7 +659,8 @@ async function handle(req, res) {
     params: {},
     body: {},
   };
-  ctx.isAdmin = !!tokens.verifyAdmin(ctx.cookies[ADMIN_COOKIE]);
+  ctx.user = sessions.user(ctx.cookies[SESSION_COOKIE]);
+  ctx.isAdmin = !!ctx.user;
 
   const m = url.searchParams.get('m');
   if (FLASH[m]) {
@@ -561,7 +676,7 @@ async function handle(req, res) {
 
   // Authentication
   let sessionCookie = '';
-  if (r.auth === 'admin' || path.startsWith('/admin')) sessionCookie = ctx.cookies[ADMIN_COOKIE] || '';
+  if (r.auth === 'admin' || path.startsWith('/admin')) sessionCookie = ctx.cookies[SESSION_COOKIE] || '';
   else sessionCookie = ctx.cookies[GUEST_COOKIE] || '';
 
   if (r.auth === 'admin' && !ctx.isAdmin) return redirect(res, '/admin');
@@ -583,6 +698,8 @@ async function handle(req, res) {
 
   await r.handler(ctx);
 }
+
+await bootstrapAccounts();
 
 const server = http.createServer((req, res) => {
   handle(req, res).catch((err) => {

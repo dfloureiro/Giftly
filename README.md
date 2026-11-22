@@ -10,7 +10,7 @@ Self-hosted gift lists for families and friends.
 - You share the list's **secret link**. People open it, type their name, and pick what they'll give.
 - A picked gift **disappears for everyone else**, so no two people buy the same thing.
 - Gifts with a link show the **shop's product image and price** automatically. Prices are re-checked daily and are never typed by hand.
-- Optional **notifications** (ntfy, Telegram, Discord/Slack webhook) when someone picks a gift, configured in the admin.
+- **Several admins**, each with their own account, and optional **notifications** (ntfy, Telegram, Discord/Slack webhook) when someone picks a gift.
 - The admin always shows everything: who picked what and when, and who joined.
 
 <p align="center">
@@ -42,18 +42,18 @@ No accounts, no email, no tracking. It is a single small container with a SQLite
 ```sh
 mkdir giftly && cd giftly
 curl -O https://raw.githubusercontent.com/dfloureiro/giftly/main/compose.yaml
-echo "ADMIN_PASSWORD=$(openssl rand -base64 18)" > .env
+printf 'ADMIN_USERNAME=me\nADMIN_PASSWORD=%s\n' "$(openssl rand -base64 18)" > .env
 cat .env                     # keep this password
 docker compose up -d
 ```
 
-Open <http://localhost:3000/admin>, log in, and create your first list.
+Open <http://localhost:3000/admin>, log in with that username and password, and create your first list. They are only used to create the first account; afterwards you can remove them from `.env`.
 
 Or with plain Docker:
 
 ```sh
 docker run -d --name giftly -p 3000:3000 \
-  -e ADMIN_PASSWORD=your-long-password \
+  -e ADMIN_USERNAME=me -e ADMIN_PASSWORD=your-long-password \
   -v giftly-data:/data \
   ghcr.io/dfloureiro/giftly:latest
 ```
@@ -62,7 +62,8 @@ docker run -d --name giftly -p 3000:3000 \
 
 | Variable | Default | |
 |---|---|---|
-| `ADMIN_PASSWORD` | — | **Required**, at least 8 characters. Changing it logs out admin sessions. |
+| `ADMIN_USERNAME` | `admin` | Username of the first account. Only used on the very first start. |
+| `ADMIN_PASSWORD` | — | Password of the first account (at least 8 characters). Only used on the very first start, when there are no accounts yet; ignored afterwards (with a warning). |
 | `APP_LANG` | `pt` | Fallback language (`pt` or `en`) when the browser asks for neither. |
 | `SITE_TITLE` | `Giftly` | Name shown on the home page and in the browser tab. |
 | `BASE_URL` | auto | Public URL used for the share link in the admin, e.g. `https://gifts.example.com`. |
@@ -73,9 +74,24 @@ docker run -d --name giftly -p 3000:3000 \
 | `SESSION_SECRET` | generated | Generated once and stored in `/data` if not set. |
 | `PORT` | `3000` | |
 
+## Admin accounts
+
+Each admin has their own account (username and password, no email needed).
+
+- **Add an admin:** *Admins → Create invite link* and send the link. It is valid for 48 hours, works once, and the person picks their own username and password.
+- **Profile:** change your name, username and password, and set up your notifications. Changing your password logs out your other devices.
+- **Forgot a password:** another admin opens *Admins* and creates a *New-password link* for that account. If nobody can log in, run this on the server; it prints a one-time link:
+  ```sh
+  docker exec giftly node scripts/reset-password.js <username>
+  docker exec giftly node scripts/invite.js          # or: a link to create a new admin account
+  ```
+- Passwords are hashed with scrypt; sessions and links are random tokens and only their hashes are stored. Logins are rate limited.
+
+**Upgrading from 1.x:** keep `ADMIN_PASSWORD` set for the first start of 2.0 (optionally with `ADMIN_USERNAME`, default `admin`). Giftly creates that account and moves your notification settings to it. You can then remove `ADMIN_PASSWORD` and any `NOTIFY_*` variables.
+
 ## Notifications
 
-You can get a message when someone picks or gives up a gift, or opens a list for the first time. Set it up in the admin under **Notifications**: choose the events, fill in one or more channels, and use **Send test notification**.
+Each admin sets up their own notifications under **Profile → Notifications**: which events (someone picks a gift, gives one up, or opens a list for the first time) and one or more channels. **Send test notification** sends only to you.
 
 | Channel | What you need |
 |---|---|
@@ -83,11 +99,9 @@ You can get a message when someone picks or gives up a gift, or opens a list for
 | Telegram | A bot token (from @BotFather) and your chat ID (send your bot a message, then open `https://api.telegram.org/bot<token>/getUpdates`). |
 | Discord / Slack / anything else | A webhook URL. It receives a JSON POST with `content` (Discord), `text` (Slack), plus `event`, `list`, `guest`, `item`, `price`, `item_url` and `url`. |
 
-Settings are stored in the database. Tokens are never shown back in the page: leave the field empty to keep the current one, or tick *Clear* to remove it. With `BASE_URL` set, each message links to the list in the admin. Messages use `APP_LANG`.
+Tokens are never shown back in the page: leave the field empty to keep the current one, or tick *Clear* to remove it. With `BASE_URL` set, each message links to the list in the admin. Messages use `APP_LANG`. A failing channel is logged and never affects guests.
 
 On ntfy.sh, anyone who knows the topic name can read it, so make it long and random (for example `giftly-` followed by `openssl rand -hex 12`).
-
-The `NOTIFY_NTFY_URL`, `NOTIFY_NTFY_TOKEN`, `NOTIFY_TELEGRAM_BOT_TOKEN`, `NOTIFY_TELEGRAM_CHAT_ID`, `NOTIFY_WEBHOOK_URL` and `NOTIFY_EVENTS` environment variables still work, but only as initial values: whatever you save in the admin takes precedence. An invalid setting never stops Giftly; that channel is disabled, and the problem is shown in the admin.
 
 ## Exposing it with Cloudflare Tunnel
 
@@ -107,7 +121,6 @@ Optionally, protect `/admin` with a Cloudflare Access policy for extra safety.
 - **Picks:** picks are atomic, so if two people click at the same moment, only one gets the gift. Guests can give up their own picks. In the admin you can release any gift, or mark one as reserved by name for someone who told you in person.
 - **Images:** when you add a link, the server fetches the page in the background, reads its Open Graph, Twitter card, JSON-LD or microdata product image (with Amazon-specific fallbacks), and **stores a copy of the image** in `/data/images`. Guests never load anything from the shops. Some shops block automated requests (e.g. Akamai-protected ones); in that case, **upload a photo** (resized in the browser) or paste an image link. An image is only ever replaced by another image.
 - **Prices:** prices only come from the shop link (`product:price`, JSON-LD offers, microdata, Amazon page data) and there is no price field. Available gifts are re-checked once a day, and the last known price is kept if a check fails. Gifts without a link, or from shops that block us, show no price. Requests to private and internal addresses are refused, and only JPEG, PNG, WebP, GIF and AVIF up to 5 MB are accepted.
-- **Anonymous lists:** for a list that is your own, tick *Anonymous* when creating or editing it. The admin then shows which gifts are reserved but not by whom, and notifications just say "someone". This is spoiler protection, not secrecy: the names are still stored (each guest needs to see their own picks), and they show again if you turn the option off.
 - **Archive:** archive a list to close it without deleting anything.
 
 ## Backups
@@ -123,7 +136,7 @@ docker compose exec giftly node -e "new (require('node:sqlite').DatabaseSync)('/
 Requires Node.js 24+:
 
 ```sh
-ADMIN_PASSWORD=dev-password npm run dev
+ADMIN_USERNAME=dev ADMIN_PASSWORD=dev-password npm run dev
 npm test        # end-to-end tests against a real server + parser unit tests
 ```
 

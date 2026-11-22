@@ -65,7 +65,7 @@ function layout(ctx, { title, body, bodyClass = '' }) {
 <link rel="manifest" href="/site.webmanifest">
 <meta name="theme-color" content="#C8553D">
 <meta name="apple-mobile-web-app-title" content="${site}">
-<link rel="stylesheet" href="/static/style.css?v=7">
+<link rel="stylesheet" href="/static/style.css?v=9">
 <script src="/static/app.js?v=3" defer></script>
 </head>
 <body class="${bodyClass}">
@@ -198,29 +198,47 @@ ${mine.length ? h`
 
 // ---------- admin pages ----------
 
-export function adminLoginPage(ctx, { error } = {}) {
+export function adminLoginPage(ctx, { error, username = '', noAccounts = false } = {}) {
   return layout(ctx, {
     title: ctx.t('admin.title'),
     bodyClass: 'center',
     body: h`
 <section class="card narrow">
+  <img class="logo" src="/favicon.svg" alt="" width="72" height="72">
   <h1>${ctx.t('admin.login')}</h1>
+  ${noAccounts ? h`<div class="flash flash-error" role="alert">${ctx.t('account.noAccounts')}</div>` : ''}
   ${error ? h`<div class="flash flash-error" role="alert">${error}</div>` : ''}
   <form method="post" action="/admin/login" class="stack">
-    <label>${ctx.t('admin.password')}
-      <input type="password" name="password" required autocomplete="current-password" autofocus>
+    <label>${ctx.t('account.username')}
+      <input name="username" required autocomplete="username" autocapitalize="none" spellcheck="false" value="${username}" autofocus>
+    </label>
+    <label>${ctx.t('account.password')}
+      <input type="password" name="password" required autocomplete="current-password">
     </label>
     <button type="submit" class="primary">${ctx.t('login.submit')}</button>
   </form>
+  <p class="small muted">${ctx.t('account.forgotHint')}</p>
 </section>`,
   });
 }
 
 function adminHeader(ctx, backHref, backLabel) {
-  return h`<header class="top admin-top">
-  <div>${backHref ? h`<a href="${backHref}" class="back">${backLabel}</a>` : h`<strong>${ctx.t('admin.title')}</strong>`}</div>
-  ${postButton(ctx, '/admin/logout', ctx.t('admin.logout'), { cls: 'link' })}
-</header>`;
+  const path = ctx.url.pathname;
+  const tab = (href, label, active) => active
+    ? h`<a href="${href}" class="tab active" aria-current="page">${label}</a>`
+    : h`<a href="${href}" class="tab">${label}</a>`;
+  return h`<header class="admin-top">
+  <nav class="admin-nav" aria-label="${ctx.t('admin.title')}">
+    ${tab('/admin', ctx.t('admin.lists'), path === '/admin' || path.startsWith('/admin/lists') || path.startsWith('/admin/items'))}
+    ${tab('/admin/profile', ctx.t('account.profile'), path.startsWith('/admin/profile'))}
+    ${tab('/admin/users', ctx.t('account.admins'), path.startsWith('/admin/users'))}
+  </nav>
+  <div class="who">
+    <span class="small">${ctx.user?.name}</span>
+    ${postButton(ctx, '/admin/logout', ctx.t('admin.logout'), { cls: 'link' })}
+  </div>
+</header>
+${backHref ? h`<p class="backline"><a href="${backHref}" class="back">${backLabel}</a></p>` : ''}`;
 }
 
 function listFields(ctx, v, { withArchived = false } = {}) {
@@ -231,12 +249,10 @@ function listFields(ctx, v, { withArchived = false } = {}) {
     <label>${ctx.t('admin.description')}
       <textarea name="description" rows="2" maxlength="2000" placeholder="${ctx.t('admin.descriptionPlaceholder')}">${v.description || ''}</textarea>
     </label>
-    <label class="check"><input type="checkbox" name="anonymous" value="1"${v.anonymous ? raw(' checked') : ''}> ${ctx.t('anon.option')}</label>
-    <p class="small muted hint">${ctx.t('anon.hint')}</p>
     ${withArchived ? h`<label class="check"><input type="checkbox" name="archived" value="1"${v.archived ? raw(' checked') : ''}> ${ctx.t('admin.archived')}</label>` : ''}`;
 }
 
-export function adminDashboard(ctx, { all, form, error, notify, notifyErrors = [] }) {
+export function adminDashboard(ctx, { all, form, error }) {
   return layout(ctx, {
     title: ctx.t('admin.title'),
     body: h`
@@ -248,7 +264,6 @@ ${all.length ? h`
     <a href="/admin/lists/${l.id}">
       <strong>${l.title}</strong>
       ${l.archived ? h`<span class="badge">${ctx.t('admin.archivedBadge')}</span>` : ''}
-      ${l.anonymous ? h`<span class="badge">${ctx.t('anon.badge')}</span>` : ''}
       <span class="small muted">${l.item_count} ${ctx.t('admin.items').toLowerCase()} (${l.reserved_count} ${ctx.t('admin.reserved')}) · ${l.guest_count} ${ctx.t('admin.guests').toLowerCase()}</span>
     </a>
   </li>`)}
@@ -262,9 +277,7 @@ ${all.length ? h`
     ${listFields(ctx, form)}
     <button type="submit" class="primary">${ctx.t('admin.create')}</button>
   </form>
-</section>
-
-${notifySection(ctx, notify, notifyErrors)}`,
+</section>`,
   });
 }
 
@@ -278,7 +291,7 @@ function notifySection(ctx, { values: v, channels, problems }, errors) {
   <h2>${ctx.t('notify.heading')}</h2>
   ${[...new Set([...errors, ...problems])].map((k) => h`<div class="flash flash-error" role="alert">${ctx.t(k)}</div>`)}
   <p class="small muted">${channels.length ? ctx.t('notify.active', { channels: channels.join(', ') }) : ctx.t('notify.none')}</p>
-  <form method="post" action="/admin/notifications" class="stack">
+  <form method="post" action="/admin/profile/notifications" class="stack">
     ${csrfField(ctx)}
     <fieldset class="group">
       <legend>${ctx.t('notify.when')}</legend>
@@ -310,7 +323,7 @@ function notifySection(ctx, { values: v, channels, problems }, errors) {
     </fieldset>
     <button type="submit" class="primary">${ctx.t('admin.save')}</button>
   </form>
-  ${channels.length ? postButton(ctx, '/admin/notify-test', ctx.t('notify.testButton'), { cls: 'secondary' }) : ''}
+  ${channels.length ? postButton(ctx, '/admin/profile/notify-test', ctx.t('notify.testButton'), { cls: 'secondary' }) : ''}
 </section>`;
 }
 
@@ -344,9 +357,8 @@ export function adminListPage(ctx, { list, allItems, allGuests, baseUrl, listFor
   return layout(ctx, {
     title: list.title,
     body: h`
-${adminHeader(ctx, '/admin', ctx.t('admin.back'))}
-<h1>${list.title} ${list.archived ? h`<span class="badge">${ctx.t('admin.archivedBadge')}</span>` : ''} ${list.anonymous ? h`<span class="badge">${ctx.t('anon.badge')}</span>` : ''}</h1>
-${list.anonymous ? h`<p class="small muted">${ctx.t('anon.active')}</p>` : ''}
+${adminHeader(ctx)}
+<h1>${list.title} ${list.archived ? h`<span class="badge">${ctx.t('admin.archivedBadge')}</span>` : ''}</h1>
 <section class="share card">
   <p>${ctx.t('admin.shareHint')}</p>
   <div class="copy-row">
@@ -365,9 +377,7 @@ ${list.anonymous ? h`<p class="small muted">${ctx.t('anon.active')}</p>` : ''}
       <div class="body">
         ${itemBody(ctx, it)}
         ${previewStatus(ctx, it)}
-        <p class="status">${it.reserved_name && list.anonymous
-          ? h`🎀 ${ctx.t('anon.reserved')}`
-          : it.reserved_name
+        <p class="status">${it.reserved_name
           ? h`🎀 ${ctx.t('admin.reservedBy', { name: it.reserved_name })} <span class="muted">· ${fmtDate(ctx, it.reserved_at)}${it.reserved_guest_id ? '' : ` · ${ctx.t('admin.manual')}`}</span>`
           : h`<span class="muted">${ctx.t('admin.free')}</span>`}</p>
       </div>
@@ -406,10 +416,10 @@ ${list.anonymous ? h`<p class="small muted">${ctx.t('anon.active')}</p>` : ''}
   <h2>${ctx.t('admin.guests')}</h2>
   ${allGuests.length ? h`
   <table>
-    <thead><tr><th>${ctx.t('login.name')}</th>${list.anonymous ? '' : h`<th>${ctx.t('admin.picks')}</th>`}<th>${ctx.t('admin.lastSeen')}</th><th></th></tr></thead>
+    <thead><tr><th>${ctx.t('login.name')}</th><th>${ctx.t('admin.picks')}</th><th>${ctx.t('admin.lastSeen')}</th><th></th></tr></thead>
     <tbody>
       ${allGuests.map((g) => h`<tr>
-        <td>${g.name}</td>${list.anonymous ? '' : h`<td>${g.pick_count}</td>`}<td>${fmtDate(ctx, g.last_seen)}</td>
+        <td>${g.name}</td><td>${g.pick_count}</td><td>${fmtDate(ctx, g.last_seen)}</td>
         <td>${postButton(ctx, `/admin/guests/${g.id}/delete`, ctx.t('admin.deleteGuest'), { cls: 'link danger', confirm: ctx.t('admin.deleteGuestConfirm') })}</td>
       </tr>`)}
     </tbody>
@@ -458,15 +468,155 @@ ${adminHeader(ctx, `/admin/lists/${list.id}`, ctx.t('admin.backToList'))}
         </div>
       </div>
     </fieldset>
-    ${list.anonymous
-      ? h`<p class="small muted">${item.reserved_name ? h`🎀 ${ctx.t('anon.reserved')} · ` : ''}${ctx.t('anon.editHint')}</p>`
-      : h`<label>${ctx.t('admin.reservedName')}
+    <label>${ctx.t('admin.reservedName')}
       <input name="reserved_name" maxlength="60" value="${v.reserved_name || ''}">
       <span class="small muted">${ctx.t('admin.reservedNameHint')}</span>
-    </label>`}
+    </label>
     <button type="submit" class="primary">${ctx.t('admin.save')}</button>
   </form>
   ${item.url || item.image_source ? h`<hr>${postButton(ctx, `/admin/items/${item.id}/preview`, ctx.t('preview.refresh'), { cls: 'secondary' })}` : ''}
+</section>`,
+  });
+}
+
+// ---------- accounts ----------
+
+function passwordFields(ctx, { current = false } = {}) {
+  return h`
+    ${current ? h`<label>${ctx.t('account.currentPassword')}
+      <input type="password" name="current" required autocomplete="current-password">
+    </label>` : ''}
+    <label>${ctx.t('account.newPassword')}
+      <input type="password" name="password" required minlength="8" autocomplete="new-password">
+      <span class="small muted">${ctx.t('account.passwordHint')}</span>
+    </label>
+    <label>${ctx.t('account.confirmPassword')}
+      <input type="password" name="confirm" required minlength="8" autocomplete="new-password">
+    </label>`;
+}
+
+function accountFields(ctx, v) {
+  return h`
+    <label>${ctx.t('account.name')}
+      <input name="name" required maxlength="80" value="${v.name || ''}" autocomplete="name">
+    </label>
+    <label>${ctx.t('account.username')}
+      <input name="username" required maxlength="32" value="${v.username || ''}" autocomplete="username" autocapitalize="none" spellcheck="false">
+      <span class="small muted">${ctx.t('account.usernameHint')}</span>
+    </label>`;
+}
+
+export function profilePage(ctx, { user, notify, notifyErrors = [], profileForm, profileError, passwordError }) {
+  return layout(ctx, {
+    title: ctx.t('account.profile'),
+    body: h`
+${adminHeader(ctx)}
+<h1>${ctx.t('account.profile')}</h1>
+
+<section class="card">
+  <h2>${ctx.t('account.details')}</h2>
+  ${profileError ? h`<div class="flash flash-error" role="alert">${profileError}</div>` : ''}
+  <form method="post" action="/admin/profile" class="stack">
+    ${csrfField(ctx)}
+    ${accountFields(ctx, profileForm || user)}
+    <button type="submit" class="primary">${ctx.t('admin.save')}</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>${ctx.t('account.changePassword')}</h2>
+  ${passwordError ? h`<div class="flash flash-error" role="alert">${passwordError}</div>` : ''}
+  <form method="post" action="/admin/profile/password" class="stack">
+    ${csrfField(ctx)}
+    ${passwordFields(ctx, { current: true })}
+    <p class="small muted">${ctx.t('account.otherDevicesHint')}</p>
+    <button type="submit" class="primary">${ctx.t('account.changePassword')}</button>
+  </form>
+</section>
+
+${notifySection(ctx, notify, notifyErrors)}`,
+  });
+}
+
+export function usersPage(ctx, { all, invites, newLink, error }) {
+  return layout(ctx, {
+    title: ctx.t('account.admins'),
+    body: h`
+${adminHeader(ctx)}
+<h1>${ctx.t('account.admins')}</h1>
+${error ? h`<div class="flash flash-error" role="alert">${error}</div>` : ''}
+
+${newLink ? h`
+<section class="share card">
+  <p><strong>${newLink.kind === 'invite' ? ctx.t('account.inviteReady') : ctx.t('account.resetReady', { name: newLink.user.name })}</strong></p>
+  <div class="copy-row">
+    <input readonly value="${newLink.url}" id="new-link" aria-label="${ctx.t('account.link')}">
+    <button type="button" class="primary" data-copy="#new-link" data-copied="${ctx.t('admin.copied')}">${ctx.t('admin.copy')}</button>
+  </div>
+  <p class="small muted">${ctx.t('account.linkOnce')}</p>
+</section>` : ''}
+
+<table>
+  <thead><tr><th>${ctx.t('account.name')}</th><th>${ctx.t('account.username')}</th><th></th></tr></thead>
+  <tbody>
+    ${all.map((u) => h`<tr>
+      <td>${u.name}${u.id === ctx.user.id ? h` <span class="badge">${ctx.t('account.you')}</span>` : ''}</td>
+      <td><code>${u.username}</code></td>
+      <td class="row-actions">${u.id === ctx.user.id
+        ? h`<a href="/admin/profile">${ctx.t('account.profile')}</a>`
+        : h`${postButton(ctx, `/admin/users/${u.id}/reset-link`, ctx.t('account.resetLink'), { cls: 'link' })}
+            ${postButton(ctx, `/admin/users/${u.id}/delete`, ctx.t('admin.delete'), { cls: 'link danger', confirm: ctx.t('account.deleteConfirm', { name: u.name }) })}`}</td>
+    </tr>`)}
+  </tbody>
+</table>
+
+<section class="card">
+  <h2>${ctx.t('account.invite')}</h2>
+  <p class="small muted">${ctx.t('account.inviteHint')}</p>
+  ${postButton(ctx, '/admin/users/invite', ctx.t('account.createInvite'), { cls: 'primary' })}
+  ${invites.length ? h`
+  <h3>${ctx.t('account.pendingInvites')}</h3>
+  <ul class="plain">
+    ${invites.map((i) => h`<li>${ctx.t('account.inviteBy', { name: i.created_by_name || '—', date: fmtDate(ctx, i.created_at), until: fmtDate(ctx, i.expires_at) })}
+      ${postButton(ctx, `/admin/users/invites/${i.id}/revoke`, ctx.t('account.revoke'), { cls: 'link danger' })}</li>`)}
+  </ul>` : ''}
+</section>`,
+  });
+}
+
+export function invitePage(ctx, { token, form = {}, error }) {
+  return layout(ctx, {
+    title: ctx.t('account.inviteTitle'),
+    bodyClass: 'center',
+    body: h`
+<section class="card narrow">
+  <img class="logo" src="/favicon.svg" alt="" width="72" height="72">
+  <h1>${ctx.t('account.inviteTitle')}</h1>
+  <p class="muted">${ctx.t('account.inviteIntro')}</p>
+  ${error ? h`<div class="flash flash-error" role="alert">${error}</div>` : ''}
+  <form method="post" action="/invite/${token}" class="stack">
+    ${accountFields(ctx, form)}
+    ${passwordFields(ctx)}
+    <button type="submit" class="primary">${ctx.t('account.createAccount')}</button>
+  </form>
+</section>`,
+  });
+}
+
+export function resetPage(ctx, { token, user, error }) {
+  return layout(ctx, {
+    title: ctx.t('account.resetTitle'),
+    bodyClass: 'center',
+    body: h`
+<section class="card narrow">
+  <img class="logo" src="/favicon.svg" alt="" width="72" height="72">
+  <h1>${ctx.t('account.resetTitle')}</h1>
+  <p class="muted">${ctx.t('account.resetIntro', { username: user?.username ?? '' })}</p>
+  ${error ? h`<div class="flash flash-error" role="alert">${error}</div>` : ''}
+  <form method="post" action="/reset/${token}" class="stack">
+    ${passwordFields(ctx)}
+    <button type="submit" class="primary">${ctx.t('account.setPassword')}</button>
+  </form>
 </section>`,
   });
 }
