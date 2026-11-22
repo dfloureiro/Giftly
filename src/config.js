@@ -23,7 +23,7 @@ if (!env.ADMIN_PASSWORD || env.ADMIN_PASSWORD.length < 8) {
 }
 
 export const config = {
-  port: Number(env.PORT) || 3000,
+  port: env.PORT ? Number(env.PORT) : 3000, // 0 = random free port (tests)
   // Unset = Node's default: all interfaces, IPv6 and IPv4 (dual-stack) when available.
   host: env.HOST || undefined,
   dataDir,

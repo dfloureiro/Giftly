@@ -117,7 +117,10 @@ Requires Node.js 24+:
 
 ```sh
 ADMIN_PASSWORD=dev-password npm run dev
+npm test        # end-to-end tests against a real server + parser unit tests
 ```
+
+CI runs the tests on every push and pull request, and only builds the image if they pass. The image is also rebuilt every week, so `latest` gets Node and Alpine security fixes even without code changes. Dependabot proposes updates to the GitHub Actions and the base image.
 
 ## License
 

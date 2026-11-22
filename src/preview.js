@@ -24,7 +24,7 @@ const TIMEOUT_MS = 10_000;
 
 // ---------- network guard ----------
 
-function isPrivateIp(ip) {
+export function isPrivateIp(ip) {
   if (net.isIPv4(ip)) {
     const [a, b] = ip.split('.').map(Number);
     return a === 0 || a === 10 || a === 127 || a >= 224 ||
