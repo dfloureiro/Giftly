@@ -178,6 +178,15 @@ const migrations = [
   CREATE INDEX gift_people_person ON gift_people(person_id);
   INSERT INTO gift_people (gift_id, person_id) SELECT id, person_id FROM gifts;
   `,
+  // v10: admins can reserve a list gift on behalf of a guest. The reservation belongs to that
+  // guest (by name, created if needed) so they see it in their picks; we remember which admin
+  // made it. Older name-only reservations are linked to an existing guest with that name.
+  `
+  ALTER TABLE items ADD COLUMN reserved_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
+  UPDATE items SET reserved_guest_id = (
+    SELECT g.id FROM guests g WHERE g.list_id = items.list_id AND g.name = items.reserved_name
+  ) WHERE reserved_guest_id IS NULL AND reserved_name IS NOT NULL;
+  `,
 ];
 
 {
@@ -278,18 +287,33 @@ export const guests = {
       SELECT g.*, (SELECT COUNT(*) FROM items i WHERE i.reserved_guest_id = g.id) AS pick_count
       FROM guests g WHERE g.list_id = ? ORDER BY g.last_seen DESC`).all(listId);
   },
+  /** A guest joining with their name. `isNew` is true on their first real visit. */
   findOrCreate(listId, name) {
     return tx(() => {
       const existing = db.prepare('SELECT * FROM guests WHERE list_id = ? AND name = ?').get(listId, name);
+      let guest;
       if (existing) {
         db.prepare('UPDATE guests SET last_seen = ? WHERE id = ?').run(now(), existing.id);
-        return { ...existing, isNew: false };
+        guest = { ...existing, isNew: existing.last_seen === 0 }; // 0 = created by an admin, never visited
+      } else {
+        const id = Number(db.prepare(
+          'INSERT INTO guests (list_id, name, created_at, last_seen) VALUES (?, ?, ?, ?)'
+        ).run(listId, name, now(), now()).lastInsertRowid);
+        guest = { ...guests.get(id), isNew: true };
       }
-      const id = Number(db.prepare(
-        'INSERT INTO guests (list_id, name, created_at, last_seen) VALUES (?, ?, ?, ?)'
-      ).run(listId, name, now(), now()).lastInsertRowid);
-      return { ...guests.get(id), isNew: true };
+      // Reservations made for this name without a guest (older admin reservations) become theirs.
+      db.prepare(`UPDATE items SET reserved_guest_id = ? WHERE list_id = ? AND reserved_guest_id IS NULL
+        AND reserved_name = ? COLLATE NOCASE`).run(guest.id, listId, guest.name);
+      return guest;
     });
+  },
+  /** The guest with this name in a list, created (as "never visited") if needed. For admin reservations. */
+  placeholder(listId, name) {
+    const existing = db.prepare('SELECT * FROM guests WHERE list_id = ? AND name = ?').get(listId, name);
+    if (existing) return existing;
+    const id = Number(db.prepare('INSERT INTO guests (list_id, name, created_at, last_seen) VALUES (?, ?, ?, 0)')
+      .run(listId, name, now()).lastInsertRowid);
+    return guests.get(id);
   },
   touch(id) {
     db.prepare('UPDATE guests SET last_seen = ? WHERE id = ?').run(now(), id);
@@ -297,7 +321,7 @@ export const guests = {
   delete(id) {
     tx(() => {
       db.prepare(
-        'UPDATE items SET reserved_guest_id = NULL, reserved_name = NULL, reserved_at = NULL WHERE reserved_guest_id = ?'
+        'UPDATE items SET reserved_guest_id = NULL, reserved_name = NULL, reserved_at = NULL, reserved_by_user_id = NULL WHERE reserved_guest_id = ?'
       ).run(id);
       db.prepare('DELETE FROM guests WHERE id = ?').run(id);
     });
@@ -360,29 +384,45 @@ export const items = {
     return db.prepare('SELECT image_file FROM items WHERE image_file IS NOT NULL').all().map((r) => r.image_file);
   },
   /** Admin sets/clears the reservation by free-text name (e.g. someone who told you in person). */
-  setManualReservation(id, name) {
-    const item = items.get(id);
-    if (!item) return;
-    if (!name) return items.release(id);
-    if (item.reserved_name === name) return;
-    db.prepare('UPDATE items SET reserved_guest_id = NULL, reserved_name = ?, reserved_at = ? WHERE id = ?')
-      .run(name, now(), id);
+  /**
+   * An admin reserves (or re-assigns) a gift on behalf of a guest named `name`. The guest is
+   * found or created in that list, so the gift shows in their picks when they open the list.
+   * Returns the guest, or null if nothing changed / the item doesn't exist.
+   */
+  reserveForGuest(id, name, userId) {
+    return tx(() => {
+      const item = items.get(id);
+      if (!item) return null;
+      const guest = guests.placeholder(item.list_id, name);
+      if (item.reserved_guest_id === guest.id) return null; // already theirs
+      db.prepare('UPDATE items SET reserved_guest_id = ?, reserved_name = ?, reserved_at = ?, reserved_by_user_id = ? WHERE id = ?')
+        .run(guest.id, guest.name, now(), userId ?? null, id);
+      return guest;
+    });
+  },
+  /** The edit form's "Reserved by" field: empty releases, a name reserves for that guest. */
+  setManualReservation(id, name, userId) {
+    if (!name) {
+      items.release(id);
+      return null;
+    }
+    return items.reserveForGuest(id, name, userId);
   },
   /** Atomic: only succeeds if nobody else got there first. */
   reserve(id, guest) {
     const r = db.prepare(
-      'UPDATE items SET reserved_guest_id = ?, reserved_name = ?, reserved_at = ? WHERE id = ? AND list_id = ? AND reserved_name IS NULL'
+      'UPDATE items SET reserved_guest_id = ?, reserved_name = ?, reserved_at = ?, reserved_by_user_id = NULL WHERE id = ? AND list_id = ? AND reserved_name IS NULL'
     ).run(guest.id, guest.name, now(), id, guest.list_id);
     return r.changes === 1;
   },
   unreserve(id, guest) {
     const r = db.prepare(
-      'UPDATE items SET reserved_guest_id = NULL, reserved_name = NULL, reserved_at = NULL WHERE id = ? AND reserved_guest_id = ?'
+      'UPDATE items SET reserved_guest_id = NULL, reserved_name = NULL, reserved_at = NULL, reserved_by_user_id = NULL WHERE id = ? AND reserved_guest_id = ?'
     ).run(id, guest.id);
     return r.changes === 1;
   },
   release(id) {
-    db.prepare('UPDATE items SET reserved_guest_id = NULL, reserved_name = NULL, reserved_at = NULL WHERE id = ?').run(id);
+    db.prepare('UPDATE items SET reserved_guest_id = NULL, reserved_name = NULL, reserved_at = NULL, reserved_by_user_id = NULL WHERE id = ?').run(id);
   },
   delete(id) {
     db.prepare('DELETE FROM items WHERE id = ?').run(id);

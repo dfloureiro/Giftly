@@ -203,9 +203,10 @@ function adminUrl(list) {
   return base && list ? `${base}/admin/lists/${list.id}` : undefined;
 }
 
-function message(event, { list, guest, item }) {
+function message(event, { list, guest, item, byUser }) {
   const t = makeT(config.lang);
   const vars = {
+    admin: byUser?.name ?? '',
     name: guest?.name ?? '',
     item: item?.title ?? '',
     price: item?.price ? ` (${item.price})` : '',
@@ -213,10 +214,11 @@ function message(event, { list, guest, item }) {
   };
   return {
     event,
-    title: t(`notify.${event}.title`, vars),
+    // An admin reserving on someone's behalf: "Diogo reserved a gift for Ana".
+    title: t(byUser && event === 'pick' ? 'notify.pickByAdmin.title' : `notify.${event}.title`, vars),
     message: t(`notify.${event}.message`, vars),
     click: adminUrl(list),
-    data: { list: list?.title, guest: guest?.name, item: item?.title, price: item?.price || undefined, item_url: item?.url || undefined },
+    data: { reserved_by_admin: byUser?.name, list: list?.title, guest: guest?.name, item: item?.title, price: item?.price || undefined, item_url: item?.url || undefined },
   };
 }
 
@@ -239,10 +241,10 @@ function sendToUser(userId, msg) {
  * Notify every user who enabled `event` (or only `onlyUserId`, e.g. a test message).
  * Returns a promise with per-channel results; callers normally don't await it.
  */
-export async function notify(event, data = {}, { onlyUserId } = {}) {
+export async function notify(event, data = {}, { onlyUserId, exceptUserId } = {}) {
   const msg = message(event, data);
   const targets = onlyUserId
     ? [onlyUserId]
-    : users.all().filter((u) => eventSet({ events: u.notify_events }).has(event)).map((u) => u.id);
+    : users.all().filter((u) => u.id !== exceptUserId && eventSet({ events: u.notify_events }).has(event)).map((u) => u.id);
   return (await Promise.all(targets.map((id) => sendToUser(id, msg)))).flat();
 }

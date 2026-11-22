@@ -65,7 +65,7 @@ function layout(ctx, { title, body, bodyClass = '' }) {
 <link rel="manifest" href="/site.webmanifest">
 <meta name="theme-color" content="#C8553D">
 <meta name="apple-mobile-web-app-title" content="${site}">
-<link rel="stylesheet" href="/static/style.css?v=12">
+<link rel="stylesheet" href="/static/style.css?v=15">
 <script src="/static/app.js?v=4" defer></script>
 </head>
 <body class="${bodyClass}">
@@ -152,7 +152,7 @@ function itemBody(ctx, it) {
     </div>`;
 }
 
-export function guestListPage(ctx, { list, guest, available, mine, takenByOthers, total }) {
+export function guestListPage(ctx, { list, guest, available, mine, takenByOthers, total, adminNames = {} }) {
   return layout(ctx, {
     title: list.title,
     body: h`
@@ -174,7 +174,8 @@ ${mine.length ? h`
   <ul class="items">
     ${mine.map((it) => h`<li class="item picked">
       ${thumb(ctx, it)}
-      <div class="body">${itemBody(ctx, it)}</div>
+      <div class="body">${itemBody(ctx, it)}
+        ${it.reserved_by_user_id ? h`<p class="small muted reserved-for-you">🎀 ${ctx.t('list.reservedForYou', { name: adminNames[it.reserved_by_user_id] || '—' })}</p>` : ''}</div>
       ${postButton(ctx, `/l/${list.token}/unpick/${it.id}`, ctx.t('list.unpick'), { cls: 'secondary', confirm: ctx.t('list.unpickConfirm', { title: it.title }) })}
     </li>`)}
   </ul>
@@ -353,7 +354,7 @@ function uploadField(ctx) {
   </div>`;
 }
 
-export function adminListPage(ctx, { list, allItems, allGuests, baseUrl, listForm, listError, itemError }) {
+export function adminListPage(ctx, { list, allItems, allGuests, baseUrl, listForm, listError, itemError, adminNames = {} }) {
   const lf = listForm || list;
   return layout(ctx, {
     title: list.title,
@@ -379,18 +380,30 @@ ${adminHeader(ctx)}
         ${itemBody(ctx, it)}
         ${previewStatus(ctx, it)}
         <p class="status">${it.reserved_name
-          ? h`🎀 ${ctx.t('admin.reservedBy', { name: it.reserved_name })} <span class="muted">· ${fmtDate(ctx, it.reserved_at)}${it.reserved_guest_id ? '' : ` · ${ctx.t('admin.manual')}`}</span>`
+          ? h`🎀 ${ctx.t('admin.reservedBy', { name: it.reserved_name })} <span class="muted">· ${fmtDate(ctx, it.reserved_at)}${it.reserved_by_user_id ? ` · ${ctx.t('admin.byAdmin', { name: adminNames[it.reserved_by_user_id] || '—' })}` : ''}${it.reserved_guest_id ? '' : ` · ${ctx.t('admin.manual')}`}</span>`
           : h`<span class="muted">${ctx.t('admin.free')}</span>`}</p>
       </div>
       <div class="actions">
         <a class="button secondary" href="/admin/items/${it.id}">${ctx.t('admin.edit')}</a>
         ${it.reserved_name ? postButton(ctx, `/admin/items/${it.id}/release`, ctx.t('admin.release'), { cls: 'secondary', confirm: ctx.t('admin.releaseConfirm') }) : ''}
+        ${it.reserved_name ? '' : h`<details class="reserve-for">
+          <summary class="button secondary">${ctx.t('admin.reserveButton')}</summary>
+          <form method="post" action="/admin/items/${it.id}/reserve" class="stack">
+            ${csrfField(ctx)}
+            <label>${ctx.t('admin.reserveFor')}
+              <input name="name" required maxlength="60" list="guests-${list.id}" autocomplete="off" placeholder="${ctx.t('login.namePlaceholder')}">
+            </label>
+            <p class="small muted">${ctx.t('admin.reserveHint')}</p>
+            <button type="submit" class="primary">${ctx.t('admin.reserveButton')}</button>
+          </form>
+        </details>`}
         ${idx > 0 ? postButton(ctx, `/admin/items/${it.id}/move`, '↑', { cls: 'icon', extra: '<input type="hidden" name="dir" value="up">' }) : ''}
         ${idx < allItems.length - 1 ? postButton(ctx, `/admin/items/${it.id}/move`, '↓', { cls: 'icon', extra: '<input type="hidden" name="dir" value="down">' }) : ''}
         ${postButton(ctx, `/admin/items/${it.id}/delete`, ctx.t('admin.delete'), { cls: 'danger', confirm: ctx.t('admin.deleteItemConfirm') })}
       </div>
     </li>`)}
-  </ul>` : h`<p class="empty">${ctx.t('admin.noItems')}</p>`}
+  </ul>
+  <datalist id="guests-${list.id}">${allGuests.map((g) => h`<option value="${g.name}"></option>`)}</datalist>` : h`<p class="empty">${ctx.t('admin.noItems')}</p>`}
 </section>
 
 <section class="card">
@@ -420,7 +433,7 @@ ${adminHeader(ctx)}
     <thead><tr><th>${ctx.t('login.name')}</th><th>${ctx.t('admin.picks')}</th><th>${ctx.t('admin.lastSeen')}</th><th></th></tr></thead>
     <tbody>
       ${allGuests.map((g) => h`<tr>
-        <td>${g.name}</td><td>${g.pick_count}</td><td>${fmtDate(ctx, g.last_seen)}</td>
+        <td>${g.name}</td><td>${g.pick_count}</td><td>${g.last_seen ? fmtDate(ctx, g.last_seen) : h`<span class="muted">${ctx.t('admin.notYet')}</span>`}</td>
         <td>${postButton(ctx, `/admin/guests/${g.id}/delete`, ctx.t('admin.deleteGuest'), { cls: 'link danger', confirm: ctx.t('admin.deleteGuestConfirm') })}</td>
       </tr>`)}
     </tbody>

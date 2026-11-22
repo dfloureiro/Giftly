@@ -250,3 +250,11 @@ form.inline.status-form { display: flex; gap: 6px; align-items: center; }
 details.joint > summary { font-size: .9rem; }
 .joint-people { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; }
 .joint-line { margin: 2px 0 0; color: var(--muted); }
+
+/* reserve on behalf of a guest */
+details.reserve-for { display: inline-block; }
+details.reserve-for > summary { list-style: none; display: block; margin-top: 0; }
+details.reserve-for > summary::-webkit-details-marker { display: none; }
+details.reserve-for[open] { display: block; flex: 1 1 100%; }
+details.reserve-for > form { margin-top: .6rem; }
+.reserved-for-you { margin: .3rem 0 0; }

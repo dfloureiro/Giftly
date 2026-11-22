@@ -170,6 +170,7 @@ const FLASH = {
   passwordChanged: ['success', 'account.passwordChanged'],
   welcome: ['success', 'account.welcome'],
   giftAdded: ['success', 'give.giftAdded'],
+  reservedFor: ['success', 'admin.reservedDone'],
   remindersSent: ['success', 'remind.testSent'],
   remindersNone: ['success', 'remind.testNone'],
   remindersNoChannel: ['error', 'remind.noChannel'],
@@ -240,8 +241,12 @@ route('GET', '/l/:token', (ctx) => {
     mine: items.reservedBy(guest.id),
     takenByOthers: items.reservedByOthers(list.id, guest.id),
     total: items.forList(list.id).length,
+    adminNames: adminNames(),
   }));
 });
+
+/** { userId: display name } for "reserved by …" labels. */
+const adminNames = () => Object.fromEntries(users.all().map((u) => [u.id, u.name]));
 
 route('POST', '/l/:token/join', (ctx) => {
   const list = lists.byToken(ctx.params.token);
@@ -466,6 +471,7 @@ function renderAdminList(ctx, list, extra = {}, status = 200) {
     allItems: items.forList(list.id),
     allGuests: guests.forList(list.id),
     baseUrl: baseUrl(ctx.req),
+    adminNames: adminNames(),
     ...extra,
   }), status);
 }
@@ -579,7 +585,8 @@ route('POST', '/admin/items/:id', (ctx) => {
   if (error) return html(ctx.res, views.adminItemPage(ctx, { item, list: lists.get(item.list_id), form, error }), 400);
   if (form.remove_image) form.image_source = '';
   items.update(item.id, form);
-  items.setManualReservation(item.id, form.reserved_name);
+  const reservedFor = items.setManualReservation(item.id, form.reserved_name, ctx.user.id);
+  if (reservedFor) notifyAdminReservation(ctx, item.id, reservedFor);
   const uploaded = applyUpload(item.id, ctx.body.image_data);
   if (!uploaded && form.remove_image) clearPreview(item.id);
   if (!uploaded && form.image_source && form.image_source !== item.image_source) {
@@ -616,6 +623,23 @@ route('POST', '/admin/items/:id/delete', (ctx) => {
   items.delete(item.id);
   removeImage(item.image_file);
   redirect(ctx.res, `/admin/lists/${item.list_id}?m=deleted`);
+}, { auth: 'admin' });
+
+/** Tell the other admins that `ctx.user` reserved a gift for a guest. */
+function notifyAdminReservation(ctx, itemId, guest) {
+  const item = items.get(itemId);
+  notify('pick', { list: lists.get(item.list_id), guest, item, byUser: ctx.user }, { exceptUserId: ctx.user.id });
+}
+
+// Reserve on behalf of a guest (by name). They see it in their picks when they open the list.
+route('POST', '/admin/items/:id/reserve', (ctx) => {
+  const item = loadItem(ctx);
+  if (!item) return;
+  const name = clean(ctx.body.name, 60);
+  if (!name) return redirect(ctx.res, `/admin/lists/${item.list_id}#item-${item.id}`);
+  const guest = items.reserveForGuest(item.id, name, ctx.user.id);
+  if (guest) notifyAdminReservation(ctx, item.id, guest);
+  redirect(ctx.res, `/admin/lists/${item.list_id}?m=reservedFor#item-${item.id}`);
 }, { auth: 'admin' });
 
 route('POST', '/admin/items/:id/release', (ctx) => {
