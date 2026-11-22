@@ -21,26 +21,26 @@ jobs:
           # On failure, publish the last command's output and the container logs as an annotation.
           report() {
             code=$?
-            [ "$code" = 0 ] && { docker rm -f t >/dev/null 2>&1; return; }
+            [ "$code" = 0 ] && { docker rm -f giftly-smoke >/dev/null 2>&1; return; }
             msg="exit $code at: $BASH_COMMAND"$'\n'"--- output:"$'\n'"$(tail -c 3000 /tmp/out 2>/dev/null)"
-            msg+=$'\n'"--- docker ps -a:"$'\n'"$(docker ps -a 2>&1)"$'\n'"--- logs:"$'\n'"$(docker logs t 2>&1 | tail -40)"
+            msg+=$'\n'"--- docker ps -a:"$'\n'"$(docker ps -a 2>&1)"$'\n'"--- logs:"$'\n'"$(docker logs giftly-smoke 2>&1 | tail -40)"
             msg="${msg//'%'/'%25'}"; msg="${msg//$'\r'/'%0D'}"; msg="${msg//$'\n'/'%0A'}"
             echo "::error title=Smoke test::$msg"
-            docker rm -f t >/dev/null 2>&1
+            docker rm -f giftly-smoke >/dev/null 2>&1
           }
           trap report EXIT
           run() { "$@" >/tmp/out 2>&1 || { cat /tmp/out; return 1; }; cat /tmp/out; }
 
           run docker build -t giftly-test .
           # No published ports: checks run inside the container, so nothing on the runner can clash.
-          run docker run -d --name t -e ADMIN_PASSWORD=ci-password-123 giftly-test
-          check() { docker exec t wget -qO- "http://$1:3000$2"; }
+          run docker run -d --name giftly-smoke -e ADMIN_PASSWORD=ci-password-123 giftly-test
+          check() { docker exec giftly-smoke wget -qO- "http://$1:3000$2"; }
           for i in $(seq 1 20); do check 127.0.0.1 /healthz >/tmp/out 2>&1 && break; sleep 1; done
           for host in 127.0.0.1 localhost; do
             body=$(check "$host" / 2>/tmp/out)
             grep -q Giftly <<<"$body"
           done
-          run docker exec t sh -c 'ps -o user,args | grep "^node .*server.js"'
+          run docker exec giftly-smoke sh -c 'ps -o user,args | grep "^node .*server.js"'
 
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
