@@ -58,3 +58,35 @@ document.addEventListener('focusin', (e) => {
   };
   setTimeout(tick, 1500);
 })();
+
+// Admin: image upload. Resize in the browser (max 800px) and send as a data: URL in a hidden field.
+document.addEventListener('change', async (e) => {
+  const input = e.target.closest('[data-upload-input]');
+  if (!input) return;
+  const box = input.closest('[data-upload]');
+  const data = box.querySelector('[data-upload-data]');
+  const preview = box.querySelector('[data-upload-preview]');
+  const file = input.files && input.files[0];
+  data.value = '';
+  preview.hidden = true;
+  if (!file) return;
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, 800 / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    const g = canvas.getContext('2d');
+    g.fillStyle = '#fff'; // flatten transparency for JPEG
+    g.fillRect(0, 0, canvas.width, canvas.height);
+    g.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    let url = canvas.toDataURL('image/webp', 0.85);
+    if (!url.startsWith('data:image/webp')) url = canvas.toDataURL('image/jpeg', 0.85);
+    data.value = url;
+    preview.src = url;
+    preview.hidden = false;
+  } catch {
+    input.value = '';
+    alert('Não foi possível ler esta imagem. / Could not read this image.');
+  }
+});

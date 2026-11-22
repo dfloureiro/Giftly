@@ -8,7 +8,7 @@ import { db, lists, guests, items } from './db.js';
 import { tokens, csrfFor, safeEqual, rateLimit, resetRateLimit } from './security.js';
 import { makeT } from './i18n.js';
 import * as views from './views.js';
-import { IMAGE_DIR, IMAGE_FILE_RE, IMAGE_TYPES, removeImage, sweepImages } from './preview.js';
+import { IMAGE_DIR, IMAGE_FILE_RE, IMAGE_TYPES, removeImage, saveImageBuffer, sweepImages } from './preview.js';
 import { enqueuePreview, clearPreview, startPreviewQueue } from './previewQueue.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -332,7 +332,6 @@ function validateItem(ctx, body) {
     image_source: imageSource ?? String(body.image_source ?? ''),
     remove_image: body.remove_image === '1',
     notes: clean(body.notes, 1000),
-    price: clean(body.price, 40),
     reserved_name: clean(body.reserved_name, 60),
   };
   let error;
@@ -346,7 +345,9 @@ route('POST', '/admin/lists/:id/items', (ctx) => {
   if (!list) return;
   const { form, error } = validateItem(ctx, ctx.body);
   if (error) return renderAdminList(ctx, list, { itemError: error }, 400);
-  enqueuePreview(items.create(list.id, form));
+  const id = items.create(list.id, form);
+  applyUpload(id, ctx.body.image_data);
+  enqueuePreview(id); // keeps an uploaded image, still reads the price
   redirect(ctx.res, `/admin/lists/${list.id}?m=added&n=1`);
 }, { auth: 'admin' });
 
@@ -356,19 +357,31 @@ route('POST', '/admin/lists/:id/items/bulk', (ctx) => {
   let n = 0;
   for (const line of String(ctx.body.lines || '').split(/\r?\n/).slice(0, 500)) {
     if (!line.trim()) continue;
-    let [title, url = '', notes = '', price = ''] = line.split('|').map((s) => s.trim());
+    let [title, url = '', notes = ''] = line.split('|').map((s) => s.trim());
     // A bare link: use the hostname as a provisional title.
     if (/^https?:\/\//i.test(title) && !url) {
       url = title;
       try { title = new URL(url).hostname.replace(/^www\./, ''); } catch { /* keep */ }
     }
-    const { form, error } = validateItem(ctx, { title, url, notes, price });
+    const { form, error } = validateItem(ctx, { title, url, notes });
     if (error) continue;
     enqueuePreview(items.create(list.id, form));
     n++;
   }
   redirect(ctx.res, `/admin/lists/${list.id}?m=added&n=${n}`);
 }, { auth: 'admin' });
+
+/** Store an image uploaded as a data: URL. Returns true if one was saved. */
+function applyUpload(itemId, dataUrl) {
+  const m = /^data:image\/(jpeg|png|webp|gif|avif);base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl || ''));
+  if (!m) return false;
+  let file;
+  try { file = saveImageBuffer(Buffer.from(m[2], 'base64')); } catch { return false; }
+  const old = items.get(itemId)?.image_file;
+  items.setPreview(itemId, { image_file: file, preview_status: 'uploaded' });
+  removeImage(old);
+  return true;
+}
 
 function loadItem(ctx) {
   const item = items.get(Number(ctx.params.id));
@@ -389,15 +402,20 @@ route('POST', '/admin/items/:id', (ctx) => {
   if (form.remove_image) form.image_source = '';
   items.update(item.id, form);
   items.setManualReservation(item.id, form.reserved_name);
-  if (form.remove_image) clearPreview(item.id);
-  else if (form.url !== item.url || form.image_source !== item.image_source) enqueuePreview(item.id);
+  const uploaded = applyUpload(item.id, ctx.body.image_data);
+  if (!uploaded && form.remove_image) clearPreview(item.id);
+  if (!uploaded && form.image_source && form.image_source !== item.image_source) {
+    enqueuePreview(item.id, { force: true }); // a new image link replaces an uploaded photo
+  } else if (form.url !== item.url) {
+    enqueuePreview(item.id); // new link: new price (and image, unless one was uploaded)
+  }
   redirect(ctx.res, `/admin/lists/${item.list_id}?m=saved`);
 }, { auth: 'admin' });
 
 route('POST', '/admin/items/:id/preview', (ctx) => {
   const item = loadItem(ctx);
   if (!item) return;
-  enqueuePreview(item.id);
+  enqueuePreview(item.id, { force: true });
   redirect(ctx.res, `/admin/items/${item.id}`);
 }, { auth: 'admin' });
 
@@ -521,7 +539,8 @@ async function handle(req, res) {
   ctx.csrf = csrfFor(sessionCookie);
 
   if (method === 'POST') {
-    ctx.body = await readBody(req);
+    // Admin forms may carry an uploaded image (resized client-side to ~800px).
+    ctx.body = await readBody(req, r.auth === 'admin' ? 8 * 1024 * 1024 : 64 * 1024);
     // Authenticated POSTs must carry a CSRF token bound to the session cookie.
     if (r.auth && !safeEqual(ctx.body._csrf || '', ctx.csrf)) {
       return html(res, views.errorPage(ctx, ctx.t('error.csrf')), 403);

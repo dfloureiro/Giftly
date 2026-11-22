@@ -60,8 +60,8 @@ function layout(ctx, { title, body, bodyClass = '' }) {
 <meta name="robots" content="noindex, nofollow">
 <title>${title ? `${title} · ${site}` : site}</title>
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/static/style.css?v=2">
-<script src="/static/app.js?v=2" defer></script>
+<link rel="stylesheet" href="/static/style.css?v=3">
+<script src="/static/app.js?v=3" defer></script>
 </head>
 <body class="${bodyClass}">
 <nav class="lang" aria-label="Language">
@@ -137,7 +137,7 @@ function itemBody(ctx, it) {
     <h3>${it.title}</h3>
     ${it.notes ? h`<p class="notes">${it.notes}</p>` : ''}
     <div class="meta">
-      ${it.price ? h`<span class="price">${it.price}</span>` : ''}
+      ${it.price ? h`<span class="price" title="${ctx.t('price.fromShop')}">${it.price}</span>` : ''}
       ${it.url ? h`<a href="${it.url}" target="_blank" rel="noopener noreferrer nofollow">${ctx.t('list.visit', { host })} ↗</a>` : ''}
     </div>`;
 }
@@ -261,14 +261,21 @@ function itemFields(ctx, v) {
     <label>${ctx.t('admin.itemUrl')}
       <input name="url" type="url" maxlength="2000" value="${v.url || ''}" placeholder="https://">
     </label>
-    <div class="row">
-      <label class="grow">${ctx.t('admin.itemNotes')}
-        <input name="notes" maxlength="1000" value="${v.notes || ''}" placeholder="${ctx.t('admin.itemNotesPlaceholder')}">
-      </label>
-      <label>${ctx.t('admin.itemPrice')}
-        <input name="price" maxlength="40" value="${v.price || ''}" size="10">
-      </label>
-    </div>`;
+    <label>${ctx.t('admin.itemNotes')}
+      <input name="notes" maxlength="1000" value="${v.notes || ''}" placeholder="${ctx.t('admin.itemNotesPlaceholder')}">
+    </label>
+    ${v.price ? h`<p class="small muted">${ctx.t('price.current', { price: v.price, date: fmtDate(ctx, v.price_checked_at) })}</p>` : ''}`;
+}
+
+function uploadField(ctx) {
+  return h`<div class="upload" data-upload>
+    <label>${ctx.t('upload.label')}
+      <input type="file" accept="image/*" data-upload-input>
+      <span class="small muted">${ctx.t('upload.hint')}</span>
+    </label>
+    <input type="hidden" name="image_data" data-upload-data>
+    <img alt="" data-upload-preview hidden>
+  </div>`;
 }
 
 export function adminListPage(ctx, { list, allItems, allGuests, baseUrl, listForm, listError, itemError }) {
@@ -317,6 +324,7 @@ ${adminHeader(ctx, '/admin', ctx.t('admin.back'))}
   <form method="post" action="/admin/lists/${list.id}/items" class="stack">
     ${csrfField(ctx)}
     ${itemFields(ctx, {})}
+    ${uploadField(ctx)}
     <button type="submit" class="primary">${ctx.t('admin.add')}</button>
   </form>
   <details>
@@ -381,6 +389,7 @@ ${adminHeader(ctx, `/admin/lists/${list.id}`, ctx.t('admin.backToList'))}
             <input name="image_source" type="url" maxlength="2000" value="${v.image_source || ''}" placeholder="https://…/foto.jpg">
             <span class="small muted">${ctx.t('preview.imageSourceHint')}</span>
           </label>
+          ${uploadField(ctx)}
           ${item.image_file ? h`<label class="check"><input type="checkbox" name="remove_image" value="1"> ${ctx.t('preview.remove')}</label>` : ''}
         </div>
       </div>

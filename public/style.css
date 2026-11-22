@@ -174,3 +174,6 @@ fieldset.image-field legend { font-weight: 600; font-size: .92rem; padding: 0 4p
   .item > form.inline, .item > .actions { flex: 1 1 100%; }
   .image-row { flex-direction: column; }
 }
+.upload { display: grid; gap: 8px; }
+.upload input[type=file] { padding: 8px; background: var(--card); }
+.upload img { width: 88px; height: 88px; object-fit: contain; border: 1px solid var(--line); border-radius: 10px; background: #fff; }

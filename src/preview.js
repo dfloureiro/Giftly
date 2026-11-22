@@ -172,6 +172,46 @@ function resizeKnownCdn(url) {
   return url;
 }
 
+const SYMBOLS = { '€': 'EUR', '£': 'GBP', '$': 'USD', 'R$': 'BRL', 'CHF': 'CHF' };
+
+function formatPrice(amount, currency) {
+  const raw = String(amount ?? '').trim();
+  if (!/^\d{1,7}([.,]\d{1,2})?$/.test(raw)) return undefined;
+  const n = Number(raw.replace(',', '.'));
+  if (!(n > 0)) return undefined;
+  const code = SYMBOLS[currency] || (/^[A-Z]{3}$/.test(currency || '') ? currency : null);
+  try {
+    if (code) return new Intl.NumberFormat(config.lang === 'en' ? 'en-GB' : 'pt-PT', { style: 'currency', currency: code }).format(n);
+  } catch { /* unknown currency code */ }
+  return raw;
+}
+
+/** Price as published by the shop: meta tags → JSON-LD offer → microdata → Amazon's page data. */
+function findPrice(html, meta, product) {
+  const offers = product ? [].concat(product.offers || []) : [];
+  const offer = offers[0]?.offers ? [].concat(offers[0].offers)[0] : offers[0]; // AggregateOffer nesting
+  const candidates = [
+    [meta['product:price:amount'], meta['product:price:currency']],
+    [meta['og:price:amount'], meta['og:price:currency']],
+    [offer?.price ?? offer?.lowPrice, offer?.priceCurrency],
+    [meta.price, meta.pricecurrency], // itemprop on <meta>
+  ];
+  const itemprop = html.match(/<[^>]+\bitemprop=["']price["'][^>]*>/i);
+  if (itemprop) {
+    const cur = html.match(/<[^>]+\bitemprop=["']priceCurrency["'][^>]*>/i);
+    candidates.push([attrs(itemprop[0]).content, cur && attrs(cur[0]).content]);
+  }
+  // Amazon
+  const amz = html.match(/"priceAmount":(\d+(?:\.\d+)?)/);
+  if (amz) candidates.push([amz[1], (html.match(/"currencySymbol":"([^"]{1,3})"/) || [])[1]]);
+
+  for (const [amount, currency] of candidates) {
+    const p = amount != null && formatPrice(amount, currency);
+    if (p) return p;
+  }
+  return undefined;
+}
+
 export function parseMeta(html, baseUrl) {
   const meta = {};
   for (const m of html.matchAll(/<meta\b[^>]*>/gi)) {
@@ -199,16 +239,7 @@ export function parseMeta(html, baseUrl) {
   const titleTag = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
   const title = meta['og:title'] || meta['twitter:title'] || product?.name || (titleTag && decode(titleTag[1]).trim());
 
-  const offer = product && [].concat(product.offers || [])[0];
-  const amount = meta['product:price:amount'] || meta['og:price:amount'] || offer?.price || offer?.lowPrice;
-  const currency = meta['product:price:currency'] || meta['og:price:currency'] || offer?.priceCurrency;
-  let price;
-  if (amount && /^\d+([.,]\d+)?$/.test(String(amount).trim())) {
-    const n = Number(String(amount).replace(',', '.'));
-    price = currency
-      ? new Intl.NumberFormat(config.lang === 'en' ? 'en-GB' : 'pt-PT', { style: 'currency', currency }).format(n)
-      : String(amount);
-  }
+  const price = findPrice(html, meta, product);
 
   let imageUrl;
   try { if (image) imageUrl = new URL(image, baseUrl).toString(); } catch { /* ignore */ }
@@ -233,6 +264,16 @@ function imageExt(buf) {
 
 export const IMAGE_TYPES = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif', avif: 'image/avif' };
 export const IMAGE_FILE_RE = /^[a-z0-9]{8,40}\.(jpg|png|webp|gif|avif)$/;
+
+/** Save an uploaded image (already resized by the browser). Returns the file name or throws. */
+export function saveImageBuffer(buf) {
+  if (!buf || buf.length > IMAGE_LIMIT) throw new Error('Image too large');
+  const ext = imageExt(buf);
+  if (!ext) throw new Error('Not a supported image');
+  const file = `${randomBytes(12).toString('hex')}.${ext}`;
+  writeFileSync(join(IMAGE_DIR, file), buf);
+  return file;
+}
 
 async function downloadImage(url) {
   const { body, truncated } = await get(url, { limit: IMAGE_LIMIT, accept: 'image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8' });
@@ -260,8 +301,9 @@ export function sweepImages(referenced) {
  * Build a preview for an item.
  * @param {string} pageUrl  product page (may be empty)
  * @param {string} imageUrl explicit image link set by the admin (optional, wins over the page)
+ * @param {{ wantImage?: boolean }} opts  false = only read title/price (keep the current image)
  */
-export async function fetchPreview(pageUrl, imageUrl) {
+export async function fetchPreview(pageUrl, imageUrl, { wantImage = true } = {}) {
   let meta = {};
   if (pageUrl) {
     try {
@@ -272,6 +314,7 @@ export async function fetchPreview(pageUrl, imageUrl) {
       if (!imageUrl) throw err;
     }
   }
+  if (!wantImage) return { file: undefined, title: meta.title, price: meta.price };
   const src = imageUrl || meta.image;
   const file = src ? await downloadImage(src) : null;
   return { file, title: meta.title, price: meta.price };

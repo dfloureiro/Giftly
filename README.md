@@ -5,7 +5,7 @@ Self-hosted gift lists for families and friends.
 - You create a list in the admin and add gifts: links to any shop, or plain items without a link.
 - You share the list's **secret link**. People open it, type their name, and pick what they'll give.
 - A picked gift **disappears for everyone else**, so no two people buy the same thing.
-- Gifts with a link show the **shop's product image** automatically.
+- Gifts with a link show the **shop's product image and price** automatically. Prices are re-checked daily and are never typed by hand.
 - The admin always shows everything: who picked what and when, and who joined.
 
 Available in **Portuguese (pt-PT)** and **English**. The language follows the visitor's browser, and every page has a PT/EN switch.
@@ -42,7 +42,7 @@ docker run -d --name giftly -p 3000:3000 \
 | `SITE_TITLE` | `Giftly` | Name shown on the home page and in the browser tab. |
 | `BASE_URL` | auto | Public URL used for the share link in the admin, e.g. `https://gifts.example.com`. |
 | `TZ` | `Europe/Lisbon` | Time zone for dates in the admin. |
-| `LINK_PREVIEWS` | `true` | Fetch product pages to show each gift's image. Set to `false` to turn it off. |
+| `LINK_PREVIEWS` | `true` | Fetch product pages to show each gift's image and price. Set to `false` to turn it off. |
 | `TRUST_PROXY` | `true` | Trust `CF-Connecting-IP` / `X-Forwarded-*`. Set to `false` if the app is exposed directly. |
 | `COOKIE_SECURE` | `auto` | `auto` sets `Secure` cookies when the request came over HTTPS. |
 | `SESSION_SECRET` | generated | Generated once and stored in `/data` if not set. |
@@ -64,7 +64,8 @@ Optionally, protect `/admin` with a Cloudflare Access policy for extra safety.
 - **Access:** every list has an unguessable link (`/l/<22 random characters>`). Anyone with the link can join. Use *Generate new link* in the admin to revoke the old one, which also logs out everyone who joined.
 - **Identity:** a guest is identified by their name within a list (not case-sensitive). Typing the same name on another device shows the same picks. This is intentionally simple and built for trust between family and friends, not for strangers.
 - **Picks:** picks are atomic, so if two people click at the same moment, only one gets the gift. Guests can give up their own picks. In the admin you can release any gift, or mark one as reserved by name for someone who told you in person.
-- **Images:** when you add a link, the server fetches the page in the background, reads its Open Graph, Twitter card or JSON-LD product image (and the title and price, if those fields are empty), and **stores a copy of the image** in `/data/images`. Guests never load anything from the shops. Some shops block automated requests; in that case, paste an image link in the gift's *Image link* field. Requests to private and internal addresses are refused, and only JPEG, PNG, WebP, GIF and AVIF up to 5 MB are accepted.
+- **Images:** when you add a link, the server fetches the page in the background, reads its Open Graph, Twitter card, JSON-LD or microdata product image (with Amazon-specific fallbacks), and **stores a copy of the image** in `/data/images`. Guests never load anything from the shops. Some shops block automated requests (e.g. Akamai-protected ones); in that case, **upload a photo** (resized in the browser) or paste an image link. An image is only ever replaced by another image.
+- **Prices:** prices only come from the shop link (`product:price`, JSON-LD offers, microdata, Amazon page data) and there is no price field. Available gifts are re-checked once a day, and the last known price is kept if a check fails. Gifts without a link, or from shops that block us, show no price. Requests to private and internal addresses are refused, and only JPEG, PNG, WebP, GIF and AVIF up to 5 MB are accepted.
 - **Archive:** archive a list to close it without deleting anything.
 
 ## Backups

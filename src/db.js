@@ -51,6 +51,11 @@ const migrations = [
   ALTER TABLE items ADD COLUMN image_source TEXT NOT NULL DEFAULT '';
   ALTER TABLE items ADD COLUMN preview_status TEXT NOT NULL DEFAULT '';
   `,
+  // v3: prices come only from the shop link and are re-checked daily
+  `
+  ALTER TABLE items ADD COLUMN price_checked_at INTEGER;
+  UPDATE items SET price = '' WHERE url = '';
+  `,
 ];
 
 {
@@ -178,18 +183,29 @@ export const items = {
       'SELECT COUNT(*) AS n FROM items WHERE list_id = ? AND reserved_name IS NOT NULL AND (reserved_guest_id IS NULL OR reserved_guest_id != ?)'
     ).get(listId, guestId).n;
   },
-  create(listId, { title, url, notes, price, image_source = '' }) {
+  create(listId, { title, url, notes, image_source = '' }) {
     const { p } = db.prepare('SELECT COALESCE(MAX(position), 0) + 1 AS p FROM items WHERE list_id = ?').get(listId);
     return Number(db.prepare(
-      'INSERT INTO items (list_id, title, url, notes, price, image_source, position, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-    ).run(listId, title, url, notes, price, image_source, p, now()).lastInsertRowid);
+      'INSERT INTO items (list_id, title, url, notes, image_source, position, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run(listId, title, url, notes, image_source, p, now()).lastInsertRowid);
   },
-  update(id, { title, url, notes, price, image_source = '' }) {
-    db.prepare('UPDATE items SET title = ?, url = ?, notes = ?, price = ?, image_source = ? WHERE id = ?')
-      .run(title, url, notes, price, image_source, id);
+  /** Price is not editable: it only comes from the shop link, and is dropped when the link changes. */
+  update(id, { title, url, notes, image_source = '' }) {
+    db.prepare(`UPDATE items SET title = ?, notes = ?, image_source = ?,
+        price = CASE WHEN url = ? THEN price ELSE '' END,
+        price_checked_at = CASE WHEN url = ? THEN price_checked_at ELSE NULL END,
+        url = ? WHERE id = ?`)
+      .run(title, notes, image_source, url, url, url, id);
+  },
+  stalePrices(olderThan, limit) {
+    return db.prepare(`
+      SELECT i.id FROM items i JOIN lists l ON l.id = i.list_id
+      WHERE i.url != '' AND i.reserved_name IS NULL AND l.archived = 0
+        AND i.preview_status != 'pending' AND COALESCE(i.price_checked_at, 0) < ?
+      ORDER BY COALESCE(i.price_checked_at, 0) LIMIT ?`).all(olderThan, limit).map((r) => r.id);
   },
   setPreview(id, fields) {
-    const keys = Object.keys(fields).filter((k) => ['image_file', 'preview_status', 'title', 'price'].includes(k));
+    const keys = Object.keys(fields).filter((k) => ['image_file', 'preview_status', 'title', 'price', 'price_checked_at'].includes(k));
     if (!keys.length) return;
     db.prepare(`UPDATE items SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`)
       .run(...keys.map((k) => fields[k]), id);
