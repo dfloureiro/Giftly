@@ -174,16 +174,21 @@ function resizeKnownCdn(url) {
 
 const SYMBOLS = { '€': 'EUR', '£': 'GBP', '$': 'USD', 'R$': 'BRL', 'CHF': 'CHF' };
 
-function formatPrice(amount, currency) {
+/** { text, cents, currency } for a shop price, or undefined if it doesn't look like one. */
+function readPrice(amount, currency) {
   const raw = String(amount ?? '').trim();
   if (!/^\d{1,7}([.,]\d{1,2})?$/.test(raw)) return undefined;
   const n = Number(raw.replace(',', '.'));
   if (!(n > 0)) return undefined;
   const code = SYMBOLS[currency] || (/^[A-Z]{3}$/.test(currency || '') ? currency : null);
+  const cents = Math.round(n * 100);
   try {
-    if (code) return new Intl.NumberFormat(config.lang === 'en' ? 'en-GB' : 'pt-PT', { style: 'currency', currency: code }).format(n);
+    if (code) {
+      const text = new Intl.NumberFormat(config.lang === 'en' ? 'en-GB' : 'pt-PT', { style: 'currency', currency: code }).format(n);
+      return { text, cents, currency: code };
+    }
   } catch { /* unknown currency code */ }
-  return raw;
+  return { text: raw, cents, currency: null };
 }
 
 /** Price as published by the shop: meta tags → JSON-LD offer → microdata → Amazon's page data. */
@@ -206,7 +211,7 @@ function findPrice(html, meta, product) {
   if (amz) candidates.push([amz[1], (html.match(/"currencySymbol":"([^"]{1,3})"/) || [])[1]]);
 
   for (const [amount, currency] of candidates) {
-    const p = amount != null && formatPrice(amount, currency);
+    const p = amount != null && readPrice(amount, currency);
     if (p) return p;
   }
   return undefined;
@@ -239,14 +244,16 @@ export function parseMeta(html, baseUrl) {
   const titleTag = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
   const title = meta['og:title'] || meta['twitter:title'] || product?.name || (titleTag && decode(titleTag[1]).trim());
 
-  const price = findPrice(html, meta, product);
+  const priceInfo = findPrice(html, meta, product);
 
   let imageUrl;
   try { if (image) imageUrl = new URL(image, baseUrl).toString(); } catch { /* ignore */ }
   return {
     image: imageUrl,
     title: title ? title.replace(/\s+/g, ' ').slice(0, 200) : undefined,
-    price,
+    price: priceInfo?.text,
+    priceCents: priceInfo?.cents,
+    priceCurrency: priceInfo?.currency,
   };
 }
 
@@ -314,8 +321,9 @@ export async function fetchPreview(pageUrl, imageUrl, { wantImage = true } = {})
       if (!imageUrl) throw err;
     }
   }
-  if (!wantImage) return { file: undefined, title: meta.title, price: meta.price };
+  const price = { price: meta.price, priceCents: meta.priceCents, priceCurrency: meta.priceCurrency };
+  if (!wantImage) return { file: undefined, title: meta.title, ...price };
   const src = imageUrl || meta.image;
   const file = src ? await downloadImage(src) : null;
-  return { file, title: meta.title, price: meta.price };
+  return { file, title: meta.title, ...price };
 }

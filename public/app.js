@@ -33,31 +33,42 @@ document.addEventListener('focusin', (e) => {
   const tick = async () => {
     const els = pending();
     if (!els.length || ++tries > 40) return;
-    try {
-      const ids = els.map((el) => el.dataset.previewId).join(',');
-      const res = await fetch(`/admin/previews?ids=${ids}`, { credentials: 'same-origin' });
-      const data = await res.json();
-      for (const el of els) {
-        const p = data[el.dataset.previewId];
-        if (!p || p.status === 'pending') continue;
-        const id = el.dataset.previewId;
-        el.removeAttribute('data-preview-id');
-        el.classList.remove('pending');
-        if (p.image) {
-          const img = document.createElement('img');
-          img.src = p.image;
-          img.alt = '';
-          el.classList.remove('empty');
-          el.textContent = '';
-          el.appendChild(img);
+    // List gifts and gifts-to-give are polled separately (data-preview-kind="gift").
+    const groups = {};
+    for (const el of els) (groups[el.dataset.previewKind || 'item'] ||= []).push(el);
+    for (const [kind, group] of Object.entries(groups)) {
+      try {
+        const ids = group.map((el) => el.dataset.previewId).join(',');
+        const res = await fetch(`/admin/previews?kind=${kind}&ids=${ids}`, { credentials: 'same-origin' });
+        const data = await res.json();
+        for (const el of group) {
+          const p = data[el.dataset.previewId];
+          if (!p || p.status === 'pending') continue;
+          const id = el.dataset.previewId;
+          el.removeAttribute('data-preview-id');
+          el.classList.remove('pending');
+          if (p.image) {
+            const img = document.createElement('img');
+            img.src = p.image;
+            img.alt = '';
+            el.classList.remove('empty');
+            el.textContent = '';
+            el.appendChild(img);
+          }
+          document.querySelectorAll(`[data-preview-status="${id}"]`).forEach((n) => n.remove());
         }
-        document.querySelectorAll(`[data-preview-status="${id}"]`).forEach((n) => n.remove());
-      }
-    } catch { /* try again */ }
+      } catch { /* try again */ }
+    }
     setTimeout(tick, 2000);
   };
   setTimeout(tick, 1500);
 })();
+
+// Selects marked data-autosubmit save on change; their fallback button is hidden when JS runs.
+document.querySelectorAll('[data-autosubmit-fallback]').forEach((b) => { b.hidden = true; });
+document.addEventListener('change', (e) => {
+  if (e.target.matches('select[data-autosubmit]')) e.target.form.requestSubmit();
+});
 
 // Admin: image upload. Resize in the browser (max 800px) and send as a data: URL in a hidden field.
 document.addEventListener('change', async (e) => {

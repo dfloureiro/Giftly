@@ -102,6 +102,59 @@ const migrations = [
   );
   ALTER TABLE lists DROP COLUMN anonymous;
   `,
+  // v7: "Gifts to give" — people, occasions (birthdays are virtual, from people.birthday_*)
+  // and the gifts admins plan to give. Every row is 'shared' (all admins) or 'private' (owner only).
+  `
+  CREATE TABLE people (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    birthday_month INTEGER,
+    birthday_day INTEGER,
+    birth_year INTEGER,
+    notes TEXT NOT NULL DEFAULT '',
+    gives_christmas INTEGER NOT NULL DEFAULT 0,
+    visibility TEXT NOT NULL DEFAULT 'shared' CHECK (visibility IN ('shared', 'private')),
+    owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE TABLE occasions (
+    id INTEGER PRIMARY KEY,
+    type TEXT NOT NULL CHECK (type IN ('christmas', 'custom')),
+    name TEXT NOT NULL,
+    date TEXT NOT NULL,
+    visibility TEXT NOT NULL DEFAULT 'shared' CHECK (visibility IN ('shared', 'private')),
+    owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE TABLE occasion_people (
+    occasion_id INTEGER NOT NULL REFERENCES occasions(id) ON DELETE CASCADE,
+    person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    PRIMARY KEY (occasion_id, person_id)
+  );
+  CREATE TABLE gifts (
+    id INTEGER PRIMARY KEY,
+    person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    occasion_id INTEGER REFERENCES occasions(id) ON DELETE CASCADE, -- NULL: the person's birthday in \`year\`
+    year INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL DEFAULT '',
+    notes TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'idea' CHECK (status IN ('idea', 'bought', 'given')),
+    price_cents INTEGER,
+    price_currency TEXT,
+    price_source TEXT NOT NULL DEFAULT '',
+    visibility TEXT NOT NULL DEFAULT 'shared' CHECK (visibility IN ('shared', 'private')),
+    owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    image_file TEXT,
+    image_source TEXT NOT NULL DEFAULT '',
+    preview_status TEXT NOT NULL DEFAULT '',
+    price_checked_at INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX gifts_person ON gifts(person_id, year);
+  CREATE INDEX gifts_occasion ON gifts(occasion_id);
+  `,
 ];
 
 {
@@ -120,6 +173,8 @@ const migrations = [
 }
 
 export function tx(fn) {
+  // Reentrant: inside an open transaction, just run (the outer one commits or rolls back).
+  if (db.isTransaction) return fn();
   db.exec('BEGIN IMMEDIATE');
   try {
     const result = fn();

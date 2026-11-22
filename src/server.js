@@ -10,7 +10,9 @@ import { tokens, csrfFor, safeEqual, rateLimit, resetRateLimit } from './securit
 import { makeT } from './i18n.js';
 import * as views from './views.js';
 import { IMAGE_DIR, IMAGE_FILE_RE, IMAGE_TYPES, removeImage, saveImageBuffer, sweepImages } from './preview.js';
-import { enqueuePreview, clearPreview, startPreviewQueue } from './previewQueue.js';
+import { enqueuePreview, clearPreview, startPreviewQueue, allImageFiles } from './previewQueue.js';
+import { deleteUserData, gifts as givingGifts } from './giving.js';
+import { registerGivingRoutes } from './givingRoutes.js';
 import { notify, notifyStatus, saveNotifySettings } from './notify.js';
 import { users, sessions, links, checkLogin, hashPassword, verifyPassword, validateAccount, SESSION_DAYS } from './accounts.js';
 import { bootstrapAccounts } from './bootstrap.js';
@@ -96,7 +98,12 @@ function readBody(req, limit = 256 * 1024) {
     req.on('end', () => {
       const type = String(req.headers['content-type'] || '');
       if (!type.startsWith('application/x-www-form-urlencoded')) return resolve({});
-      resolve(Object.fromEntries(new URLSearchParams(Buffer.concat(chunks).toString('utf8'))));
+      // Repeated fields (e.g. several checkboxes with the same name) become arrays.
+      const out = {};
+      for (const [k, v] of new URLSearchParams(Buffer.concat(chunks).toString('utf8'))) {
+        out[k] = k in out ? [].concat(out[k], v) : v;
+      }
+      resolve(out);
     });
     req.on('error', reject);
   });
@@ -160,6 +167,7 @@ const FLASH = {
   newLink: ['success', 'admin.newLinkDone'],
   passwordChanged: ['success', 'account.passwordChanged'],
   welcome: ['success', 'account.welcome'],
+  giftAdded: ['success', 'give.giftAdded'],
   notifyOk: ['success', 'notify.testOk'],
   notifySaved: ['success', 'admin.saved'],
   notifyFail: ['error', 'notify.testFail'],
@@ -366,7 +374,9 @@ route('POST', '/admin/users/:id/delete', (ctx) => {
   const target = users.get(Number(ctx.params.id));
   if (!target) return notFound(ctx);
   if (target.id === ctx.user.id) return renderUsers(ctx, { error: ctx.t('account.cantDeleteSelf') }, 400);
+  deleteUserData(target.id); // their private people/occasions/gifts; shared ones stay
   users.delete(target.id); // cascades to sessions, channels and pending reset links
+  sweepImages(allImageFiles());
   redirect(ctx.res, '/admin/users?m=deleted');
 }, { auth: 'admin' });
 
@@ -467,7 +477,7 @@ route('POST', '/admin/lists/:id/new-link', (ctx) => {
 
 route('POST', '/admin/lists/:id/delete', (ctx) => {
   lists.delete(Number(ctx.params.id));
-  sweepImages(items.allImageFiles());
+  sweepImages(allImageFiles());
   redirect(ctx.res, '/admin?m=deleted');
 }, { auth: 'admin' });
 
@@ -571,9 +581,11 @@ route('POST', '/admin/items/:id/preview', (ctx) => {
 route('GET', '/admin/previews', (ctx) => {
   const ids = String(ctx.url.searchParams.get('ids') || '').split(',').map(Number).filter(Boolean).slice(0, 200);
   const out = {};
+  const isGift = ctx.url.searchParams.get('kind') === 'gift';
   for (const id of ids) {
-    const it = items.get(id);
-    if (it) out[id] = { status: it.preview_status, image: it.image_file ? `/img/${it.image_file}` : null, title: it.title, price: it.price };
+    // Gifts to give are only reported if this admin may see them.
+    const it = isGift ? givingGifts.get(ctx.user.id, id) : items.get(id);
+    if (it) out[id] = { status: it.preview_status, image: it.image_file ? `/img/${it.image_file}` : null };
   }
   send(ctx.res, 200, JSON.stringify(out), { 'Content-Type': 'application/json' });
 }, { auth: 'admin' });
@@ -698,6 +710,8 @@ async function handle(req, res) {
 
   await r.handler(ctx);
 }
+
+registerGivingRoutes({ route, html, redirect, notFound, clean, cleanMultiline, cleanUrl });
 
 await bootstrapAccounts();
 

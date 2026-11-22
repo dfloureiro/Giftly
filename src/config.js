@@ -28,6 +28,8 @@ export const config = {
   bootstrapPassword: env.ADMIN_PASSWORD || '',
   sessionSecret: loadSecret(),
   siteTitle: env.SITE_TITLE || '',
+  // Currency for prices typed by hand (shop prices keep their own currency).
+  currency: /^[A-Z]{3}$/.test(env.CURRENCY || '') ? env.CURRENCY : 'EUR',
   lang: (env.APP_LANG || 'pt').toLowerCase().startsWith('en') ? 'en' : 'pt',
   timeZone: env.TZ || 'Europe/Lisbon',
   // Trust X-Forwarded-* / CF-Connecting-IP headers (set when behind Cloudflare Tunnel or a reverse proxy).

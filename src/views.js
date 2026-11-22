@@ -65,8 +65,8 @@ function layout(ctx, { title, body, bodyClass = '' }) {
 <link rel="manifest" href="/site.webmanifest">
 <meta name="theme-color" content="#C8553D">
 <meta name="apple-mobile-web-app-title" content="${site}">
-<link rel="stylesheet" href="/static/style.css?v=9">
-<script src="/static/app.js?v=3" defer></script>
+<link rel="stylesheet" href="/static/style.css?v=11">
+<script src="/static/app.js?v=4" defer></script>
 </head>
 <body class="${bodyClass}">
 <nav class="lang" aria-label="Language">
@@ -230,6 +230,7 @@ function adminHeader(ctx, backHref, backLabel) {
   return h`<header class="admin-top">
   <nav class="admin-nav" aria-label="${ctx.t('admin.title')}">
     ${tab('/admin', ctx.t('admin.lists'), path === '/admin' || path.startsWith('/admin/lists') || path.startsWith('/admin/items'))}
+    ${tab('/admin/give', ctx.t('give.tab'), path.startsWith('/admin/give'))}
     ${tab('/admin/profile', ctx.t('account.profile'), path.startsWith('/admin/profile'))}
     ${tab('/admin/users', ctx.t('account.admins'), path.startsWith('/admin/users'))}
   </nav>
@@ -627,3 +628,6 @@ export function errorPage(ctx, message) {
     body: h`<section class="card narrow"><h1>🙈</h1><p>${message}</p><p><a href="/">${ctx.t('error.home')}</a></p></section>`,
   });
 }
+
+// Shared building blocks for other view modules (givingViews.js).
+export { layout, csrfField, postButton, adminHeader, uploadField };
