@@ -132,3 +132,9 @@ CI runs the tests on every push and pull request, and only builds the image if t
 ## License
 
 [GPL-3.0](LICENSE)
+
+## Support
+
+If Giftly is useful to you, you can support its development:
+
+<a href="https://liberapay.com/dfloureiro/donate"><img alt="Donate using Liberapay" src="https://liberapay.com/assets/widgets/donate.svg"></a>

@@ -65,7 +65,7 @@ function layout(ctx, { title, body, bodyClass = '' }) {
 <link rel="manifest" href="/site.webmanifest">
 <meta name="theme-color" content="#C8553D">
 <meta name="apple-mobile-web-app-title" content="${site}">
-<link rel="stylesheet" href="/static/style.css?v=6">
+<link rel="stylesheet" href="/static/style.css?v=7">
 <script src="/static/app.js?v=3" defer></script>
 </head>
 <body class="${bodyClass}">
@@ -78,6 +78,11 @@ function layout(ctx, { title, body, bodyClass = '' }) {
 ${flash(ctx)}
 ${body}
 </main>
+<footer class="site-footer">
+  <a href="https://github.com/dfloureiro/giftly" target="_blank" rel="noopener noreferrer">Giftly</a>
+  <span aria-hidden="true">·</span>
+  <a href="https://liberapay.com/dfloureiro/donate" target="_blank" rel="noopener noreferrer">${ctx.t('footer.support')}</a>
+</footer>
 </body>
 </html>`;
 }

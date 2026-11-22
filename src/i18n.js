@@ -1,5 +1,6 @@
 const strings = {
   pt: {
+    'footer.support': "♥ Apoiar no Liberapay",
     'anon.option': "Anónima: esconder quem escolheu cada prenda",
     'anon.hint': "Útil quando a lista é tua. No backoffice vês que prendas estão reservadas, mas não por quem, e as notificações dizem só “alguém”. É proteção contra spoilers, não segredo: se desligares esta opção, os nomes voltam a aparecer.",
     'anon.badge': "anónima",
@@ -151,6 +152,7 @@ const strings = {
     'error.home': 'Ir para o início',
   },
   en: {
+    'footer.support': "♥ Support on Liberapay",
     'anon.option': "Anonymous: hide who picked each gift",
     'anon.hint': "Handy when the list is yours. The admin shows which gifts are reserved, but not by whom, and notifications just say “someone”. This is spoiler protection, not secrecy: turning it off shows the names again.",
     'anon.badge': "anonymous",
