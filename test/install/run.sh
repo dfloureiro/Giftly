@@ -15,7 +15,9 @@ check() { if eval "$2"; then ok "$1"; else bad "$1"; fi; }
 mode() { ls -l "$1" | cut -c1-10; }
 cleanup() {
   for d in "$WORK"/*/; do (cd "$d" && docker compose --profile tunnel down -v >/dev/null 2>&1) || true; done
-  rm -rf "${WORK:?}"
+  # data/ belongs to the container's user (not the runner's): remove it from a container.
+  docker run --rm -v "$WORK":/w busybox:1.36 sh -c 'rm -rf /w/*/data' >/dev/null 2>&1 || true
+  rm -rf "${WORK:?}" || true
 }
 trap cleanup EXIT
 
