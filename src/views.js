@@ -69,7 +69,7 @@ function layout(ctx, { title, body, bodyClass = '' }) {
 <meta name="theme-color" content="#C8553D">
 <meta name="apple-mobile-web-app-title" content="${site}">
 <link rel="stylesheet" href="/static/style.css?v=23">
-<script src="/static/app.js?v=5" defer></script>
+<script src="/static/app.js?v=6" defer></script>
 </head>
 <body class="${bodyClass}">
 <nav class="lang" aria-label="Language">
