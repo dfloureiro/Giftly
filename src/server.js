@@ -179,6 +179,7 @@ const FLASH = {
   giving: ['success', 'wish.givingDone'],
   pickOccasion: ['error', 'give.pickOccasion'],
   reservedFor: ['success', 'admin.reservedDone'],
+  copiedToList: ['success', 'give.copiedToList'],
   twofaOff: ['success', 'tf.disabled'],
   twofaReset: ['success', 'tf.resetDone'],
   recoveryUsed: ['error', 'tf.recoveryUsed'],
@@ -603,6 +604,14 @@ route('POST', '/admin/lists/:id', (ctx) => {
 route('POST', '/admin/lists/:id/new-link', (ctx) => {
   lists.regenerateToken(Number(ctx.params.id));
   redirect(ctx.res, `/admin/lists/${ctx.params.id}?m=newLink`);
+}, { auth: 'admin' });
+
+// Drag and drop: the full new order of the list's gifts ("order=3,1,2").
+route('POST', '/admin/lists/:id/order', (ctx) => {
+  const list = loadList(ctx);
+  if (!list) return;
+  const ok = items.setOrder(list.id, String(ctx.body.order || '').split(',').filter(Boolean));
+  send(ctx.res, ok ? 204 : 400, '');
 }, { auth: 'admin' });
 
 route('POST', '/admin/lists/:id/delete', (ctx) => {

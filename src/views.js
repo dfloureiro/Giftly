@@ -37,6 +37,9 @@ function hostOf(url) {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
 }
 
+/** Drag handle for reordering (app.js); the ↑/↓ buttons stay as the no-JavaScript fallback. */
+export const dragHandle = (ctx) => h`<button type="button" class="drag-handle" aria-label="${ctx.t('admin.dragToReorder')}" title="${ctx.t('admin.dragToReorder')}" hidden><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></button>`;
+
 const csrfField = (ctx) => h`<input type="hidden" name="_csrf" value="${ctx.csrf}">`;
 
 /** A one-button POST form. */
@@ -65,8 +68,8 @@ function layout(ctx, { title, body, bodyClass = '' }) {
 <link rel="manifest" href="/site.webmanifest">
 <meta name="theme-color" content="#C8553D">
 <meta name="apple-mobile-web-app-title" content="${site}">
-<link rel="stylesheet" href="/static/style.css?v=17">
-<script src="/static/app.js?v=4" defer></script>
+<link rel="stylesheet" href="/static/style.css?v=20">
+<script src="/static/app.js?v=5" defer></script>
 </head>
 <body class="${bodyClass}">
 <nav class="lang" aria-label="Language">
@@ -390,8 +393,9 @@ ${list.source_wishlist_id ? h`<p class="small muted">🎀 ${ctx.t('wish.listFrom
 <section>
   <h2>${ctx.t('admin.items')} <span class="muted small">${allItems.filter((i) => i.reserved_name).length}/${allItems.length} ${ctx.t('admin.reserved')}</span></h2>
   ${allItems.length ? h`
-  <ul class="items admin-items">
-    ${allItems.map((it, idx) => h`<li class="item ${it.reserved_name ? 'picked' : ''}" id="item-${it.id}">
+  <ul class="items admin-items" data-sortable="/admin/lists/${list.id}/order">
+    ${allItems.map((it, idx) => h`<li class="item ${it.reserved_name ? 'picked' : ''}" id="item-${it.id}" data-id="${it.id}">
+      ${allItems.length > 1 ? dragHandle(ctx) : ''}
       ${thumb(ctx, it, { admin: true })}
       <div class="body">
         ${itemBody(ctx, it)}
@@ -418,8 +422,8 @@ ${list.source_wishlist_id ? h`<p class="small muted">🎀 ${ctx.t('wish.listFrom
             <button type="submit" class="primary">${ctx.t('admin.reserveButton')}</button>
           </form>
         </details>`}
-        ${idx > 0 ? postButton(ctx, `/admin/items/${it.id}/move`, '↑', { cls: 'icon', extra: '<input type="hidden" name="dir" value="up">' }) : ''}
-        ${idx < allItems.length - 1 ? postButton(ctx, `/admin/items/${it.id}/move`, '↓', { cls: 'icon', extra: '<input type="hidden" name="dir" value="down">' }) : ''}
+        ${idx > 0 ? postButton(ctx, `/admin/items/${it.id}/move`, '↑', { cls: 'icon move', extra: '<input type="hidden" name="dir" value="up">' }) : ''}
+        ${idx < allItems.length - 1 ? postButton(ctx, `/admin/items/${it.id}/move`, '↓', { cls: 'icon move', extra: '<input type="hidden" name="dir" value="down">' }) : ''}
         ${postButton(ctx, `/admin/items/${it.id}/delete`, ctx.t('admin.delete'), { cls: 'danger', confirm: ctx.t('admin.deleteItemConfirm') })}
       </div>
     </li>`)}

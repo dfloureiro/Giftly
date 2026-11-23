@@ -10,6 +10,7 @@ import { enqueuePreview, clearPreview, releaseImage } from './previewQueue.js';
 import * as gv from './givingViews.js';
 import { users } from './accounts.js';
 import { wishItems } from './wishlist.js';
+import { db, lists, items } from './db.js';
 
 /** Price typed by hand: "12,50" / "12.5" / "€ 12" → cents, or null (empty), or NaN (invalid). */
 export function parsePrice(v) {
@@ -75,7 +76,15 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
   }
 
   route('GET', '/admin/give/people', (ctx) => {
-    html(ctx.res, gv.peoplePage(ctx, { list: withNextBirthday(people.list(uidOf(ctx))) }));
+    const q = String(ctx.url.searchParams.get('q') || '').slice(0, 80);
+    html(ctx.res, gv.peoplePage(ctx, { list: withNextBirthday(people.list(uidOf(ctx), { q })), q }));
+  }, A);
+
+  // Favourites are per admin (they only change your own order).
+  route('POST', '/admin/give/people/:id/favorite', (ctx) => {
+    const id = Number(ctx.params.id);
+    if (!people.setFavorite(uidOf(ctx), id, ctx.body.on === '1')) return notFound(ctx);
+    redirect(ctx.res, back(ctx, '/admin/give/people'));
   }, A);
 
   route('POST', '/admin/give/people', (ctx) => {
@@ -95,6 +104,7 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
       history: gifts.forPerson(uid, person.id),
       choices: occasionChoices(uid, person, next),
       others: people.list(uid).filter((p) => p.id !== person.id),
+      listChoices: listChoicesFor(uid),
       ...extra,
     }), status);
   }
@@ -130,15 +140,34 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
 
   route('GET', '/admin/give/occasions', (ctx) => {
     const uid = uidOf(ctx);
-    const list = occasions.list(uid).map((o) => {
+    const q = String(ctx.url.searchParams.get('q') || '').slice(0, 80);
+    const list = occasions.list(uid, { q }).map((o) => {
       const c = checklist(uid, o);
       return { ...o, total: c.total, done: c.done };
     });
     html(ctx.res, gv.occasionsPage(ctx, {
       list,
+      q,
       people: people.list(uid),
       christmasYear: christmasYear(),
     }));
+  }, A);
+
+  // Duplicate an occasion one year later, with the same people (the ones this admin can see).
+  route('POST', '/admin/give/occasions/:id/duplicate', (ctx) => {
+    const uid = uidOf(ctx);
+    const o = occasions.get(uid, Number(ctx.params.id));
+    if (!o) return notFound(ctx);
+    const year = Number(o.date.slice(0, 4));
+    const date = `${year + 1}${o.date.slice(4)}`.replace(/-02-29$/, '-02-28');
+    if (o.type === 'christmas') {
+      const existing = occasions.christmasOf(uid, year + 1);
+      if (existing) return redirect(ctx.res, `/admin/give/occasions/${existing.id}`);
+    }
+    const name = o.name.includes(String(year)) ? o.name.replaceAll(String(year), String(year + 1)) : o.name;
+    const id = occasions.create(uid, { type: o.type, name, date, visibility: o.visibility },
+      occasions.participants(uid, o.id).map((p) => p.id));
+    redirect(ctx.res, `/admin/give/occasions/${id}?m=created`);
   }, A);
 
   // "New Christmas": Christmas of a year, pre-filled with everyone marked "gives Christmas".
@@ -188,6 +217,7 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
       ...c,
       onlyMissing: ctx.url.searchParams.get('missing') === '1',
       candidates: people.list(uid).filter((p) => !inList.has(p.id)),
+      listChoices: listChoicesFor(uid),
       ...extra,
     }), status);
   }
@@ -348,6 +378,70 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
     // A wishlist gift handed over leaves the recipient's active wishlist.
     if (ctx.body.status === 'given' && gift.wishlist_item_id) wishItems.markReceived(gift.wishlist_item_id);
     redirect(ctx.res, withMsg(back(ctx, `/admin/give/people/${gift.person_id}`), '', `gift-${gift.id}`));
+  }, A);
+
+  // ----- gift ideas → guest lists (a copy, with a trace on the idea) -----
+
+  /** Open lists this admin can add ideas to. */
+  const listChoicesFor = (uid) => lists.all(uid).filter((l) => !l.archived);
+
+  /** An idea for an admin must never go into a list that admin can see (it would spoil it). */
+  const allowedFor = (gift, listId) => {
+    const recipient = gifts.recipientUser(gift.id);
+    return !recipient || !lists.canSee(recipient, listId);
+  };
+
+  // Prices on guest lists are shown as text (in the instance's language).
+  const priceText = (g) => (g.price_cents != null ? gv.money({ lang: config.lang }, g.price_cents, g.price_currency) : '');
+
+  function copyToList(gift, listId) {
+    const itemId = items.create(listId, { title: gift.name, url: gift.url, notes: gift.notes });
+    const price = priceText(gift);
+    db.prepare("UPDATE items SET price = ?, image_file = ?, preview_status = CASE WHEN ? IS NOT NULL THEN 'uploaded' ELSE '' END WHERE id = ?")
+      .run(price, gift.image_file ?? null, gift.image_file ?? null, itemId);
+    if (gift.url) enqueuePreview(itemId); // keeps the copied photo; the price then follows the shop
+    gifts.setListItem(gift.id, itemId);
+    return itemId;
+  }
+
+  route('POST', '/admin/give/gifts/:id/to-list', (ctx) => {
+    const uid = uidOf(ctx);
+    const gift = gifts.get(uid, Number(ctx.params.id));
+    const list = gift && lists.visible(uid, Number(ctx.body.list_id));
+    if (!gift || !list || list.archived) return notFound(ctx);
+    const to = back(ctx, `/admin/give/people/${gift.person_id}`);
+    if (!allowedFor(gift, list.id)) return giftError(ctx, 'give.listWouldSpoil', to);
+    copyToList(gift, list.id);
+    redirect(ctx.res, withMsg(to, 'copiedToList', `gift-${gift.id}`));
+  }, A);
+
+  // A new guest list from a person's gift ideas (e.g. so the grandparents can pick from them).
+  route('GET', '/admin/give/people/:id/new-list', (ctx) => {
+    const uid = uidOf(ctx);
+    const person = people.get(uid, Number(ctx.params.id));
+    if (!person) return notFound(ctx);
+    const ideas = gifts.forPerson(uid, person.id).filter((g) => g.status === 'idea');
+    html(ctx.res, gv.ideasListPage(ctx, { person, ideas }));
+  }, A);
+
+  route('POST', '/admin/give/people/:id/new-list', (ctx) => {
+    const uid = uidOf(ctx);
+    const person = people.get(uid, Number(ctx.params.id));
+    if (!person) return notFound(ctx);
+    const title = clean(ctx.body.title, 120);
+    const chosen = new Set([].concat(ctx.body.gifts ?? []).map(Number));
+    const ideas = gifts.forPerson(uid, person.id).filter((g) => g.status === 'idea' && chosen.has(g.id));
+    if (!title) return html(ctx.res, gv.ideasListPage(ctx, { person, ideas: gifts.forPerson(uid, person.id).filter((g) => g.status === 'idea'), error: ctx.t('admin.titleRequired') }), 400);
+    // A list for an admin is never visible to them (LIST_VISIBLE, recipient_user_id).
+    const listId = lists.create({
+      title,
+      description: cleanMultiline(ctx.body.description, 2000),
+      owner_id: uid,
+      visibility: ctx.body.visibility === 'private' ? 'private' : 'shared',
+      recipient_user_id: person.user_id ?? null,
+    });
+    for (const g of ideas) copyToList(g, listId);
+    redirect(ctx.res, `/admin/lists/${listId}?m=created`);
   }, A);
 
   route('POST', '/admin/give/gifts/:id/preview', (ctx) => {

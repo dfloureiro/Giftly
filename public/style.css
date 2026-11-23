@@ -274,3 +274,26 @@ ul.recovery-codes code { font-size: 1.05rem; }
 .actions > details.edit > summary { list-style: none; display: block; margin-top: 0; }
 .actions > details.edit > summary::-webkit-details-marker { display: none; }
 .warn { color: var(--err); }
+
+/* search, favourites */
+form.search { margin: .4rem 0 1rem; }
+form.search input { width: 100%; }
+.lists.with-fav > li { display: flex; align-items: center; gap: 6px; }
+.lists.with-fav > li > a { flex: 1; min-width: 0; }
+button.fav { background: none; border: 0; padding: 4px 6px; font-size: 1.35rem; line-height: 1; color: var(--muted); }
+button.fav.on { color: var(--gold); }
+h1 .fav-form { vertical-align: middle; }
+.in-list { margin: .25rem 0 0; }
+details.to-list > summary { font-size: .85rem; }
+details.to-list[open] { flex: 1 1 100%; }
+
+/* drag to reorder (same approach as the Parcels TRMNL plugin) */
+.drag-handle { flex: none; align-self: center; border: 0; background: none; color: var(--muted); width: 32px; height: 44px;
+  margin: -6px -6px -6px -10px; padding: 0; display: grid; place-items: center; touch-action: none; cursor: grab;
+  border-radius: 8px; -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; }
+.drag-handle svg { width: 20px; height: 20px; }
+.drag-handle:active { cursor: grabbing; }
+.item.dragging { position: relative; z-index: 5; box-shadow: 0 10px 28px rgb(0 0 0 / .22); transition: none !important; }
+[data-sortable].sorting > .item:not(.dragging) { transition: transform .15s; }
+.js-sortable button.move, .js-sortable form:has(> button.move) { display: none; }
+@media (max-width: 520px) { .item > .drag-handle { align-self: flex-start; margin-top: 2px; } }

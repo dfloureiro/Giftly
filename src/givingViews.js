@@ -43,6 +43,20 @@ function giveNav(ctx, active) {
   </nav>`;
 }
 
+/** Search box: filters the list instantly (app.js) and also works as a normal GET form. */
+function searchBox(ctx, { q = '', action, target, placeholder }) {
+  return h`<form method="get" action="${action}" class="search" role="search">
+    <input type="search" name="q" value="${q}" placeholder="${placeholder}" aria-label="${placeholder}" data-filter="${target}" autocomplete="off">
+  </form>`;
+}
+
+function favoriteButton(ctx, p, back) {
+  return h`<form method="post" action="/admin/give/people/${p.id}/favorite" class="inline fav-form">
+    ${csrfField(ctx)}<input type="hidden" name="on" value="${p.favorite ? '0' : '1'}"><input type="hidden" name="back" value="${back}">
+    <button type="submit" class="fav${p.favorite ? ' on' : ''}" aria-pressed="${p.favorite ? 'true' : 'false'}" title="${p.favorite ? ctx.t('give.unfavorite') : ctx.t('give.favorite')}" aria-label="${p.favorite ? ctx.t('give.unfavorite') : ctx.t('give.favorite')}">${p.favorite ? '★' : '☆'}</button>
+  </form>`;
+}
+
 function page(ctx, { title, active, body }) {
   return layout(ctx, { title, body: h`${adminHeader(ctx)}${giveNav(ctx, active)}${body}` });
 }
@@ -113,7 +127,7 @@ function jointPicker(ctx, others, checked = []) {
   </details>`;
 }
 
-function giftRow(ctx, g, { back, showOccasion = false, others = [], anchor = true, forPerson = null } = {}) {
+function giftRow(ctx, g, { back, showOccasion = false, others = [], anchor = true, forPerson = null, listChoices = [] } = {}) {
   // Candidates for the joint picker: everyone offered here plus whoever it is already for.
   const co = g.people.filter((x) => x.id !== g.person_id);
   const pickable = [...new Map([...others, ...co].filter((x) => x.id !== g.person_id).map((x) => [x.id, x])).values()];
@@ -135,7 +149,16 @@ function giftRow(ctx, g, { back, showOccasion = false, others = [], anchor = tru
       </div>
       ${g.notes ? h`<p class="notes small">${g.notes}</p>` : ''}
       ${g.preview_status === 'pending' ? h`<p class="small muted" data-preview-status="${g.id}">${ctx.t('preview.pending')}</p>` : ''}
+      ${g.in_list_id ? h`<p class="small in-list">📋 <a href="/admin/lists/${g.in_list_id}">${ctx.t('give.inList', { list: g.in_list_title })}</a> — ${g.in_list_reserved_by ? ctx.t('give.inListReserved', { name: g.in_list_reserved_by }) : ctx.t('admin.free')}</p>` : ''}
       <div class="gift-actions">
+        ${g.status === 'idea' && listChoices.length ? h`<details class="to-list">
+          <summary class="small">📋 ${ctx.t('give.toList')}</summary>
+          <form method="post" action="/admin/give/gifts/${g.id}/to-list" class="row">
+            ${csrfField(ctx)}<input type="hidden" name="back" value="${back}">
+            <select name="list_id" aria-label="${ctx.t('give.toList')}">${listChoices.map((l) => h`<option value="${l.id}">${l.title}</option>`)}</select>
+            <button type="submit" class="secondary small-btn">${ctx.t('admin.add')}</button>
+          </form>
+        </details>` : ''}
         <form method="post" action="/admin/give/gifts/${g.id}/status" class="inline status-form">
           ${csrfField(ctx)}<input type="hidden" name="back" value="${back}">
           <select name="status" data-autosubmit aria-label="${ctx.t('give.status')}">
@@ -272,18 +295,20 @@ function personFields(ctx, v = {}, { canSetVisibility = true } = {}) {
     </label>`;
 }
 
-export function peoplePage(ctx, { list, form, error }) {
+export function peoplePage(ctx, { list, form, error, q = '' }) {
   return page(ctx, {
     title: ctx.t('give.people'),
     active: 'people',
     body: h`
 <h1>${ctx.t('give.people')}</h1>
-${list.length ? h`<ul class="lists">
-  ${list.map((p) => h`<li><a href="/admin/give/people/${p.id}">
+${searchBox(ctx, { q, action: '/admin/give/people', target: '#people-list > li', placeholder: ctx.t('give.searchPeople') })}
+${list.length ? h`<ul class="lists with-fav" id="people-list">
+  ${list.map((p) => h`<li data-search="${`${p.name} ${p.notes || ''}`}">${favoriteButton(ctx, p, `/admin/give/people${q ? `?q=${encodeURIComponent(q)}` : ''}`)}<a href="/admin/give/people/${p.id}">
     <strong>${p.name} ${privateBadge(ctx, p)}${p.gives_christmas ? h` <span title="${ctx.t('give.givesChristmas')}">🎄</span>` : ''}</strong>
     <span class="small muted">${p.next ? ctx.t('give.nextBirthday', { date: fmtDay(ctx, p.next.date), when: inDays(ctx, daysBetween(today(), p.next.date)) }) : ctx.t('give.noBirthday')}</span>
   </a></li>`)}
-</ul>` : h`<p class="empty">${ctx.t('give.noPeopleYet')}</p>`}
+</ul>
+<p class="empty" data-filter-empty hidden>${ctx.t('give.noMatches')}</p>` : h`<p class="empty">${q ? ctx.t('give.noMatches') : ctx.t('give.noPeopleYet')}</p>`}
 <section class="card">
   <h2>${ctx.t('give.addPerson')}</h2>
   ${error ? h`<div class="flash flash-error" role="alert">${error}</div>` : ''}
@@ -296,7 +321,7 @@ ${list.length ? h`<ul class="lists">
   });
 }
 
-export function personPage(ctx, { person, next, history, choices, others = [], personForm, personError }) {
+export function personPage(ctx, { person, next, history, choices, others = [], personForm, personError, listChoices = [] }) {
   const back = `/admin/give/people/${person.id}`;
   // Group the history by year → occasion, newest first.
   const groups = [];
@@ -318,16 +343,17 @@ export function personPage(ctx, { person, next, history, choices, others = [], p
     title: person.name,
     active: 'people',
     body: h`
-<h1>${person.name} ${privateBadge(ctx, person)}</h1>
+<h1>${favoriteButton(ctx, person, `/admin/give/people/${person.id}`)} ${person.name} ${privateBadge(ctx, person)}</h1>
 <p class="muted">${next ? h`🎂 ${ctx.t('give.birthdayOn', { date: fmtDay(ctx, next.date, { year: true }) })}${age ? h` · ${ctx.t('give.turns', { age })}` : ''}` : ctx.t('give.noBirthday')}
   ${person.gives_christmas ? h` · 🎄 ${ctx.t('give.givesChristmas')}` : ''}</p>
 ${person.notes ? h`<p class="description">${person.notes}</p>` : ''}
+${history.some((g) => g.status === 'idea') ? h`<p><a class="button secondary" href="/admin/give/people/${person.id}/new-list">📋 ${ctx.t('give.ideasToList', { name: person.name })}</a></p>` : ''}
 
 <section>
   ${addGiftForm(ctx, { personId: person.id, back, choices, open: !history.length, others })}
   ${groups.length ? groups.map((grp) => h`
     <h2 id="year-${grp.year}">${grp.label}</h2>
-    <ul class="gifts">${grp.gifts.map((g) => giftRow(ctx, g, { back, others, forPerson: person.id }))}</ul>`)
+    <ul class="gifts">${grp.gifts.map((g) => giftRow(ctx, g, { back, others, forPerson: person.id, listChoices }))}</ul>`)
   : h`<p class="empty">${ctx.t('give.noGiftsYet')}</p>`}
 </section>
 
@@ -347,7 +373,7 @@ ${person.notes ? h`<p class="description">${person.notes}</p>` : ''}
   });
 }
 
-export function occasionsPage(ctx, { list, people, christmasYear, form = {}, error }) {
+export function occasionsPage(ctx, { list, people, christmasYear, form = {}, error, q = '' }) {
   const hasChristmas = list.some((o) => o.type === 'christmas' && o.date.startsWith(String(christmasYear)));
   return page(ctx, {
     title: ctx.t('give.occasions'),
@@ -355,16 +381,18 @@ export function occasionsPage(ctx, { list, people, christmasYear, form = {}, err
     body: h`
 <h1>${ctx.t('give.occasions')}</h1>
 <p class="small muted">${ctx.t('give.birthdaysAutomatic')}</p>
+${searchBox(ctx, { q, action: '/admin/give/occasions', target: '#occasion-list > li', placeholder: ctx.t('give.searchOccasions') })}
 ${!hasChristmas ? h`<form method="post" action="/admin/give/occasions/christmas" class="inline">
   ${csrfField(ctx)}<input type="hidden" name="year" value="${christmasYear}">
   <button type="submit" class="primary">🎄 ${ctx.t('give.newChristmas', { year: christmasYear })}</button>
 </form>` : ''}
-${list.length ? h`<ul class="lists">
-  ${list.map((o) => h`<li><a href="/admin/give/occasions/${o.id}">
+${list.length ? h`<ul class="lists" id="occasion-list">
+  ${list.map((o) => h`<li data-search="${o.name}"><a href="/admin/give/occasions/${o.id}">
     <strong>${o.type === 'christmas' ? '🎄' : '📅'} ${o.name} ${privateBadge(ctx, o)}</strong>
     <span class="small muted">${fmtDay(ctx, o.date, { year: true })}${o.total != null ? ` · ${ctx.t('give.progressShort', { done: o.done, total: o.total })}` : ''}</span>
   </a></li>`)}
-</ul>` : h`<p class="empty">${ctx.t('give.noOccasions')}</p>`}
+</ul>
+<p class="empty" data-filter-empty hidden>${ctx.t('give.noMatches')}</p>` : h`<p class="empty">${q ? ctx.t('give.noMatches') : ctx.t('give.noOccasions')}</p>`}
 
 <section class="card">
   <h2>${ctx.t('give.newOccasion')}</h2>
@@ -396,7 +424,7 @@ function pickFromWishlist(ctx, person, occasionValue) {
   return h`<p class="small"><a href="/admin/wishlists/${w.id}?occasion=${encodeURIComponent(occasionValue)}">🎀 ${ctx.t('wish.pickFromWishlist')}</a></p>`;
 }
 
-export function checklistPage(ctx, { occasion, rows, orphans, total, done, spent, onlyMissing, candidates, occasionForm, occasionError }) {
+export function checklistPage(ctx, { occasion, rows, orphans, total, done, spent, onlyMissing, candidates, occasionForm, occasionError, listChoices = [] }) {
   const back = `/admin/give/occasions/${occasion.id}${onlyMissing ? '?missing=1' : ''}`;
   const shown = onlyMissing ? rows.filter((r) => !r.done) : rows;
   const pct = total ? Math.round((done / total) * 100) : 0;
@@ -408,6 +436,7 @@ export function checklistPage(ctx, { occasion, rows, orphans, total, done, spent
     active: 'occasions',
     body: h`
 <h1>${occasion.type === 'christmas' ? '🎄' : '📅'} ${occasion.name} ${privateBadge(ctx, occasion)}</h1>
+${postButton(ctx, `/admin/give/occasions/${occasion.id}/duplicate`, `⧉ ${ctx.t('give.duplicate', { year: Number(occasion.date.slice(0, 4)) + 1 })}`, { cls: 'link small' })}
 <p class="muted">${fmtDay(ctx, occasion.date, { year: true })}</p>
 
 <section class="card progress-card">
@@ -428,11 +457,11 @@ ${!rows.length ? h`<p class="empty">${ctx.t('give.noParticipants')}</p>` : ''}
     </div>
     ${pickFromWishlist(ctx, r.person, `occasion:${occasion.id}`)}
     ${r.previous.length ? h`<p class="small muted">${ctx.t('give.lastYear')}: ${r.previous.map((g) => g.name).join(', ')}</p>` : ''}
-    ${r.gifts.length ? h`<ul class="gifts">${r.gifts.map((g) => giftRow(ctx, g, { back, others: participants, anchor: firstTime(g.id), forPerson: r.person.id }))}</ul>` : ''}
+    ${r.gifts.length ? h`<ul class="gifts">${r.gifts.map((g) => giftRow(ctx, g, { back, others: participants, anchor: firstTime(g.id), forPerson: r.person.id, listChoices }))}</ul>` : ''}
     ${addGiftForm(ctx, { personId: r.person.id, back, occasion: `occasion:${occasion.id}`, others: participants.filter((p) => p.id !== r.person.id) })}
   </li>`)}
 </ul>
-${orphans.length ? h`<h2>${ctx.t('give.otherGifts')}</h2><ul class="gifts">${orphans.map((g) => giftRow(ctx, g, { back, others: participants }))}</ul>` : ''}
+${orphans.length ? h`<h2>${ctx.t('give.otherGifts')}</h2><ul class="gifts">${orphans.map((g) => giftRow(ctx, g, { back, others: participants, listChoices }))}</ul>` : ''}
 
 ${candidates.length ? h`<section class="card">
   <form method="post" action="/admin/give/occasions/${occasion.id}/participants" class="row">
@@ -462,6 +491,39 @@ ${candidates.length ? h`<section class="card">
     <hr>
     ${postButton(ctx, `/admin/give/occasions/${occasion.id}/delete`, ctx.t('give.deleteOccasion'), { cls: 'danger', confirm: ctx.t('give.deleteOccasionConfirm') })}
   </details>
+</section>`,
+  });
+}
+
+export function ideasListPage(ctx, { person, ideas, error }) {
+  return page(ctx, {
+    title: ctx.t('give.ideasToList', { name: person.name }),
+    active: 'people',
+    body: h`
+<h1>${ctx.t('give.ideasToList', { name: person.name })}</h1>
+<section class="card">
+  ${error ? h`<div class="flash flash-error" role="alert">${error}</div>` : ''}
+  <p class="small muted">${ctx.t('give.ideasToListHint')}${person.user_id ? h` <strong>${ctx.t('give.ideasForAdmin', { name: person.name })}</strong>` : ''}</p>
+  <form method="post" action="/admin/give/people/${person.id}/new-list" class="stack">
+    ${csrfField(ctx)}
+    <label>${ctx.t('admin.listTitle')}
+      <input name="title" required maxlength="120" value="${ctx.t('wish.defaultListTitle', { name: person.name })}">
+    </label>
+    <label>${ctx.t('admin.description')}
+      <textarea name="description" rows="2" maxlength="2000">${person.notes || ''}</textarea>
+    </label>
+    ${ideas.length ? h`<fieldset class="group">
+      <legend>${ctx.t('wish.whichItems')}</legend>
+      ${ideas.map((g) => h`<label class="check"><input type="checkbox" name="gifts" value="${g.id}" checked> ${g.name}${g.in_list_title ? h` <span class="muted small">· ${ctx.t('give.inList', { list: g.in_list_title })}</span>` : ''}</label>`)}
+    </fieldset>` : h`<p class="empty">${ctx.t('give.noIdeas')}</p>`}
+    <label>${ctx.t('give.visibility')}
+      <select name="visibility">
+        <option value="shared">${ctx.t('lists.vis.shared')}</option>
+        <option value="private">${ctx.t('lists.vis.private')}</option>
+      </select>
+    </label>
+    <button type="submit" class="primary">${ctx.t('admin.create')}</button>
+  </form>
 </section>`,
   });
 }

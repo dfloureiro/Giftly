@@ -88,6 +88,17 @@ export const wishItems = {
     syncLinked(id);
   },
 
+  /** Drag and drop: `ids` in their new order (must be exactly the active items). */
+  setOrder(wishlistId, ids) {
+    return tx(() => {
+      const current = db.prepare("SELECT id FROM wishlist_items WHERE wishlist_id = ? AND status = 'active'").all(wishlistId).map((r) => r.id);
+      const wanted = ids.map(Number);
+      if (wanted.length !== current.length || new Set(wanted).size !== wanted.length || !wanted.every((id) => current.includes(id))) return false;
+      const stmt = db.prepare('UPDATE wishlist_items SET position = ? WHERE id = ?');
+      wanted.forEach((id, i) => stmt.run(i + 1, id));
+      return true;
+    });
+  },
   move(id, dir) {
     tx(() => {
       const wi = wishItems.get(id);

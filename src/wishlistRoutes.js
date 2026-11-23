@@ -99,6 +99,14 @@ export function registerWishlistRoutes({ route, html, redirect, notFound, clean,
     redirect(ctx.res, `/admin/wishlist#wish-${wi.id}`);
   }, A);
 
+  // Drag and drop on your own wishlist.
+  route('POST', '/admin/wishlist/order', (ctx) => {
+    const w = wishlists.ofUser(ctx.user.id);
+    const ok = wishItems.setOrder(w.id, String(ctx.body.order || '').split(',').filter(Boolean));
+    ctx.res.writeHead(ok ? 204 : 400, { 'Cache-Control': 'no-store' });
+    ctx.res.end();
+  }, A);
+
   route('POST', '/admin/wishlist/items/:id/preview', (ctx) => {
     const wi = ownItem(ctx);
     if (!wi) return;

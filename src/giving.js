@@ -6,7 +6,7 @@
 // occasion, if any, are visible too.
 // Every read in this module goes through `visible()` / `GIFT_VISIBLE`, including counts
 // and totals, so private entries never leak into another admin's views.
-import { db, tx } from './db.js';
+import { db, tx, LIST_VISIBLE } from './db.js';
 import { config } from './config.js';
 
 const now = () => Date.now();
@@ -56,9 +56,23 @@ export const validDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(D
 
 // ---------- people ----------
 
+/** SQL: `q` matches a text column (case-insensitive; empty matches everything). */
+const matches = (col) => `($q = '' OR ${col} LIKE '%' || $q || '%')`;
+
 export const people = {
-  list(uid) {
-    return db.prepare(`SELECT p.* FROM people p WHERE ${visible('p')} ORDER BY p.name COLLATE NOCASE`).all({ uid });
+  /** Visible people; this admin's favourites first. `q` filters by name or notes. */
+  list(uid, { q = '' } = {}) {
+    return db.prepare(`SELECT p.*,
+        EXISTS (SELECT 1 FROM person_favorites f WHERE f.user_id = $uid AND f.person_id = p.id) AS favorite
+      FROM people p WHERE ${visible('p')} AND (${matches('p.name')} OR ${matches('p.notes')})
+      ORDER BY favorite DESC, p.name COLLATE NOCASE`).all({ uid, q: String(q).trim() });
+  },
+  /** Favourites are per admin. */
+  setFavorite(uid, id, on) {
+    if (!people.get(uid, id)) return false;
+    if (on) db.prepare('INSERT OR IGNORE INTO person_favorites (user_id, person_id) VALUES (?, ?)').run(uid, id);
+    else db.prepare('DELETE FROM person_favorites WHERE user_id = ? AND person_id = ?').run(uid, id);
+    return true;
   },
   get(uid, id) {
     return db.prepare(`SELECT p.* FROM people p WHERE p.id = $id AND ${visible('p')}`).get({ uid, id }) ?? null;
@@ -100,8 +114,9 @@ export const people = {
 // ---------- occasions (Christmas / custom; birthdays are derived from people) ----------
 
 export const occasions = {
-  list(uid) {
-    return db.prepare(`SELECT o.* FROM occasions o WHERE ${visible('o')} ORDER BY o.date DESC, o.id DESC`).all({ uid });
+  list(uid, { q = '' } = {}) {
+    return db.prepare(`SELECT o.* FROM occasions o WHERE ${visible('o')} AND ${matches('o.name')}
+      ORDER BY o.date DESC, o.id DESC`).all({ uid, q: String(q).trim() });
   },
   get(uid, id) {
     return db.prepare(`SELECT o.* FROM occasions o WHERE o.id = $id AND ${visible('o')}`).get({ uid, id }) ?? null;
@@ -174,7 +189,11 @@ function forAnAdmin(personIds) {
 const GIFT_COLS = `g.*, p.name AS person_name, o.name AS occasion_name, o.type AS occasion_type, o.date AS occasion_date,
   (SELECT group_concat(gpn.person_id) FROM gift_people gpn WHERE gpn.gift_id = g.id) AS people_ids_csv,
   (SELECT wg.status FROM wishlist_items wg WHERE wg.id = g.wishlist_item_id) AS wish_status,
-  (SELECT wg.removed_reason FROM wishlist_items wg WHERE wg.id = g.wishlist_item_id) AS wish_removed_reason`;
+  (SELECT wg.removed_reason FROM wishlist_items wg WHERE wg.id = g.wishlist_item_id) AS wish_removed_reason,
+  -- The guest list an idea was copied to (only if this admin can see that list).
+  (SELECT l.id FROM items gli JOIN lists l ON l.id = gli.list_id WHERE gli.id = g.list_item_id AND ${LIST_VISIBLE}) AS in_list_id,
+  (SELECT l.title FROM items gli JOIN lists l ON l.id = gli.list_id WHERE gli.id = g.list_item_id AND ${LIST_VISIBLE}) AS in_list_title,
+  (SELECT gli.reserved_name FROM items gli JOIN lists l ON l.id = gli.list_id WHERE gli.id = g.list_item_id AND ${LIST_VISIBLE}) AS in_list_reserved_by`;
 
 /** Add `people` ([{ id, name }], main person first) to gift rows. */
 function withPeople(rows) {
@@ -266,6 +285,15 @@ export const gifts = {
       cents, cur, source, linkChanged ? 1 : 0, now(), id,
     );
     return true;
+  },
+  /** Remember the guest-list item an idea was copied to. */
+  setListItem(id, itemId) {
+    db.prepare('UPDATE gifts SET list_item_id = ? WHERE id = ?').run(itemId, id);
+  },
+  /** The admin this gift is for, if any of its people is linked to an admin account. */
+  recipientUser(id) {
+    return db.prepare(`SELECT p.user_id FROM gift_people gp JOIN people p ON p.id = gp.person_id
+      WHERE gp.gift_id = ? AND p.user_id IS NOT NULL LIMIT 1`).get(id)?.user_id ?? null;
   },
   setStatus(uid, id, status) {
     if (!gifts.get(uid, id)) return false;

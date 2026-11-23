@@ -1,5 +1,5 @@
 // Views for personal wishlists. The owner's page shows NOTHING about reservations.
-import { h, raw, layout, csrfField, postButton, adminHeader, uploadField } from './views.js';
+import { h, raw, layout, csrfField, postButton, adminHeader, uploadField, dragHandle } from './views.js';
 
 function hostOf(url) {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
@@ -54,15 +54,16 @@ export function ownWishlistPage(ctx, { wishlist, active, history, error, form })
 <h1>${ctx.t('wish.mineTitle')}</h1>
 <p class="small muted">${ctx.t('wish.mineIntro')}</p>
 
-${active.length ? h`<ul class="items admin-items">
-  ${active.map((it, idx) => h`<li class="item" id="wish-${it.id}">
+${active.length ? h`<ul class="items admin-items" data-sortable="/admin/wishlist/order">
+  ${active.map((it, idx) => h`<li class="item" id="wish-${it.id}" data-id="${it.id}">
+    ${active.length > 1 ? dragHandle(ctx) : ''}
     ${wishThumb(it)}
     <div class="body">${wishBody(ctx, it)}
       ${it.preview_status === 'pending' ? h`<p class="small muted" data-preview-status="${it.id}">${ctx.t('preview.pending')}</p>` : ''}
     </div>
     <div class="actions">
-      ${idx > 0 ? postButton(ctx, `/admin/wishlist/items/${it.id}/move`, '↑', { cls: 'icon', extra: '<input type="hidden" name="dir" value="up">' }) : ''}
-      ${idx < active.length - 1 ? postButton(ctx, `/admin/wishlist/items/${it.id}/move`, '↓', { cls: 'icon', extra: '<input type="hidden" name="dir" value="down">' }) : ''}
+      ${idx > 0 ? postButton(ctx, `/admin/wishlist/items/${it.id}/move`, '↑', { cls: 'icon move', extra: '<input type="hidden" name="dir" value="up">' }) : ''}
+      ${idx < active.length - 1 ? postButton(ctx, `/admin/wishlist/items/${it.id}/move`, '↓', { cls: 'icon move', extra: '<input type="hidden" name="dir" value="down">' }) : ''}
       <details class="edit">
         <summary class="button secondary">${ctx.t('admin.edit')}</summary>
         <form method="post" action="/admin/wishlist/items/${it.id}" class="stack">

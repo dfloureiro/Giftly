@@ -248,6 +248,17 @@ const migrations = [
   ALTER TABLE gifts ADD COLUMN wishlist_item_id INTEGER REFERENCES wishlist_items(id) ON DELETE SET NULL;
   ALTER TABLE people ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
   `,
+  // v13 (3.1): per-admin favourite people; gift ideas copied into guest lists keep a trace
+  // (gifts.list_item_id); lists made for an admin (from ideas for them) are never visible to them.
+  `
+  CREATE TABLE person_favorites (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    PRIMARY KEY (user_id, person_id)
+  );
+  ALTER TABLE gifts ADD COLUMN list_item_id INTEGER REFERENCES items(id) ON DELETE SET NULL;
+  ALTER TABLE lists ADD COLUMN recipient_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
+  `,
 ];
 
 {
@@ -306,10 +317,11 @@ export const settings = {
 
 /**
  * LIST PRIVACY RULE (the only place it lives): an admin ($uid) sees a list when it is shared
- * or theirs, AND it contains nothing from their own wishlist (a list made from someone's
- * wishlist must never be visible to that person — it would reveal what was reserved).
+ * or theirs, AND it isn't a list made *for* them (from gift ideas for them), AND it contains
+ * nothing from their own wishlist — such lists would reveal what was reserved for them.
  */
 export const LIST_VISIBLE = `((l.visibility = 'shared' OR l.owner_id = $uid)
+  AND (l.recipient_user_id IS NULL OR l.recipient_user_id != $uid)
   AND NOT EXISTS (SELECT 1 FROM wishlists w WHERE w.owner_id = $uid AND (
         w.id = l.source_wishlist_id
      OR EXISTS (SELECT 1 FROM items li JOIN wishlist_items lwi ON lwi.id = li.wishlist_item_id
@@ -336,11 +348,11 @@ export const lists = {
   byToken(token) {
     return db.prepare('SELECT * FROM lists WHERE token = ?').get(token);
   },
-  create({ title, description, owner_id = null, visibility = 'shared', source_wishlist_id = null, auto_add_new = true }) {
+  create({ title, description, owner_id = null, visibility = 'shared', source_wishlist_id = null, auto_add_new = true, recipient_user_id = null }) {
     return Number(db.prepare(
-      `INSERT INTO lists (title, description, token, owner_id, visibility, source_wishlist_id, auto_add_new, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(title, description, newToken(), owner_id, visibility, source_wishlist_id, auto_add_new ? 1 : 0, now()).lastInsertRowid);
+      `INSERT INTO lists (title, description, token, owner_id, visibility, source_wishlist_id, auto_add_new, recipient_user_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(title, description, newToken(), owner_id, visibility, source_wishlist_id, auto_add_new ? 1 : 0, recipient_user_id, now()).lastInsertRowid);
   },
   /**
    * Only the owner changes visibility; an ownerless (pre-3.0) list becomes yours if you make
@@ -568,6 +580,17 @@ export const items = {
   },
   delete(id) {
     db.prepare('DELETE FROM items WHERE id = ?').run(id);
+  },
+  /** Drag and drop: `ids` in their new order (must be exactly this list's non-pending items). */
+  setOrder(listId, ids) {
+    return tx(() => {
+      const current = db.prepare('SELECT id FROM items WHERE list_id = ? AND pending = 0').all(listId).map((r) => r.id);
+      const wanted = ids.map(Number);
+      if (wanted.length !== current.length || new Set(wanted).size !== wanted.length || !wanted.every((id) => current.includes(id))) return false;
+      const stmt = db.prepare('UPDATE items SET position = ? WHERE id = ?');
+      wanted.forEach((id, i) => stmt.run(i + 1, id));
+      return true;
+    });
   },
   move(id, dir) {
     tx(() => {

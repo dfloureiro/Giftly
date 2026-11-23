@@ -145,6 +145,9 @@ A separate part of the admin (*Gifts to give*) to plan the gifts **you** give, n
 
 - **People:** name, birthday (day and month, year optional for ages), notes, and whether you give them a Christmas gift.
 - **Occasions:** birthdays appear on their own every year, from each person's date. *Create Christmas YYYY* creates that year's Christmas with everyone marked for Christmas, and you can add or remove people just for that year. Marking someone for Christmas later also adds them to this year's Christmas if it already exists. Custom occasions (christenings, weddings…) have a name, a date and participants.
+- **Favourites and search:** star the people you give to most (favourites are per admin and come first), and search people (name or notes) and occasions as you type.
+- **Duplicate an occasion** for the next year, with the same people (gifts aren't copied).
+- **Ideas → guest lists:** put a gift idea on a guest list, or create a guest list from a person's ideas (e.g. so the grandparents can pick from them). The ideas are copied, and each one then shows which list it is on and whether someone reserved it. Lists made from ideas for someone who is an admin are never visible to that admin.
 - **Checklist per occasion**, made for the phone: "12 of 18 people already have a gift", total spent, each person's gifts (idea → bought → given), what they got the year before, and a filter for people still without a gift.
 - **Upcoming:** the next 60 days, with "has a gift / ideas / no gift yet" for each occasion.
 - **Joint gifts:** a gift can be for several people, for example one Christmas gift for a couple. It counts as a gift for each of them, shows in each one's history, and enters the total spent once. Their birthday gifts stay individual.
@@ -184,6 +187,7 @@ Optionally, protect `/admin` with a Cloudflare Access policy for extra safety.
 
 - **Access:** every list has an unguessable link (`/l/<22 random characters>`). Anyone with the link can join. Use *Generate new link* in the admin to revoke the old one, which also logs out everyone who joined.
 - **Identity:** a guest is identified by their name within a list (not case-sensitive). Typing the same name on another device shows the same picks. This is intentionally simple and built for trust between family and friends, not for strangers.
+- **Order:** drag gifts by their handle (⋮⋮) to reorder a list or your wishlist, with the mouse or a finger. The ↑/↓ buttons remain as a fallback without JavaScript.
 - **Picks:** picks are atomic, so if two people click at the same moment, only one gets the gift. Guests can give up their own picks. In the admin you can release any gift.
 - **Reserving on someone's behalf:** use *Reserve* on a gift and type a name (or pick a guest who already joined), for someone who told you in person. The reservation belongs to that guest: when they open the list with that name, they see it in their picks ("Reserved for you by …") and can give it up. The other admins are notified.
 - **Images:** when you add a link, the server fetches the page in the background, reads its Open Graph, Twitter card, JSON-LD or microdata product image (with Amazon-specific fallbacks), and **stores a copy of the image** in `/data/images`. Guests never load anything from the shops. Some shops block automated requests (e.g. Akamai-protected ones); in that case, **upload a photo** (resized in the browser) or paste an image link. An image is only ever replaced by another image.
