@@ -37,6 +37,7 @@ function get(url, { limit, accept, allowPrivate = false }, redirects = 0) {
     if (!allowPrivate && net.isIP(host) && isPrivateIp(host)) return reject(new Error('Refusing private address'));
     const lib = u.protocol === 'https:' ? https : http;
     const req = lib.get(u, {
+      agent: false, // a fresh connection every time: never one pooled by notifications (see net.js)
       lookup: allowPrivate ? undefined : safeLookup,
       timeout: TIMEOUT_MS,
       headers: {

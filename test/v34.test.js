@@ -79,24 +79,37 @@ test('images respect REQUIRE_2FA like any admin page', async () => {
   } finally { await strict.stop({ keepData: false }); }
 });
 
-test('account links use BASE_URL; without it, the Host — never X-Forwarded-Host', async () => {
+test('account links: always BASE_URL; without it, only from this machine (localhost), else refused', async () => {
   const withBase = await startServer({ BASE_URL: 'https://gifts.example.com', TRUST_PROXY: 'true' });
-  const noBase = await startServer({ TRUST_PROXY: 'true' });
+  // Listening on every interface, so it can also be reached from a non-loopback address.
+  const noBase = await startServer({ TRUST_PROXY: 'true', HOST: '0.0.0.0' });
+  const linkIn = (html) => { const m = /id="new-link"[^>]*value="([^"]+)"|value="([^"]+)"[^>]*id="new-link"/.exec(html); return m && (m[1] || m[2]); };
+  const invite = async (srv, base, headers = {}) => {
+    const admin = await loginAdmin(srv.base);
+    const csrf = await admin.csrf('/admin/users');
+    return rawRequest(base, '/admin/users/invite', { method: 'POST', client: admin, form: { _csrf: csrf }, headers });
+  };
   try {
-    for (const [srv, expected] of [[withBase, 'https://gifts.example.com/invite/'], [noBase, null]]) {
-      const admin = await loginAdmin(srv.base);
-      const csrf = await admin.csrf('/admin/users');
-      const r = await rawRequest(srv.base, '/admin/users/invite', {
-        method: 'POST', client: admin, form: { _csrf: csrf },
-        headers: { 'x-forwarded-host': 'evil.example', 'x-forwarded-proto': 'https' },
-      });
-      const link = /id="new-link"[^>]*value="([^"]+)"|value="([^"]+)"[^>]*id="new-link"/.exec(r.text);
-      const url = link[1] || link[2];
-      assert.ok(!url.includes('evil.example'), url);
-      if (expected) assert.ok(url.startsWith(expected), url);
-      else assert.ok(url.startsWith(`https://127.0.0.1:${new URL(srv.base).port}/invite/`) || url.startsWith(`http://127.0.0.1:${new URL(srv.base).port}/invite/`), url);
-      if (!expected) assert.match((await admin.get('/admin/users')).text, /BASE_URL is not set/);
+    // BASE_URL wins over a forged Host and X-Forwarded-Host.
+    const a = await invite(withBase, withBase.base, { host: 'evil.example', 'x-forwarded-host': 'evil.example', 'x-forwarded-proto': 'https' });
+    assert.ok(linkIn(a.text).startsWith('https://gifts.example.com/invite/'), linkIn(a.text));
+
+    // No BASE_URL, on this machine: a localhost link, whatever the forwarded headers say.
+    const port = new URL(noBase.base).port;
+    const b = await invite(noBase, noBase.base, { 'x-forwarded-host': 'evil.example' });
+    assert.equal(linkIn(b.text)?.startsWith(`http://localhost:${port}/invite/`), true, linkIn(b.text));
+    assert.match((await (await loginAdmin(noBase.base)).get('/admin/users')).text, /BASE_URL is not set/);
+
+    // No BASE_URL, from another address (this machine's LAN address, not loopback): refused.
+    const { networkInterfaces } = await import('node:os');
+    const lan = Object.values(networkInterfaces()).flat().find((i) => i && i.family === 'IPv4' && !i.internal)?.address;
+    if (lan) {
+      const c = await invite(noBase, `http://${lan}:${port}`);
+      assert.equal(c.status, 400);
+      assert.equal(linkIn(c.text), null);
+      assert.match(c.text, /set BASE_URL/);
     }
+    // A forged "Host: localhost" from outside doesn't help either (the connection itself must be loopback).
   } finally { await withBase.stop(); await noBase.stop(); }
 });
 

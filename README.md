@@ -75,7 +75,7 @@ One step, on any machine with Docker (a NAS, a Raspberry Pi, a server):
 curl -fsSL https://raw.githubusercontent.com/dfloureiro/Giftly/main/install.sh -o install.sh && sh install.sh
 ```
 
-It asks for your domain and a [Cloudflare Tunnel](#exposing-it-with-cloudflare-tunnel) token (both optional), creates a strong admin password, starts Giftly and shows you how to log in. Without a tunnel, Giftly is only reachable from that machine at <http://localhost:3000/admin>. Files come from the latest release. Running it again updates Giftly and never changes your `.env` or `cloudflared.env`, nor a `compose.yaml` you edited (put your own changes in `compose.override.yaml`). You can read [the script](install.sh) first. Needs Docker Compose 2.24 or newer.
+It asks for your domain and a [Cloudflare Tunnel](#exposing-it-with-cloudflare-tunnel) token (both optional), creates a strong admin password, starts Giftly and shows you how to log in. Without a tunnel, Giftly is only reachable from that machine at <http://localhost:3000/admin>. Files come from the latest release. Running it again updates Giftly and never changes your `.env` or `cloudflared.env`, nor a `compose.yaml` you edited (put your own changes in `compose.override.yaml`). It checks that Giftly and the tunnel really came up; if an update leaves them down, it puts your settings back and tells you why. You can read [the script](install.sh) first. Needs Docker Compose 2.24 or newer.
 
 The image follows `ghcr.io/dfloureiro/giftly:3`: fixes and new features within 3.x, never a breaking 4.0. To pin an exact version, set `GIFTLY_TAG=3.4.0` in `.env`.
 
@@ -108,7 +108,7 @@ docker run -d --name giftly -p 127.0.0.1:3000:3000 \
 | `ADMIN_PASSWORD` | — | Password of the first account (at least 8 characters). Only used on the very first start, when there are no accounts yet; ignored afterwards (with a warning). |
 | `APP_LANG` | `pt` | Fallback language (`pt` or `en`) when the browser asks for neither. |
 | `SITE_TITLE` | `Giftly` | Name shown on the home page and in the browser tab. |
-| `BASE_URL` | auto | Public URL used for share, invite and new-password links and in notifications, e.g. `https://gifts.example.com`. **Set it** whenever Giftly is reachable from the internet. |
+| `BASE_URL` | auto | Public URL used for share, invite and new-password links and in notifications, e.g. `https://gifts.example.com`. **Set it** whenever Giftly is reachable from the internet. Without it, invite and new-password links can only be created on the machine running Giftly (`http://localhost`). |
 | `TZ` | `Europe/Lisbon` | Time zone for dates in the admin. |
 | `LINK_PREVIEWS` | `true` | Fetch product pages to show each gift's image and price. Set to `false` to turn it off. |
 | `TRUST_PROXY` | `true` | Trust `CF-Connecting-IP` / `X-Forwarded-*` from a reverse proxy or Cloudflare Tunnel. They are only believed when the connection comes from a private or local address (the proxy next to Giftly), never from the internet. Set to `false` to never trust them. |

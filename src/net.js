@@ -124,6 +124,11 @@ export function isLocalNotifyHost(host) {
   return h === 'localhost' || h.endsWith('.localhost') || h === 'localhost.' || (net.isIP(h) > 0 && isPrivateIp(h));
 }
 
+// Each purpose has its own connection pool, never Node's shared global agent: a connection
+// opened for an allowed notification host (NOTIFY_ALLOWED_HOSTS) must never be reused by a link
+// preview, which would skip the preview's DNS check. Previews don't pool at all (agent: false).
+const NOTIFY_AGENTS = { 'http:': new http.Agent({ keepAlive: true }), 'https:': new https.Agent({ keepAlive: true }) };
+
 /**
  * POST JSON for notifications. Private/local destinations are refused unless allowed in
  * NOTIFY_ALLOWED_HOSTS (checked on the resolved address, so DNS tricks don't help), redirects
@@ -141,6 +146,7 @@ export function postJson(url, body, headers = {}, { timeout = 8000 } = {}) {
     const data = Buffer.from(JSON.stringify(body));
     const req = (u.protocol === 'https:' ? https : http).request(u, {
       method: 'POST',
+      agent: NOTIFY_AGENTS[u.protocol],
       lookup: allowed ? undefined : safeLookup,
       timeout,
       headers: { 'Content-Type': 'application/json', 'Content-Length': data.length, ...headers },

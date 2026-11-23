@@ -1,0 +1,23 @@
+services:
+  giftly:
+    image: ghcr.io/dfloureiro/giftly:latest
+    # build: .            # uncomment to build locally instead
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/data
+    ports:
+      - "127.0.0.1:${GIFTLY_PORT:-3000}:3000"   # local only; remove if you only use the tunnel
+
+  # Optional: expose through Cloudflare Tunnel (no ports opened on your router).
+  # Start with: docker compose --profile tunnel up -d
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN:-}
+    depends_on:
+      giftly:
+        condition: service_healthy

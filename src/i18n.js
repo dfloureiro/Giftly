@@ -1,6 +1,7 @@
 const strings = {
   pt: {
-    "account.noBaseUrl": "BASE_URL não está definido: os links de convite e de nova password usam o endereço por onde abriste esta página. Se o Giftly está acessível pela internet, define BASE_URL=https://o.teu.dominio.",
+    "account.noBaseUrl": "BASE_URL não está definido: os links de convite e de nova password só podem ser criados neste computador (http://localhost). Define BASE_URL=https://o.teu.dominio.",
+    "account.needBaseUrl": "Para criar links de convite ou de nova password fora deste computador, define BASE_URL (ex.: BASE_URL=https://o.teu.dominio) e reinicia o Giftly.",
     "join.sameName": "Já entrou alguém com o nome “{name}” nesta lista. És tu?",
     "join.itsMe": "Sim, sou eu",
     "join.notMe": "Não és? Acrescenta um apelido ou uma inicial ao teu nome, em baixo.",
@@ -430,7 +431,8 @@ const strings = {
     'error.home': 'Ir para o início',
   },
   en: {
-    "account.noBaseUrl": "BASE_URL is not set: invite and new-password links use the address you opened this page with. If Giftly is reachable from the internet, set BASE_URL=https://your.domain.",
+    "account.noBaseUrl": "BASE_URL is not set: invite and new-password links can only be created on this computer (http://localhost). Set BASE_URL=https://your.domain.",
+    "account.needBaseUrl": "To create invite or new-password links from anywhere but this computer, set BASE_URL (e.g. BASE_URL=https://your.domain) and restart Giftly.",
     "join.sameName": "Someone already joined this list as “{name}”. Is it you?",
     "join.itsMe": "Yes, it's me",
     "join.notMe": "Not you? Add a surname or an initial to your name below.",

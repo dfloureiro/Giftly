@@ -10,7 +10,7 @@ import { tokens, csrfFor, safeEqual, rateLimit, resetRateLimit } from './securit
 import { makeT } from './i18n.js';
 import * as views from './views.js';
 import { IMAGE_DIR, IMAGE_FILE_RE, IMAGE_TYPES, removeImage, saveImageBuffer, sweepImages } from './preview.js';
-import { trustedProxyPeer } from './net.js';
+import { trustedProxyPeer, normalizeAddress } from './net.js';
 import { enqueuePreview, clearPreview, startPreviewQueue, allImageFiles, releaseImage } from './previewQueue.js';
 import { deleteUserData, gifts as givingGifts } from './giving.js';
 import { registerGivingRoutes } from './givingRoutes.js';
@@ -87,12 +87,19 @@ function isHttps(req) {
 }
 
 /**
- * For invite and new-password links (they grant an account): BASE_URL, or else the Host the
- * admin's own browser used — never X-Forwarded-Host.
+ * For invite and new-password links (they grant an account): always BASE_URL. Without it, only
+ * when the admin is on this very machine (loopback connection and a localhost address), as
+ * http://localhost:PORT; anywhere else → null, and the page asks for BASE_URL to be set.
  */
+const LOOPBACK = new Set(['127.0.0.1', '::1']);
 function accountLinkBase(req) {
   if (process.env.BASE_URL) return process.env.BASE_URL.replace(/\/$/, '');
-  return `${isHttps(req) ? 'https' : 'http'}://${req.headers.host || 'localhost'}`;
+  const peer = normalizeAddress(req.socket.remoteAddress);
+  const host = String(req.headers.host || '');
+  const port = /:(\d+)$/.exec(host)?.[1];
+  const hostName = host.replace(/:\d+$/, '').replace(/^\[|\]$/g, '').toLowerCase();
+  if (!LOOPBACK.has(peer) || !['localhost', '127.0.0.1', '::1'].includes(hostName)) return null;
+  return `http://localhost${port ? `:${port}` : ''}`;
 }
 
 function baseUrl(req) {
@@ -535,8 +542,10 @@ route('GET', '/admin/users', (ctx) => renderUsers(ctx), { auth: 'admin' });
 
 // The link is shown once, in this response (only its hash is stored).
 route('POST', '/admin/users/invite', (ctx) => {
+  const base = accountLinkBase(ctx.req);
+  if (!base) return renderUsers(ctx, { error: ctx.t('account.needBaseUrl') }, 400);
   const token = links.create({ createdBy: ctx.user.id });
-  renderUsers(ctx, { newLink: { kind: 'invite', url: `${accountLinkBase(ctx.req)}/invite/${token}` } });
+  renderUsers(ctx, { newLink: { kind: 'invite', url: `${base}/invite/${token}` } });
 }, { auth: 'admin' });
 
 route('POST', '/admin/users/invites/:id/revoke', (ctx) => {
@@ -547,8 +556,10 @@ route('POST', '/admin/users/invites/:id/revoke', (ctx) => {
 route('POST', '/admin/users/:id/reset-link', (ctx) => {
   const target = users.get(Number(ctx.params.id));
   if (!target) return notFound(ctx);
+  const base = accountLinkBase(ctx.req);
+  if (!base) return renderUsers(ctx, { error: ctx.t('account.needBaseUrl') }, 400);
   const token = links.create({ createdBy: ctx.user.id, userId: target.id });
-  renderUsers(ctx, { newLink: { kind: 'reset', user: target, url: `${accountLinkBase(ctx.req)}/reset/${token}` } });
+  renderUsers(ctx, { newLink: { kind: 'reset', user: target, url: `${base}/reset/${token}` } });
 }, { auth: 'admin' });
 
 route('POST', '/admin/users/:id/delete', (ctx) => {

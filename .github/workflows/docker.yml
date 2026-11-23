@@ -24,8 +24,15 @@ jobs:
           node-version: 24
       - run: npm test
 
+  # install.sh end to end on the runner's Docker (cloudflared replaced by a local stub).
+  installer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: sh test/install/run.sh
+
   build:
-    needs: test
+    needs: [test, installer]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -55,6 +62,8 @@ jobs:
             grep -q Giftly <<<"$body"
           done
           run docker exec giftly-smoke sh -c 'ps -o user,args | grep "^node .*server.js"'
+          # No secrets file may ever end up in the image.
+          run docker run --rm --entrypoint sh giftly-test -c '! find /app \( -name "*.env" -o -name ".env*" \) | grep .'
 
       - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v3

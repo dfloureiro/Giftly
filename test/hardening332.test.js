@@ -120,3 +120,20 @@ test('a garbage redirect from a shop fails that preview only; the process keeps 
     assert.equal((await new Client(server.base).request('/healthz')).status, 200);
   } finally { raw.close(); good.close(); }
 });
+
+test("a preview never reuses a connection opened for an allowed notification host", async () => {
+  // The notification target is allowed (NOTIFY_ALLOWED_HOSTS) and keeps connections alive.
+  let requests = 0;
+  const srv = http.createServer((req, res) => { requests++; res.end('<html><head><title>internal</title></head></html>'); });
+  srv.keepAliveTimeout = 10_000;
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const url = `http://localhost:${srv.address().port}/`;
+  try {
+    config.notifyAllowedHosts = ['localhost'];
+    await postJson(url, { hello: 1 });
+    assert.equal(requests, 1, 'the notification went through');
+    // Right after, a preview of the same host:port must still be refused (localhost → 127.0.0.1).
+    await assert.rejects(fetchPreview(url, ''), /Refusing private address/);
+    assert.equal(requests, 1, 'the preview never reached the internal server');
+  } finally { config.notifyAllowedHosts = []; srv.close(); }
+});

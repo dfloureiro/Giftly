@@ -5,3 +5,7 @@ test
 *.md
 .env
 compose*.yaml
+.env*
+*.env
+cloudflared.env
+.giftly-tmp.*
