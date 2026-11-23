@@ -68,7 +68,7 @@ function layout(ctx, { title, body, bodyClass = '' }) {
 <link rel="manifest" href="/site.webmanifest">
 <meta name="theme-color" content="#C8553D">
 <meta name="apple-mobile-web-app-title" content="${site}">
-<link rel="stylesheet" href="/static/style.css?v=22">
+<link rel="stylesheet" href="/static/style.css?v=23">
 <script src="/static/app.js?v=5" defer></script>
 </head>
 <body class="${bodyClass}">
@@ -110,7 +110,7 @@ export function homePage(ctx, { sessions }) {
   });
 }
 
-export function joinPage(ctx, { list, name = '', error } = {}) {
+export function joinPage(ctx, { list, name = '', error, sameName = '' } = {}) {
   return layout(ctx, {
     title: list.title,
     bodyClass: 'center',
@@ -121,11 +121,19 @@ export function joinPage(ctx, { list, name = '', error } = {}) {
   ${list.description ? h`<p class="description">${list.description}</p>` : ''}
   <p class="muted">${ctx.t('join.intro')}</p>
   ${error ? h`<div class="flash flash-error" role="alert">${error}</div>` : ''}
+  ${sameName ? h`<div class="same-name" role="alert">
+    <p><strong>${ctx.t('join.sameName', { name: sameName })}</strong></p>
+    <form method="post" action="/l/${list.token}/join">
+      <input type="hidden" name="name" value="${sameName}"><input type="hidden" name="confirm" value="1">
+      <button type="submit" class="primary">${ctx.t('join.itsMe')}</button>
+    </form>
+    <p class="small muted">${ctx.t('join.notMe')}</p>
+  </div>` : ''}
   <form method="post" action="/l/${list.token}/join" class="stack">
     <label>${ctx.t('login.name')}
-      <input name="name" required maxlength="60" autocomplete="name" value="${name}" placeholder="${ctx.t('login.namePlaceholder')}" autofocus>
+      <input name="name" required maxlength="60" autocomplete="name" value="${name}" placeholder="${ctx.t('login.namePlaceholder')}"${sameName ? '' : raw(' autofocus')}>
     </label>
-    <button type="submit" class="primary">${ctx.t('login.submit')}</button>
+    <button type="submit" class="${sameName ? 'secondary' : 'primary'}">${ctx.t(sameName ? 'join.otherName' : 'login.submit')}</button>
   </form>
   <p class="small muted">${ctx.t('login.hint')}</p>
 </section>`,
@@ -633,13 +641,14 @@ ${notifySection(ctx, notify, notifyErrors)}
   });
 }
 
-export function usersPage(ctx, { all, invites, newLink, error }) {
+export function usersPage(ctx, { all, invites, newLink, error, noBaseUrl = false }) {
   return layout(ctx, {
     title: ctx.t('account.admins'),
     body: h`
 ${adminHeader(ctx)}
 <h1>${ctx.t('account.admins')}</h1>
 ${error ? h`<div class="flash flash-error" role="alert">${error}</div>` : ''}
+${noBaseUrl ? h`<div class="flash flash-warn" role="note">${ctx.t('account.noBaseUrl')}</div>` : ''}
 
 ${newLink ? h`
 <section class="share card">

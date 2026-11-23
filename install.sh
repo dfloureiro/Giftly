@@ -5,14 +5,18 @@
 #   sh install.sh
 #
 # Asks for your domain and Cloudflare Tunnel token (both optional), writes .env with a strong
-# admin password, starts everything and prints how to log in. Re-running it never overwrites
-# an existing .env: it just updates and restarts.
+# admin password (and cloudflared.env with the token, which Giftly itself never sees), starts
+# everything and prints how to log in. Files come from the latest release, not from main.
+#
+# Re-running it updates and restarts. It never overwrites .env or cloudflared.env, and never
+# replaces a compose.yaml you changed (the new one is saved as compose.yaml.new instead; put
+# your changes in compose.override.yaml, which it never touches).
 #
 # Non-interactive: set GIFTLY_DOMAIN, TUNNEL_TOKEN, ADMIN_USERNAME (and GIFTLY_DIR, GIFTLY_PORT)
 # in the environment, and GIFTLY_YES=1 to skip the questions.
 set -eu
 
-REPO_RAW=${GIFTLY_REPO_RAW:-https://raw.githubusercontent.com/dfloureiro/Giftly/main}
+REPO=dfloureiro/Giftly
 DIR=${GIFTLY_DIR:-giftly}
 PORT=${GIFTLY_PORT:-3000}
 
@@ -37,11 +41,51 @@ docker info >/dev/null 2>&1 || die "can't talk to Docker. Is it running? (You ma
 # --- Files --------------------------------------------------------------------------------
 mkdir -p "$DIR"
 cd "$DIR"
-fetch() {
+fetch() { # fetch URL FILE ("-" = stdout)
   if command -v curl >/dev/null 2>&1; then curl -fsSL "$1" -o "$2"
   else wget -qO "$2" "$1"; fi
 }
-fetch "$REPO_RAW/compose.yaml" compose.yaml.new && mv compose.yaml.new compose.yaml
+sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -c1-64; }
+
+# Files from the latest release (a fixed tag), unless GIFTLY_REPO_RAW points elsewhere.
+if [ -n "${GIFTLY_REPO_RAW:-}" ]; then
+  REPO_RAW=$GIFTLY_REPO_RAW
+else
+  TAG=$(fetch "https://api.github.com/repos/$REPO/releases/latest" - 2>/dev/null \
+    | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1) || TAG=''
+  [ -n "$TAG" ] || die "couldn't find the latest Giftly release (is GitHub reachable?)"
+  REPO_RAW="https://raw.githubusercontent.com/$REPO/$TAG"
+  say "Giftly $TAG"
+fi
+
+# compose.yaml: replaced only if you never changed it (checked against what install.sh wrote
+# last time, or any official version from before this check existed).
+OFFICIAL='10f10e1706af00a29972946527f578b49e38d052bd8f90f8d84fdff8bf2d7fce 9d43d63e5d4eddc1f90dc0af7e3732057adfbab1ba7eb7d2705dc2c8a86d658e'
+fetch "$REPO_RAW/compose.yaml" compose.yaml.new
+if [ ! -f compose.yaml ]; then
+  mv compose.yaml.new compose.yaml
+elif [ "$(sha compose.yaml)" = "$(sha compose.yaml.new)" ]; then
+  rm -f compose.yaml.new
+else
+  current=$(sha compose.yaml)
+  pristine=0
+  [ -f .compose.sha256 ] && [ "$current" = "$(cat .compose.sha256)" ] && pristine=1
+  case " $OFFICIAL " in *" $current "*) pristine=1 ;; esac
+  if [ "$pristine" = 1 ]; then
+    mv compose.yaml.new compose.yaml
+  else
+    say "Your compose.yaml has local changes, so it was kept. The new version is in compose.yaml.new."
+    say "  Tip: move your changes to compose.override.yaml, then: mv compose.yaml.new compose.yaml"
+  fi
+fi
+[ -f compose.yaml.new ] || sha compose.yaml > .compose.sha256
+
+# Before 3.4 the tunnel token lived in .env (so Giftly saw it too): move it to cloudflared.env.
+if [ -f .env ] && grep -q '^TUNNEL_TOKEN=' .env && [ ! -f cloudflared.env ]; then
+  (umask 077 && grep '^TUNNEL_TOKEN=' .env > cloudflared.env)
+  grep -v '^TUNNEL_TOKEN=' .env > .env.tmp && cat .env.tmp > .env && rm -f .env.tmp
+  say "Moved TUNNEL_TOKEN from .env to cloudflared.env (only cloudflared gets it now)."
+fi
 
 if [ -f .env ]; then
   say "Using the existing $(pwd)/.env (not changed)."
@@ -64,16 +108,19 @@ else
     say "ADMIN_USERNAME=$ADMIN_USERNAME"
     say "ADMIN_PASSWORD=$PASSWORD"
     [ -n "$GIFTLY_DOMAIN" ] && say "BASE_URL=https://$GIFTLY_DOMAIN"
-    [ -n "${TUNNEL_TOKEN:-}" ] && say "TUNNEL_TOKEN=$TUNNEL_TOKEN"
     [ "$PORT" != 3000 ] && say "GIFTLY_PORT=$PORT"
     say "# Other settings: https://github.com/dfloureiro/Giftly#configuration"
   } > .env
   chmod 600 .env
+  if [ -n "${TUNNEL_TOKEN:-}" ]; then
+    say "TUNNEL_TOKEN=$TUNNEL_TOKEN" > cloudflared.env
+    chmod 600 cloudflared.env
+  fi
 fi
 
 # --- Start --------------------------------------------------------------------------------
 PROFILE=''
-grep -q '^TUNNEL_TOKEN=.' .env && PROFILE='--profile tunnel'
+[ -f cloudflared.env ] && grep -q '^TUNNEL_TOKEN=.' cloudflared.env && PROFILE='--profile tunnel'
 say "Starting Giftly…"
 # shellcheck disable=SC2086
 $COMPOSE $PROFILE pull -q

@@ -61,8 +61,8 @@ export class Client {
     this.jar = new Map();
   }
 
-  async request(path, { method = 'GET', form } = {}) {
-    const headers = { 'accept-language': 'en' };
+  async request(path, { method = 'GET', form, headers: extra = {} } = {}) {
+    const headers = { 'accept-language': 'en', ...extra };
     if (this.jar.size) headers.cookie = [...this.jar].map(([k, v]) => `${k}=${v}`).join('; ');
     let body;
     if (form) {
@@ -127,7 +127,8 @@ export async function createList(admin, { title = 'Test list', gifts = [] } = {}
 
 export async function joinList(base, token, name) {
   const guest = new Client(base);
-  const r = await guest.request(`/l/${token}/join`, { method: 'POST', form: { name } });
+  // confirm=1 answers "is it you?" for tests that re-join with an existing name (another device).
+  const r = await guest.request(`/l/${token}/join`, { method: 'POST', form: { name, confirm: '1' } });
   if (r.status !== 303) throw new Error(`join failed: ${r.status}`);
   return guest;
 }

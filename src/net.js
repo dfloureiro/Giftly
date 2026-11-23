@@ -86,7 +86,31 @@ export function safeLookup(hostname, options, cb) {
  * the connection comes from a private or loopback address — i.e. from a reverse proxy or
  * cloudflared next to Giftly. Someone reaching the port directly from the internet can't fake them.
  */
-export const trustedProxyPeer = (remoteAddress) => config.trustProxy && !!remoteAddress && isPrivateIp(remoteAddress);
+export function trustedProxyPeer(remoteAddress) {
+  if (!config.trustProxy || !remoteAddress) return false;
+  const ip = normalizeAddress(remoteAddress);
+  if (config.trustedProxies.length) return trustedProxyList().check(ip, net.isIPv6(ip) ? 'ipv6' : 'ipv4');
+  return isPrivateIp(ip);
+}
+
+let proxyList = null;
+let proxyListFor = '';
+/** TRUSTED_PROXIES as a BlockList (rebuilt only if the setting changes, e.g. in tests). */
+function trustedProxyList() {
+  const key = config.trustedProxies.join(',');
+  if (proxyList && proxyListFor === key) return proxyList;
+  proxyList = new net.BlockList();
+  proxyListFor = key;
+  for (const entry of config.trustedProxies) {
+    const [addr, bits] = entry.split('/');
+    const ip = normalizeAddress(addr);
+    const type = net.isIPv6(ip) ? 'ipv6' : net.isIPv4(ip) ? 'ipv4' : null;
+    if (!type) { console.warn(`TRUSTED_PROXIES: ignoring "${entry}"`); continue; }
+    if (bits === undefined) proxyList.addAddress(ip, type);
+    else proxyList.addSubnet(ip, Number(bits), type);
+  }
+  return proxyList;
+}
 
 const bare = (host) => normalizeAddress(host);
 

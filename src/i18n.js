@@ -1,5 +1,10 @@
 const strings = {
   pt: {
+    "account.noBaseUrl": "BASE_URL não está definido: os links de convite e de nova password usam o endereço por onde abriste esta página. Se o Giftly está acessível pela internet, define BASE_URL=https://o.teu.dominio.",
+    "join.sameName": "Já entrou alguém com o nome “{name}” nesta lista. És tu?",
+    "join.itsMe": "Sim, sou eu",
+    "join.notMe": "Não és? Acrescenta um apelido ou uma inicial ao teu nome, em baixo.",
+    "join.otherName": "Entrar com este nome",
     "wish.ideasFor": "Ideias para {name}",
     "wish.ideasForIntro": "A wishlist “geral”, como a de qualquer pessoa: todos os administradores que veem esta ficha a podem editar e criar listas (que podem juntar artigos das duas wishlists). {name} nunca vê esta secção, nem as listas com artigos daqui.",
     "wish.illGiveHintPerson": "Fica reservado em todas as listas e entra em “Prendas a dar”, partilhado com os outros administradores.",
@@ -425,6 +430,11 @@ const strings = {
     'error.home': 'Ir para o início',
   },
   en: {
+    "account.noBaseUrl": "BASE_URL is not set: invite and new-password links use the address you opened this page with. If Giftly is reachable from the internet, set BASE_URL=https://your.domain.",
+    "join.sameName": "Someone already joined this list as “{name}”. Is it you?",
+    "join.itsMe": "Yes, it's me",
+    "join.notMe": "Not you? Add a surname or an initial to your name below.",
+    "join.otherName": "Join with this name",
     "wish.ideasFor": "Ideas for {name}",
     "wish.ideasForIntro": "The “general” wishlist, like anyone's: every admin who can see this record can edit it and create lists (which can mix items from both wishlists). {name} never sees this section, nor lists with items from it.",
     "wish.illGiveHintPerson": "It gets reserved in every list and goes into “Gifts to give”, shared with the other admins.",

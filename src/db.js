@@ -436,6 +436,7 @@ export const lists = {
 const guestToken = () => randomBytes(16).toString('base64url');
 
 export const guests = {
+  byName: (listId, name) => db.prepare('SELECT * FROM guests WHERE list_id = ? AND name = ?').get(listId, name) ?? null,
   /** The guest a cookie entry names: by token, and only if it belongs to that list. */
   bySession: (token, listId) => (typeof token === 'string' && token.length >= 20
     ? db.prepare('SELECT * FROM guests WHERE token = ? AND list_id = ?').get(token, listId) ?? null : null),

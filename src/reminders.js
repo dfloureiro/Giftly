@@ -7,9 +7,10 @@
 //
 // Thresholds work as windows: with "14,3", a birthday 13 days away that never got its
 // 14-day reminder (e.g. the server was down) still gets it today. reminder_log makes sure
-// each (user, occasion, threshold) is sent at most once.
+// each (user, occasion, threshold) is sent at most once, and that a failed send is retried
+// on the next hourly run.
 import { config } from './config.js';
-import { db, settings } from './db.js';
+import { db } from './db.js';
 import { users } from './accounts.js';
 import { people, occasions, gifts, checklist, nextBirthday, daysBetween, today, HAS_GIFT } from './giving.js';
 import { notifyUser, userChannels } from './notify.js';
@@ -117,15 +118,21 @@ function localNow(now = new Date()) {
   return { date: `${parts.year}-${parts.month}-${parts.day}`, hour: Number(parts.hour) };
 }
 
+let running = false;
+
 /**
- * The daily run: does nothing before REMINDER_HOUR or if it already ran today
- * (the date is stored, so restarts don't send twice).
+ * Runs every hour from REMINDER_HOUR on. Nothing marks the day as "done": each run sends
+ * what is due and not yet in reminder_log, which only records a reminder once at least one
+ * channel accepted it. So a restart or a failing channel is simply retried an hour later,
+ * and nothing is ever sent twice.
  */
 export async function runReminders({ now = new Date(), force = false } = {}) {
   const { date, hour } = localNow(now);
-  if (!force && (hour < config.reminderHour || settings.all('reminders.').last_run === date)) return null;
-  settings.setMany({ 'reminders.last_run': date });
+  if (!force && hour < config.reminderHour) return null;
+  if (running) return null;
+  running = true;
   let total = 0;
+  try {
   for (const user of users.all()) {
     try {
       total += await remindUser(user, { on: date });
@@ -133,6 +140,7 @@ export async function runReminders({ now = new Date(), force = false } = {}) {
       console.warn(`reminders for user ${user.id} failed: ${err.message}`);
     }
   }
+  } finally { running = false; }
   if (total) console.log(`reminders: sent ${total} message(s) for ${date}`);
   return total;
 }

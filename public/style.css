@@ -308,3 +308,12 @@ form.give-now { margin: 0; }
 .item:has(> .actions > details[open]) { flex-wrap: wrap; }
 .item > .actions:has(> details[open]) { flex: 1 1 100%; }
 .item > .body { min-width: 0; }
+
+/* "Someone already joined with this name. Is it you?" */
+.same-name { background: var(--accent-soft); border-radius: 12px; padding: 12px 14px; margin: .8rem 0; display: grid; gap: 8px; }
+.same-name p { margin: 0; }
+.same-name form { margin: 0; }
+.same-name button { width: 100%; }
+
+.flash-warn { background: #fdf3d8; color: #6b4e00; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .flash-warn { background: #3a2f12; color: #f3d98b; } }

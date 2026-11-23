@@ -75,7 +75,9 @@ One step, on any machine with Docker (a NAS, a Raspberry Pi, a server):
 curl -fsSL https://raw.githubusercontent.com/dfloureiro/Giftly/main/install.sh -o install.sh && sh install.sh
 ```
 
-It asks for your domain and a [Cloudflare Tunnel](#exposing-it-with-cloudflare-tunnel) token (both optional), creates a strong admin password, starts Giftly and shows you how to log in. Without a tunnel, Giftly is only reachable from that machine at <http://localhost:3000/admin>. Running it again updates Giftly and never changes your `.env`. You can read [the script](install.sh) first.
+It asks for your domain and a [Cloudflare Tunnel](#exposing-it-with-cloudflare-tunnel) token (both optional), creates a strong admin password, starts Giftly and shows you how to log in. Without a tunnel, Giftly is only reachable from that machine at <http://localhost:3000/admin>. Files come from the latest release. Running it again updates Giftly and never changes your `.env` or `cloudflared.env`, nor a `compose.yaml` you edited (put your own changes in `compose.override.yaml`). You can read [the script](install.sh) first. Needs Docker Compose 2.24 or newer.
+
+The image follows `ghcr.io/dfloureiro/giftly:3`: fixes and new features within 3.x, never a breaking 4.0. To pin an exact version, set `GIFTLY_TAG=3.4.0` in `.env`.
 
 Or by hand with Docker Compose:
 
@@ -110,6 +112,7 @@ docker run -d --name giftly -p 127.0.0.1:3000:3000 \
 | `TZ` | `Europe/Lisbon` | Time zone for dates in the admin. |
 | `LINK_PREVIEWS` | `true` | Fetch product pages to show each gift's image and price. Set to `false` to turn it off. |
 | `TRUST_PROXY` | `true` | Trust `CF-Connecting-IP` / `X-Forwarded-*` from a reverse proxy or Cloudflare Tunnel. They are only believed when the connection comes from a private or local address (the proxy next to Giftly), never from the internet. Set to `false` to never trust them. |
+| `TRUSTED_PROXIES` | — | Optional: only these proxies may set those headers, as IPs or CIDR ranges, e.g. `172.18.0.0/16`. Empty means any private or local peer. |
 | `NOTIFY_ALLOWED_HOSTS` | — | Notification servers on your own network that Giftly may send to, e.g. `ntfy.lan,192.168.1.10`. Local and private addresses are refused otherwise. |
 | `COOKIE_SECURE` | `auto` | `auto` sets `Secure` cookies when the request came over HTTPS. |
 | `SESSION_SECRET` | generated | Generated once and stored in `/data` if not set. |
@@ -196,7 +199,7 @@ If your domain is on Cloudflare, you don't need to open any ports, set up a reve
 2. Add a **public hostname** to the tunnel, e.g. `gifts.example.com`, with service `http://giftly:3000`.
 3. Run the [one-step install](#quick-start) and paste the domain and token when asked.
 
-Doing it by hand instead: put `TUNNEL_TOKEN=...` and `BASE_URL=https://gifts.example.com` in `.env` and run `docker compose --profile tunnel up -d`.
+Doing it by hand instead: put `TUNNEL_TOKEN=...` in `cloudflared.env` (Giftly itself never sees it), `BASE_URL=https://gifts.example.com` in `.env`, and run `docker compose --profile tunnel up -d`.
 
 Optionally, protect `/admin` with a Cloudflare Access policy for extra safety.
 

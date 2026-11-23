@@ -42,6 +42,9 @@ export const config = {
   trustProxy: ['1', 'true', 'yes'].includes(String(env.TRUST_PROXY ?? 'true').toLowerCase()),
   // Fetch product pages to show an image for each gift.
   previews: !['0', 'false', 'no'].includes(String(env.LINK_PREVIEWS ?? 'true').toLowerCase()),
+  // Optional: only these proxies (IPs or CIDR ranges, comma-separated) may set X-Forwarded-* headers.
+  // Empty = any private/loopback peer (the proxy or cloudflared next to Giftly).
+  trustedProxies: String(env.TRUSTED_PROXIES || '').split(',').map((h) => h.trim()).filter(Boolean),
   // Notification servers on your own network (e.g. a self-hosted ntfy): host names or IPs, comma-separated.
   notifyAllowedHosts: String(env.NOTIFY_ALLOWED_HOSTS || '').split(',').map((h) => h.trim().replace(/^\[|\]$/g, '').toLowerCase()).filter(Boolean),
   // 'auto' = Secure cookies when the request arrived over HTTPS.

@@ -86,6 +86,15 @@ function isHttps(req) {
   return trustedProxyPeer(req.socket.remoteAddress) && String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
 }
 
+/**
+ * For invite and new-password links (they grant an account): BASE_URL, or else the Host the
+ * admin's own browser used — never X-Forwarded-Host.
+ */
+function accountLinkBase(req) {
+  if (process.env.BASE_URL) return process.env.BASE_URL.replace(/\/$/, '');
+  return `${isHttps(req) ? 'https' : 'http'}://${req.headers.host || 'localhost'}`;
+}
+
 function baseUrl(req) {
   if (process.env.BASE_URL) return process.env.BASE_URL.replace(/\/$/, '');
   const host = (trustedProxyPeer(req.socket.remoteAddress) && req.headers['x-forwarded-host']) || req.headers.host || 'localhost';
@@ -140,8 +149,16 @@ const SECURITY_HEADERS = {
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
 };
 
+/** Requests to the public host of an https BASE_URL always came through HTTPS (the proxy's). */
+function viaHttpsBaseUrl(req) {
+  const base = process.env.BASE_URL || '';
+  if (!/^https:\/\//i.test(base)) return false;
+  try { return new URL(base).host.toLowerCase() === String(req.headers.host || '').toLowerCase(); } catch { return false; }
+}
+
 function cookie(req, name, value, maxAgeMs) {
-  const secure = config.cookieSecure === 'true' || (config.cookieSecure === 'auto' && isHttps(req));
+  const secure = config.cookieSecure === 'true'
+    || (config.cookieSecure === 'auto' && (isHttps(req) || viaHttpsBaseUrl(req)));
   const parts = [`${name}=${encodeURIComponent(value)}`, 'Path=/', 'HttpOnly', 'SameSite=Lax'];
   parts.push(maxAgeMs > 0 ? `Max-Age=${Math.floor(maxAgeMs / 1000)}` : 'Max-Age=0');
   if (secure) parts.push('Secure');
@@ -233,13 +250,30 @@ function guestSessions(ctx) {
   return out;
 }
 
-/** May this browser see a stored image? Admins (signed in) see all; guests only their lists' images. */
+/**
+ * May this browser see a stored image? Only if it may see a record that shows it, by the same
+ * rules as the pages: an admin (past the 2FA requirement) who can see the list, the gift or the
+ * wishlist; or a guest with a valid session in a list that shows it.
+ */
 function canSeeImage(cookies, file) {
-  if (sessions.user(cookies[SESSION_COOKIE])) return true;
+  const user = sessions.user(cookies[SESSION_COOKIE]);
+  if (user && !(config.require2fa && !user.totp_secret)) {
+    const uid = user.id;
+    for (const { list_id: id } of db.prepare('SELECT DISTINCT list_id FROM items WHERE image_file = ?').all(file)) {
+      if (lists.canSee(uid, id)) return true;
+    }
+    for (const { id } of db.prepare('SELECT id FROM gifts WHERE image_file = ?').all(file)) {
+      if (givingGifts.get(uid, id)) return true;
+    }
+    for (const { wishlist_id: id } of db.prepare('SELECT DISTINCT wishlist_id FROM wishlist_items WHERE image_file = ?').all(file)) {
+      const w = wishlists.get(id);
+      if (w && (w.owner_id === uid || wishlists.viewableByOther(uid, w))) return true;
+    }
+  }
   for (const [t, listId, e] of guestEntries({ cookies })) {
     if (db.prepare(`SELECT 1 FROM items i JOIN guests gu ON gu.list_id = i.list_id JOIN lists l ON l.id = i.list_id
-        WHERE gu.token = ? AND l.id = ? AND l.epoch = ? AND l.archived = 0 AND i.image_file = ? AND i.pending = 0 LIMIT 1`)
-      .get(t, listId, e, file)) return true;
+        WHERE gu.token = ? AND l.id = ? AND l.epoch = ? AND l.archived = 0 AND i.image_file = ?
+          AND i.pending = 0 AND i.hidden = 0 LIMIT 1`).get(t, listId, e, file)) return true;
   }
   return false;
 }
@@ -283,6 +317,12 @@ route('POST', '/l/:token/join', (ctx) => {
     return html(ctx.res, views.joinPage(ctx, { list, name, error: ctx.t('login.tooMany') }), 429);
   }
   if (!name) return html(ctx.res, views.joinPage(ctx, { list, name, error: ctx.t('login.noName') }), 400);
+  // Someone already joined with this name: ask "is it you?" (re-joining from another device is
+  // allowed on purpose). Not for names an admin reserved for and that never visited.
+  const existing = guests.byName(list.id, name);
+  if (existing && existing.last_seen !== 0 && ctx.body.confirm !== '1') {
+    return html(ctx.res, views.joinPage(ctx, { list, name, sameName: existing.name }));
+  }
   const guest = guests.findOrCreate(list.id, name);
   if (guest.isNew) notify('join', { list, guest });
   const others = guestEntries(ctx).filter(([, listId]) => listId !== list.id);
@@ -488,7 +528,7 @@ route('POST', '/admin/profile/notify-test', async (ctx) => {
 // ----- users, invites and password resets -----
 
 function renderUsers(ctx, extra = {}, status = 200) {
-  html(ctx.res, views.usersPage(ctx, { all: users.all(), invites: links.pendingInvites(), ...extra }), status);
+  html(ctx.res, views.usersPage(ctx, { all: users.all(), invites: links.pendingInvites(), noBaseUrl: !process.env.BASE_URL, ...extra }), status);
 }
 
 route('GET', '/admin/users', (ctx) => renderUsers(ctx), { auth: 'admin' });
@@ -496,7 +536,7 @@ route('GET', '/admin/users', (ctx) => renderUsers(ctx), { auth: 'admin' });
 // The link is shown once, in this response (only its hash is stored).
 route('POST', '/admin/users/invite', (ctx) => {
   const token = links.create({ createdBy: ctx.user.id });
-  renderUsers(ctx, { newLink: { kind: 'invite', url: `${baseUrl(ctx.req)}/invite/${token}` } });
+  renderUsers(ctx, { newLink: { kind: 'invite', url: `${accountLinkBase(ctx.req)}/invite/${token}` } });
 }, { auth: 'admin' });
 
 route('POST', '/admin/users/invites/:id/revoke', (ctx) => {
@@ -508,7 +548,7 @@ route('POST', '/admin/users/:id/reset-link', (ctx) => {
   const target = users.get(Number(ctx.params.id));
   if (!target) return notFound(ctx);
   const token = links.create({ createdBy: ctx.user.id, userId: target.id });
-  renderUsers(ctx, { newLink: { kind: 'reset', user: target, url: `${baseUrl(ctx.req)}/reset/${token}` } });
+  renderUsers(ctx, { newLink: { kind: 'reset', user: target, url: `${accountLinkBase(ctx.req)}/reset/${token}` } });
 }, { auth: 'admin' });
 
 route('POST', '/admin/users/:id/delete', (ctx) => {
@@ -617,8 +657,10 @@ route('POST', '/admin/lists/:id', (ctx) => {
 }, { auth: 'admin' });
 
 route('POST', '/admin/lists/:id/new-link', (ctx) => {
-  lists.regenerateToken(Number(ctx.params.id));
-  redirect(ctx.res, `/admin/lists/${ctx.params.id}?m=newLink`);
+  const list = loadList(ctx); // only lists this admin can see (was missing before 3.4)
+  if (!list) return;
+  lists.regenerateToken(list.id);
+  redirect(ctx.res, `/admin/lists/${list.id}?m=newLink`);
 }, { auth: 'admin' });
 
 // Drag and drop: the full new order of the list's gifts ("order=3,1,2").
@@ -630,7 +672,9 @@ route('POST', '/admin/lists/:id/order', (ctx) => {
 }, { auth: 'admin' });
 
 route('POST', '/admin/lists/:id/delete', (ctx) => {
-  lists.delete(Number(ctx.params.id));
+  const list = loadList(ctx); // only lists this admin can see (was missing before 3.4)
+  if (!list) return;
+  lists.delete(list.id);
   sweepImages(allImageFiles());
   redirect(ctx.res, '/admin?m=deleted');
 }, { auth: 'admin' });
@@ -854,17 +898,18 @@ async function handle(req, res) {
 
   const cookies = parseCookies(req.headers.cookie);
 
-  // Stored images (shop photos and uploads): only for a signed-in admin, or a guest of a list
-  // that shows the image. Names never change, so the browser may keep them — but no shared cache.
+  // Stored images (shop photos and uploads): only for whoever may see a record showing them
+  // (else 404, as if they didn't exist). Revalidated on every use, so losing access is immediate;
+  // the file name never changes, so it doubles as the ETag and a revalidation costs a 304.
   if ((req.method === 'GET' || req.method === 'HEAD') && path.startsWith('/img/')) {
     const file = path.slice(5);
     if (IMAGE_FILE_RE.test(file) && canSeeImage(cookies, file)) {
+      const etag = `"${file}"`;
+      const headers = { 'Cache-Control': 'private, no-cache', ETag: etag };
+      if (req.headers['if-none-match'] === etag) return send(res, 304, '', headers);
       try {
         const body = await readFile(join(IMAGE_DIR, file));
-        return send(res, 200, body, {
-          'Content-Type': IMAGE_TYPES[file.split('.').pop()],
-          'Cache-Control': 'private, max-age=31536000, immutable',
-        });
+        return send(res, 200, body, { 'Content-Type': IMAGE_TYPES[file.split('.').pop()], ...headers });
       } catch { /* fall through to 404 */ }
     }
   }

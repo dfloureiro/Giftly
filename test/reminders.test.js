@@ -106,11 +106,36 @@ test('no channel: nothing sent or recorded; reminders off: nothing due', async (
   assert.deepEqual(r.dueReminders(accounts.users.get(lonely.id), ON), []);
 });
 
-test('daily run: waits for the configured hour and runs once per day', async () => {
+test('hourly runs: wait for the configured hour, never send twice, retry what failed', async () => {
   // 07:00 in Lisbon (summer, UTC+1) is before the default 09:00.
   assert.equal(await r.runReminders({ now: new Date('2030-06-20T06:00:00Z') }), null);
-  const first = await r.runReminders({ now: new Date('2030-06-20T09:30:00Z') });
-  assert.equal(typeof first, 'number');
-  assert.equal(await r.runReminders({ now: new Date('2030-06-20T15:00:00Z') }), null, 'already ran today');
-  assert.equal(typeof await r.runReminders({ now: new Date('2030-06-21T09:30:00Z') }), 'number', 'next day runs again');
+  assert.equal(typeof await r.runReminders({ now: new Date('2030-06-20T09:30:00Z') }), 'number');
+  assert.equal(await r.runReminders({ now: new Date('2030-06-20T10:30:00Z') }), 0, 'a later run the same day sends nothing new');
+
+  // A user whose only channel fails: nothing is recorded, and the next run (an hour later) retries.
+  const { default: http } = await import('node:http');
+  let up = false;
+  const calls = [];
+  const flaky = http.createServer((req, res) => {
+    let b = ''; req.on('data', (c) => { b += c; });
+    req.on('end', () => { if (up) calls.push(JSON.parse(b)); res.writeHead(up ? 200 : 500); res.end(); });
+  });
+  await new Promise((ok) => flaky.listen(0, '127.0.0.1', ok));
+  try {
+    const id = accounts.users.create({ username: 'flaky', name: 'Flaky', passwordHash: 'x' });
+    notify.seedUserNotifySettings(id, { webhook_url: `http://127.0.0.1:${flaky.address().port}/`, events: '' });
+    const p = g.people.create(id, { name: 'Retry kid', visibility: 'private', birthday_day: 25, birthday_month: 6 });
+    assert.ok(p);
+    const now1 = new Date('2030-06-20T11:30:00Z');
+    await r.runReminders({ now: now1 });
+    assert.equal(calls.length, 0, 'channel down: nothing delivered');
+    const { db } = await import('../src/db.js');
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM reminder_log WHERE user_id = ?').get(id).n, 0, 'and nothing recorded');
+    up = true;
+    await r.runReminders({ now: new Date('2030-06-20T12:30:00Z') });
+    assert.ok(calls.length >= 1, 'retried an hour later and delivered');
+    const n = calls.length;
+    await r.runReminders({ now: new Date('2030-06-20T13:30:00Z') });
+    assert.equal(calls.length, n, 'never sent twice');
+  } finally { flaky.close(); }
 });
