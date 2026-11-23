@@ -1,7 +1,7 @@
 // 3.1: favourites, search, duplicating occasions, gift ideas → guest lists, drag-and-drop order.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startServer, Client, loginAdmin, inviteAdmin, createList, joinList, pickableIds } from './helpers.js';
+import { startServer, Client, loginAdmin, inviteAdmin, createList, joinList } from './helpers.js';
 
 let server, diogo, maria;
 before(async () => {
@@ -61,51 +61,6 @@ test('duplicating an occasion copies the people, one year later', async () => {
   assert.match(page, /Dup A/);
   assert.match(page, /Dup B/);
   assert.ok(!page.includes('Not copied'), 'gifts are not copied');
-});
-
-test('gift ideas → a new guest list, with a trace on each idea', async () => {
-  const leo = await addPerson(diogo, { name: 'Leo31', birthday_day: '1', birthday_month: '1' });
-  const g1 = await addIdea(diogo, leo, 'birthday:2099', 'Telescope', { price: '89' });
-  await addIdea(diogo, leo, 'birthday:2099', 'Kite');
-  const form = new URLSearchParams({ title: 'Ideas for Leo', visibility: 'shared' });
-  form.append('gifts', String(g1));
-  form.append('_csrf', await diogo.csrf(`/admin/give/people/${leo}/new-list`));
-  const res = await fetch(`${server.base}/admin/give/people/${leo}/new-list`, { method: 'POST', body: form, redirect: 'manual',
-    headers: { cookie: [...diogo.jar].map(([k, v]) => `${k}=${v}`).join('; '), 'content-type': 'application/x-www-form-urlencoded' } });
-  const listId = Number(/\/admin\/lists\/(\d+)/.exec(res.headers.get('location'))[1]);
-  const listPage = (await diogo.get(`/admin/lists/${listId}`)).text;
-  assert.match(listPage, /Telescope/);
-  assert.match(listPage, /€89\.00/);
-  assert.ok(!listPage.includes('Kite'), 'only the chosen ideas');
-
-  let person = (await diogo.get(`/admin/give/people/${leo}`)).text;
-  assert.match(person, /On the list Ideas for Leo<\/a> — Available/);
-  const token = /\/l\/([A-Za-z0-9_-]{22})/.exec(listPage)[1];
-  const guest = await joinList(server.base, token, 'Avó');
-  const [item] = await pickableIds(guest, token);
-  await guest.post(`/l/${token}/pick/${item}`, {}, { from: `/l/${token}` });
-  person = (await diogo.get(`/admin/give/people/${leo}`)).text;
-  assert.match(person, /On the list Ideas for Leo<\/a> — reserved by Avó/);
-});
-
-test('ideas for an admin never end up in a list that admin can see', async () => {
-  const me = await addPerson(diogo, { name: 'Maria (admin)', user_id: String(/\/admin\/users\/(\d+)\/reset-link/.exec((await diogo.get('/admin/users')).text)[1]) });
-  const idea = await addIdea(diogo, me, 'birthday:2099', 'Surprise spa day');
-
-  // A new list from her ideas: never visible to her.
-  const form = new URLSearchParams({ title: 'For Maria', visibility: 'shared', gifts: String(idea) });
-  form.append('_csrf', await diogo.csrf(`/admin/give/people/${me}/new-list`));
-  const res = await fetch(`${server.base}/admin/give/people/${me}/new-list`, { method: 'POST', body: form, redirect: 'manual',
-    headers: { cookie: [...diogo.jar].map(([k, v]) => `${k}=${v}`).join('; '), 'content-type': 'application/x-www-form-urlencoded' } });
-  const listId = Number(/\/admin\/lists\/(\d+)/.exec(res.headers.get('location'))[1]);
-  assert.equal((await maria.get(`/admin/lists/${listId}`)).status, 404);
-  assert.ok(!(await maria.get('/admin')).text.includes('For Maria'));
-
-  // Copying it into a shared list she can see is refused.
-  const shared = await createList(diogo, { title: 'Family list' });
-  const r = await diogo.post(`/admin/give/gifts/${idea}/to-list`, { list_id: String(shared.id) }, { from: `/admin/give/people/${me}` });
-  assert.equal(r.status, 400);
-  assert.ok(!(await maria.get(`/admin/lists/${shared.id}`)).text.includes('Surprise spa day'));
 });
 
 test('drag and drop saves the new order; bad orders and other lists are refused', async () => {

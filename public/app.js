@@ -223,7 +223,9 @@ document.querySelectorAll('input[data-filter]').forEach((input) => {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ _csrf: csrf, order: order.map((c) => c.dataset.id).join(',') }),
+        // data-sortable-extra carries e.g. "person_id=5" for a person's wishlist.
+        body: new URLSearchParams([...new URLSearchParams(d.list.dataset.sortableExtra || ''),
+          ['_csrf', csrf], ['order', order.map((c) => c.dataset.id).join(',')]]),
       });
       if (!res.ok) throw new Error(String(res.status));
     } catch {

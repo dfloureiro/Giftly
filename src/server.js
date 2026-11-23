@@ -14,7 +14,7 @@ import { enqueuePreview, clearPreview, startPreviewQueue, allImageFiles, release
 import { deleteUserData, gifts as givingGifts } from './giving.js';
 import { registerGivingRoutes } from './givingRoutes.js';
 import { registerWishlistRoutes } from './wishlistRoutes.js';
-import { wishlists, wishItems } from './wishlist.js';
+import { wishlists, wishItems, convertLegacyIdeas } from './wishlist.js';
 import { startReminders, parseReminderDays, remindUser } from './reminders.js';
 import { userChannels } from './notify.js';
 import { notify, notifyStatus, saveNotifySettings } from './notify.js';
@@ -179,7 +179,7 @@ const FLASH = {
   giving: ['success', 'wish.givingDone'],
   pickOccasion: ['error', 'give.pickOccasion'],
   reservedFor: ['success', 'admin.reservedDone'],
-  copiedToList: ['success', 'give.copiedToList'],
+  badItem: ['error', 'admin.titleRequired'],
   twofaOff: ['success', 'tf.disabled'],
   twofaReset: ['success', 'tf.resetDone'],
   recoveryUsed: ['error', 'tf.recoveryUsed'],
@@ -918,6 +918,7 @@ registerGivingRoutes({ route, html, redirect, notFound, clean, cleanMultiline, c
 registerWishlistRoutes({ route, html, redirect, notFound, clean, cleanMultiline, cleanUrl });
 
 await bootstrapAccounts();
+convertLegacyIdeas();
 
 const server = http.createServer((req, res) => {
   handle(req, res).catch((err) => {

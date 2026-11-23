@@ -4,8 +4,10 @@
 // reserved. Owner-facing functions (`ownerView`, `remove`, …) don't read claims at all and
 // behave identically either way. Claim state is only exposed to *other* admins
 // (`othersView`), and lists made from a wishlist are hidden from its owner by LIST_VISIBLE.
-import { db, tx, lists, LIST_VISIBLE } from './db.js';
+import { db, tx, lists, settings, LIST_VISIBLE } from './db.js';
 import { users } from './accounts.js';
+import { people } from './giving.js';
+import { config } from './config.js';
 
 const now = () => Date.now();
 export const WISHLIST_VISIBILITIES = ['admins', 'private'];
@@ -23,20 +25,45 @@ export const wishlists = {
     }
     return w;
   },
-  get: (id) => db.prepare('SELECT w.*, u.name AS owner_name FROM wishlists w JOIN users u ON u.id = w.owner_id WHERE w.id = ?').get(id) ?? null,
+  /** owner_name is the admin's name, or the person's name for a person's wishlist. */
+  get: (id) => db.prepare(`SELECT w.*, COALESCE(u.name, p.name) AS owner_name FROM wishlists w
+    LEFT JOIN users u ON u.id = w.owner_id LEFT JOIN people p ON p.id = w.person_id WHERE w.id = ?`).get(id) ?? null,
+  /** The wishlist of a person in "gifts to give" (created on first use). Admins use their own. */
+  ofPerson(personId) {
+    let w = db.prepare('SELECT * FROM wishlists WHERE person_id = ?').get(personId);
+    if (!w) {
+      db.prepare('INSERT INTO wishlists (person_id, created_at) VALUES (?, ?)').run(personId, now());
+      w = db.prepare('SELECT * FROM wishlists WHERE person_id = ?').get(personId);
+    }
+    return wishlists.get(w.id);
+  },
   setVisibility(uid, visibility) {
     db.prepare('UPDATE wishlists SET visibility = ? WHERE owner_id = ?').run(visibility, uid);
   },
-  /** Can `uid` look at this wishlist as a giver (never its owner)? */
+  /**
+   * Can `uid` look at this wishlist as a giver (with what's reserved)? Never its owner.
+   * A person's wishlist: whoever can see that person (unless the person is `uid` themselves).
+   */
   viewableByOther(uid, w) {
-    return !!w && w.owner_id !== uid && w.visibility === 'admins';
+    if (!w) return false;
+    if (w.person_id) {
+      const p = people.get(uid, w.person_id);
+      return !!p && p.user_id !== uid;
+    }
+    return w.owner_id !== uid && w.visibility === 'admins';
+  },
+  /** Who may add, edit, reorder and remove items: the owner, or anyone who sees the person. */
+  canEdit(uid, w) {
+    if (!w) return false;
+    if (w.person_id) return wishlists.viewableByOther(uid, w);
+    return w.owner_id === uid;
   },
   /** Other admins' wishlists `uid` can look at. */
   others(uid) {
     return db.prepare(`SELECT w.*, u.name AS owner_name,
         (SELECT COUNT(*) FROM wishlist_items wi WHERE wi.wishlist_id = w.id AND wi.status = 'active') AS item_count
       FROM wishlists w JOIN users u ON u.id = w.owner_id
-      WHERE w.owner_id != ? AND w.visibility = 'admins' ORDER BY u.name COLLATE NOCASE`).all(uid);
+      WHERE w.owner_id IS NOT NULL AND w.owner_id != ? AND w.visibility = 'admins' ORDER BY u.name COLLATE NOCASE`).all(uid);
   },
   byOwner: (uid) => db.prepare('SELECT * FROM wishlists WHERE owner_id = ?').get(uid) ?? null,
 };
@@ -215,6 +242,44 @@ export function claimForGift(wishItemId, giftId) {
 }
 
 /** A user's display name (for notifications). */
-export const ownerName = (w) => users.get(w.owner_id)?.name ?? '';
+export const ownerName = (w) => wishlists.get(w.id)?.owner_name ?? '';
+
+/**
+ * 3.2, once: shared gift ideas for people who aren't admins become items of that person's
+ * wishlist (with their link, notes, image and price). Private ideas, and ideas for admins,
+ * stay as gifts "to buy" — moving them would show them to others. If an idea had been copied
+ * to a guest list, that list item becomes linked to the new wishlist item.
+ */
+export function convertLegacyIdeas() {
+  if (settings.all('migrations.').ideas_to_wishlists) return 0;
+  let n = 0;
+  tx(() => {
+    const ideas = db.prepare(`SELECT g.* FROM gifts g JOIN people p ON p.id = g.person_id
+      WHERE g.status = 'idea' AND g.wishlist_item_id IS NULL AND g.visibility = 'shared' AND p.user_id IS NULL
+        AND NOT EXISTS (SELECT 1 FROM gift_people gp JOIN people pa ON pa.id = gp.person_id
+                        WHERE gp.gift_id = g.id AND pa.user_id IS NOT NULL)
+      ORDER BY g.person_id, g.id`).all();
+    for (const g of ideas) {
+      const w = wishlists.ofPerson(g.person_id);
+      const { p } = db.prepare('SELECT COALESCE(MAX(position), 0) + 1 AS p FROM wishlist_items WHERE wishlist_id = ?').get(w.id);
+      const price = g.price_cents != null
+        ? new Intl.NumberFormat(config.lang === 'en' ? 'en-GB' : 'pt-PT', { style: 'currency', currency: g.price_currency || config.currency }).format(g.price_cents / 100)
+        : '';
+      const wiId = Number(db.prepare(`INSERT INTO wishlist_items (wishlist_id, title, url, notes, position, image_file, image_source,
+          price, price_cents, price_currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(w.id, g.name, g.url, g.notes, p, g.image_file, g.image_source, price, g.price_cents, g.price_currency, g.created_at, now()).lastInsertRowid);
+      if (g.list_item_id) {
+        db.prepare('UPDATE items SET wishlist_item_id = ? WHERE id = ?').run(wiId, g.list_item_id);
+        const it = db.prepare('SELECT reserved_name FROM items WHERE id = ?').get(g.list_item_id);
+        if (it?.reserved_name) db.prepare('INSERT OR IGNORE INTO wishlist_claims (wishlist_item_id, item_id, created_at) VALUES (?, ?, ?)').run(wiId, g.list_item_id, now());
+      }
+      db.prepare('DELETE FROM gifts WHERE id = ?').run(g.id);
+      n++;
+    }
+    settings.setMany({ 'migrations.ideas_to_wishlists': '1' });
+  });
+  if (n) console.log(`3.2: moved ${n} shared gift idea(s) into people's wishlists.`);
+  return n;
+}
 
 export { LIST_VISIBLE };

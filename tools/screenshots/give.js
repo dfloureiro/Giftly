@@ -58,7 +58,7 @@ const PEOPLE = [
       d = p.locator('ul.checklist > li').filter({ has: p.locator('.who-row strong', { hasText: person }) }).locator('details.add-gift');
     } else {
       await p.goto(`${B}/admin/give/people/${ids[person]}`);
-      d = p.locator('details.add-gift').first();
+      d = p.locator('details.add-gift:not(.add-wish)').first();
     }
     if (!(await d.evaluate((el) => el.open))) await d.locator(':scope > summary').click();
     const f = d.locator('form');
@@ -84,7 +84,24 @@ const PEOPLE = [
   await gift('Leo', cur, { name: 'Space LEGO set', status: 'bought', price: '49,99', emoji: '🚀', bg: ['#dbeafe', '#bfdbfe'], url: 'https://toys.example/space-set' });
   await gift('Uncle Tom', cur, { name: 'Wine tasting for two', status: 'bought', price: '65', also: 'Aunt Clara', emoji: '🍷', bg: ['#fce7f3', '#fbcfe8'] });
   await gift('Sofia', cur, { name: 'Coffee beans', status: 'idea', notes: 'From the market', emoji: '☕', bg: ['#e7e5e4', '#d6d3d1'] });
-  await gift('Leo', `birthday:${inDays(23).slice(0, 4)}`, { name: 'Telescope', status: 'idea', price: '89', emoji: '🔭', bg: ['#e0e7ff', '#c7d2fe'], url: 'https://shop.example/telescope' });
+  await gift('Leo', `birthday:${inDays(23).slice(0, 4)}`, { name: 'Glow-in-the-dark stars', status: 'bought', price: '12', emoji: '⭐', bg: ['#e0e7ff', '#c7d2fe'] });
+
+  // Leo's wishlist (on his page): one item will be taken through a list made from it.
+  async function wish(person, { title, url = '', notes = '', emoji, bg }) {
+    await p.goto(`${B}/admin/give/people/${ids[person]}`);
+    const d = p.locator('details.add-wish');
+    await d.locator(':scope > summary').click();
+    const f = d.locator('form');
+    await f.locator('input[name=title]').fill(title);
+    if (url) await f.locator('input[name=url]').fill(url);
+    if (notes) await f.locator('[name=notes]').fill(notes);
+    if (emoji) await f.locator('[data-upload-data]').evaluate((el, v) => { el.value = v; }, await art(p, emoji, bg, 320));
+    await f.locator('button[type=submit]').click();
+    await p.waitForURL(/m=added/);
+  }
+  await wish('Leo', { title: 'Telescope', url: 'https://shop.example/telescope', emoji: '🔭', bg: ['#e0e7ff', '#c7d2fe'] });
+  await wish('Leo', { title: 'Dinosaur encyclopedia', notes: 'The big one with pictures', emoji: '🦖', bg: ['#dcfce7', '#bbf7d0'] });
+  await wish('Leo', { title: 'Rocket night light', emoji: '🌙', bg: ['#fef9c3', '#fde68a'] });
 
   const m = await browser.newContext(mobile);
   await m.addCookies(await ctx.cookies());

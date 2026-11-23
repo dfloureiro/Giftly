@@ -5,7 +5,7 @@ import { users } from './accounts.js';
 import {
   wishlists, wishItems, createListFromWishlist, claimForGift, REMOVE_REASONS, WISHLIST_VISIBILITIES,
 } from './wishlist.js';
-import { people, occasions, gifts, nextBirthday, today } from './giving.js';
+import { people, occasions, gifts, occasionOptions } from './giving.js';
 import { saveImageBuffer } from './preview.js';
 import { enqueuePreview, clearPreview, releaseImage } from './previewQueue.js';
 import { notifyUser } from './notify.js';
@@ -41,15 +41,28 @@ export function registerWishlistRoutes({ route, html, redirect, notFound, clean,
     return true;
   }
 
-  /** The owner's own item (anything else is 404). */
+  /** Where a wishlist is edited: your own page, or the person's page in "gifts to give". */
+  const homeOf = (w) => (w.person_id ? `/admin/give/people/${w.person_id}` : '/admin/wishlist');
+  const at = (w, m, anchor) => `${homeOf(w)}${m ? `?m=${m}` : ''}${anchor ? `#${anchor}` : ''}`;
+
+  /** An item of a wishlist this admin may edit (own, or a person's they can see); else 404. */
   function ownItem(ctx) {
     const wi = wishItems.get(Number(ctx.params.id));
     const w = wi && wishlists.get(wi.wishlist_id);
-    if (!w || w.owner_id !== ctx.user.id) {
+    if (!wishlists.canEdit(ctx.user.id, w)) {
       notFound(ctx);
       return null;
     }
+    ctx.wishlist = w;
     return wi;
+  }
+
+  /** The wishlist a form is about: a person's (person_id) or your own. */
+  function targetWishlist(ctx) {
+    if (!ctx.body.person_id) return wishlists.ofUser(ctx.user.id);
+    const person = people.get(ctx.user.id, Number(ctx.body.person_id));
+    if (!person || person.user_id) return null; // admins keep their own wishlist
+    return wishlists.ofPerson(person.id);
   }
 
   // ----- my wishlist (claim-blind) -----
@@ -69,13 +82,17 @@ export function registerWishlistRoutes({ route, html, redirect, notFound, clean,
   }, A);
 
   route('POST', '/admin/wishlist/items', (ctx) => {
-    const w = wishlists.ofUser(ctx.user.id);
+    const w = targetWishlist(ctx);
+    if (!w) return notFound(ctx);
     const { f, error } = itemForm(ctx);
-    if (error) return renderOwn(ctx, { error: ctx.t(error), form: f }, 400);
+    if (error) {
+      if (!w.person_id) return renderOwn(ctx, { error: ctx.t(error), form: f }, 400);
+      return redirect(ctx.res, at(w, 'badItem', 'wishlist'));
+    }
     const id = wishItems.create(w.id, f);
     if (!applyUpload(id, ctx.body.image_data)) enqueuePreview(id, { kind: 'wish' });
     else if (f.url) enqueuePreview(id, { kind: 'wish' }); // keeps the photo, still reads the price
-    redirect(ctx.res, `/admin/wishlist?m=added&n=1#wish-${id}`);
+    redirect(ctx.res, at(w, 'added&n=1', `wish-${id}`));
   }, A);
 
   route('POST', '/admin/wishlist/items/:id', (ctx) => {
@@ -89,19 +106,20 @@ export function registerWishlistRoutes({ route, html, redirect, notFound, clean,
     if (!uploaded && ctx.body.remove_image === '1') clearPreview(wi.id, 'removed', 'wish');
     if (!uploaded && f.image_source && f.image_source !== wi.image_source) enqueuePreview(wi.id, { force: true, kind: 'wish' });
     else if (f.url !== wi.url) enqueuePreview(wi.id, { kind: 'wish' });
-    redirect(ctx.res, `/admin/wishlist?m=saved#wish-${wi.id}`);
+    redirect(ctx.res, at(ctx.wishlist, 'saved', `wish-${wi.id}`));
   }, A);
 
   route('POST', '/admin/wishlist/items/:id/move', (ctx) => {
     const wi = ownItem(ctx);
     if (!wi) return;
     wishItems.move(wi.id, ctx.body.dir === 'up' ? 'up' : 'down');
-    redirect(ctx.res, `/admin/wishlist#wish-${wi.id}`);
+    redirect(ctx.res, at(ctx.wishlist, '', `wish-${wi.id}`));
   }, A);
 
-  // Drag and drop on your own wishlist.
+  // Drag and drop (your own wishlist, or a person's with person_id).
   route('POST', '/admin/wishlist/order', (ctx) => {
-    const w = wishlists.ofUser(ctx.user.id);
+    const w = targetWishlist(ctx);
+    if (!w) return notFound(ctx);
     const ok = wishItems.setOrder(w.id, String(ctx.body.order || '').split(',').filter(Boolean));
     ctx.res.writeHead(ok ? 204 : 400, { 'Cache-Control': 'no-store' });
     ctx.res.end();
@@ -111,7 +129,7 @@ export function registerWishlistRoutes({ route, html, redirect, notFound, clean,
     const wi = ownItem(ctx);
     if (!wi) return;
     enqueuePreview(wi.id, { force: true, kind: 'wish' });
-    redirect(ctx.res, `/admin/wishlist#wish-${wi.id}`);
+    redirect(ctx.res, at(ctx.wishlist, '', `wish-${wi.id}`));
   }, A);
 
   // Same answer whether the item was reserved or not; whoever must know is told in the background.
@@ -120,7 +138,7 @@ export function registerWishlistRoutes({ route, html, redirect, notFound, clean,
     if (!wi) return;
     const reason = REMOVE_REASONS.includes(ctx.body.reason) ? ctx.body.reason : 'unwanted';
     const watchers = wi.status === 'active' ? wishItems.remove(wi.id, reason) : [];
-    redirect(ctx.res, '/admin/wishlist?m=wishRemoved');
+    redirect(ctx.res, at(ctx.wishlist, 'wishRemoved', 'wishlist'));
     setImmediate(() => tellWatchers(watchers, wi, reason, ctx.user));
   }, A);
 
@@ -128,7 +146,7 @@ export function registerWishlistRoutes({ route, html, redirect, notFound, clean,
     const wi = ownItem(ctx);
     if (!wi) return;
     wishItems.restore(wi.id);
-    redirect(ctx.res, `/admin/wishlist?m=saved#wish-${wi.id}`);
+    redirect(ctx.res, at(ctx.wishlist, 'saved', `wish-${wi.id}`));
   }, A);
 
   function tellWatchers(watchers, wi, reason, owner) {
@@ -152,18 +170,7 @@ export function registerWishlistRoutes({ route, html, redirect, notFound, clean,
     html(ctx.res, wv.othersIndexPage(ctx, { list: wishlists.others(ctx.user.id) }));
   }, A);
 
-  /** Gift occasions for "I'll give it": the recipient's next birthday + upcoming occasions. */
-  function giveChoices(uid, person) {
-    const out = [];
-    if (person?.birthday_month) {
-      const nb = nextBirthday(person.birthday_month, person.birthday_day);
-      out.push({ value: `birthday:${nb.year}`, label: { key: 'give.birthdayYear', vars: { year: nb.year } }, date: nb.date });
-    }
-    for (const o of occasions.list(uid).filter((o) => o.date >= today())) {
-      out.push({ value: `occasion:${o.id}`, label: { text: o.name }, date: o.date });
-    }
-    return out.sort((a, b) => a.date.localeCompare(b.date));
-  }
+  const giveChoices = occasionOptions;
 
   /** The "gifts to give" person for an admin (created, shared, on first "I'll give it"). */
   function personFor(uid, ownerId) {
@@ -176,7 +183,7 @@ export function registerWishlistRoutes({ route, html, redirect, notFound, clean,
 
   function loadOthers(ctx) {
     const w = wishlists.get(Number(ctx.params.id));
-    if (w && w.owner_id === ctx.user.id) {
+    if (w && w.owner_id != null && w.owner_id === ctx.user.id) {
       redirect(ctx.res, '/admin/wishlist'); // your own: the claim-blind page
       return null;
     }
@@ -190,6 +197,8 @@ export function registerWishlistRoutes({ route, html, redirect, notFound, clean,
   route('GET', '/admin/wishlists/:id', (ctx) => {
     const w = loadOthers(ctx);
     if (!w) return;
+    // A person's wishlist lives on their page in "gifts to give".
+    if (w.person_id) return redirect(ctx.res, `/admin/give/people/${w.person_id}${ctx.url.search}#wishlist`);
     const person = people.list(ctx.user.id).find((p) => p.user_id === w.owner_id) ?? null;
     html(ctx.res, wv.othersWishlistPage(ctx, {
       wishlist: w,
@@ -231,10 +240,12 @@ export function registerWishlistRoutes({ route, html, redirect, notFound, clean,
     const uid = ctx.user.id;
     const wi = wishItems.get(Number(ctx.params.itemId));
     if (!wi || wi.wishlist_id !== w.id || wi.status !== 'active') return notFound(ctx);
-    const back = `/admin/wishlists/${w.id}`;
+    const b = String(ctx.body.back || '');
+    const back = b.startsWith('/admin/') && !b.startsWith('//') ? b.split('#')[0].split('?')[0]
+      : (w.person_id ? `/admin/give/people/${w.person_id}` : `/admin/wishlists/${w.id}`);
 
     const [kind, ref] = String(ctx.body.occasion || '').split(':');
-    const person = personFor(uid, w.owner_id);
+    const person = w.person_id ? people.get(uid, w.person_id) : personFor(uid, w.owner_id);
     let occasionId = null;
     let year;
     if (kind === 'birthday' && Number(ref) >= 2000 && Number(ref) <= 2200) year = Number(ref);
@@ -248,7 +259,8 @@ export function registerWishlistRoutes({ route, html, redirect, notFound, clean,
       giftId = tx(() => {
       const id = gifts.create(uid, {
         person_id: person.id, occasion_id: occasionId, year, name: wi.title, url: wi.url, notes: wi.notes,
-        status: 'idea', visibility: 'private', // the recipient is an admin: never shared with them
+        // For an admin this is forced to private (gifts.create); for anyone else, shared with the other admins.
+        status: 'idea', visibility: w.person_id ? 'shared' : 'private',
         price_cents: wi.price_cents ?? null, price_currency: wi.price_currency ?? config.currency,
       });
       if (!claimForGift(wi.id, id)) throw Object.assign(new Error('taken'), { taken: true });

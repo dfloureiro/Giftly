@@ -259,19 +259,43 @@ const migrations = [
   ALTER TABLE gifts ADD COLUMN list_item_id INTEGER REFERENCES items(id) ON DELETE SET NULL;
   ALTER TABLE lists ADD COLUMN recipient_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
   `,
+  // v14 (3.2): wishlists for any person in "gifts to give" (not only admins). A wishlist belongs
+  // to an admin (owner_id) OR to a person (person_id). Rebuilding the table needs foreign keys
+  // off (SQLite's documented procedure), otherwise dropping it would cascade to its items.
+  { foreignKeysOff: true, sql: `
+  CREATE TABLE wishlists_new (
+    id INTEGER PRIMARY KEY,
+    owner_id INTEGER UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    person_id INTEGER UNIQUE REFERENCES people(id) ON DELETE CASCADE,
+    visibility TEXT NOT NULL DEFAULT 'admins' CHECK (visibility IN ('admins', 'private')),
+    created_at INTEGER NOT NULL,
+    CHECK ((owner_id IS NULL) != (person_id IS NULL))
+  );
+  INSERT INTO wishlists_new (id, owner_id, visibility, created_at) SELECT id, owner_id, visibility, created_at FROM wishlists;
+  DROP TABLE wishlists;
+  ALTER TABLE wishlists_new RENAME TO wishlists;
+  ` },
 ];
 
 {
   const { user_version: version } = db.prepare('PRAGMA user_version').get();
   for (let v = version; v < migrations.length; v++) {
+    const m = typeof migrations[v] === 'string' ? { sql: migrations[v] } : migrations[v];
+    if (m.foreignKeysOff) db.exec('PRAGMA foreign_keys = OFF'); // can't change inside a transaction
     db.exec('BEGIN');
     try {
-      db.exec(migrations[v]);
+      db.exec(m.sql);
+      if (m.foreignKeysOff) {
+        const broken = db.prepare('PRAGMA foreign_key_check').all();
+        if (broken.length) throw new Error(`migration ${v + 1} broke foreign keys: ${JSON.stringify(broken.slice(0, 3))}`);
+      }
       db.exec(`PRAGMA user_version = ${v + 1}`);
       db.exec('COMMIT');
     } catch (err) {
       db.exec('ROLLBACK');
       throw err;
+    } finally {
+      if (m.foreignKeysOff) db.exec('PRAGMA foreign_keys = ON');
     }
   }
 }
@@ -322,7 +346,8 @@ export const settings = {
  */
 export const LIST_VISIBLE = `((l.visibility = 'shared' OR l.owner_id = $uid)
   AND (l.recipient_user_id IS NULL OR l.recipient_user_id != $uid)
-  AND NOT EXISTS (SELECT 1 FROM wishlists w WHERE w.owner_id = $uid AND (
+  AND NOT EXISTS (SELECT 1 FROM wishlists w WHERE (w.owner_id = $uid
+        OR w.person_id IN (SELECT pp.id FROM people pp WHERE pp.user_id = $uid)) AND (
         w.id = l.source_wishlist_id
      OR EXISTS (SELECT 1 FROM items li JOIN wishlist_items lwi ON lwi.id = li.wishlist_item_id
                 WHERE li.list_id = l.id AND lwi.wishlist_id = w.id))))`;

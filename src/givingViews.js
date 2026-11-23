@@ -4,6 +4,7 @@ import { config } from './config.js';
 import { STATUSES, VISIBILITIES, daysBetween, today } from './giving.js';
 import { users } from './accounts.js';
 import { wishlists } from './wishlist.js';
+import { wishSection } from './wishlistViews.js';
 
 const locale = (ctx) => (ctx.lang === 'en' ? 'en-GB' : 'pt-PT');
 
@@ -127,7 +128,7 @@ function jointPicker(ctx, others, checked = []) {
   </details>`;
 }
 
-function giftRow(ctx, g, { back, showOccasion = false, others = [], anchor = true, forPerson = null, listChoices = [] } = {}) {
+function giftRow(ctx, g, { back, showOccasion = false, others = [], anchor = true, forPerson = null } = {}) {
   // Candidates for the joint picker: everyone offered here plus whoever it is already for.
   const co = g.people.filter((x) => x.id !== g.person_id);
   const pickable = [...new Map([...others, ...co].filter((x) => x.id !== g.person_id).map((x) => [x.id, x])).values()];
@@ -149,16 +150,7 @@ function giftRow(ctx, g, { back, showOccasion = false, others = [], anchor = tru
       </div>
       ${g.notes ? h`<p class="notes small">${g.notes}</p>` : ''}
       ${g.preview_status === 'pending' ? h`<p class="small muted" data-preview-status="${g.id}">${ctx.t('preview.pending')}</p>` : ''}
-      ${g.in_list_id ? h`<p class="small in-list">📋 <a href="/admin/lists/${g.in_list_id}">${ctx.t('give.inList', { list: g.in_list_title })}</a> — ${g.in_list_reserved_by ? ctx.t('give.inListReserved', { name: g.in_list_reserved_by }) : ctx.t('admin.free')}</p>` : ''}
       <div class="gift-actions">
-        ${g.status === 'idea' && listChoices.length ? h`<details class="to-list">
-          <summary class="small">📋 ${ctx.t('give.toList')}</summary>
-          <form method="post" action="/admin/give/gifts/${g.id}/to-list" class="row">
-            ${csrfField(ctx)}<input type="hidden" name="back" value="${back}">
-            <select name="list_id" aria-label="${ctx.t('give.toList')}">${listChoices.map((l) => h`<option value="${l.id}">${l.title}</option>`)}</select>
-            <button type="submit" class="secondary small-btn">${ctx.t('admin.add')}</button>
-          </form>
-        </details>` : ''}
         <form method="post" action="/admin/give/gifts/${g.id}/status" class="inline status-form">
           ${csrfField(ctx)}<input type="hidden" name="back" value="${back}">
           <select name="status" data-autosubmit aria-label="${ctx.t('give.status')}">
@@ -321,7 +313,7 @@ ${list.length ? h`<ul class="lists with-fav" id="people-list">
   });
 }
 
-export function personPage(ctx, { person, next, history, choices, others = [], personForm, personError, listChoices = [] }) {
+export function personPage(ctx, { person, next, history, choices, others = [], personForm, personError, wish = { kind: 'none' }, giveChoices = [], preselect = '' }) {
   const back = `/admin/give/people/${person.id}`;
   // Group the history by year → occasion, newest first.
   const groups = [];
@@ -347,13 +339,22 @@ export function personPage(ctx, { person, next, history, choices, others = [], p
 <p class="muted">${next ? h`🎂 ${ctx.t('give.birthdayOn', { date: fmtDay(ctx, next.date, { year: true }) })}${age ? h` · ${ctx.t('give.turns', { age })}` : ''}` : ctx.t('give.noBirthday')}
   ${person.gives_christmas ? h` · 🎄 ${ctx.t('give.givesChristmas')}` : ''}</p>
 ${person.notes ? h`<p class="description">${person.notes}</p>` : ''}
-${history.some((g) => g.status === 'idea') ? h`<p><a class="button secondary" href="/admin/give/people/${person.id}/new-list">📋 ${ctx.t('give.ideasToList', { name: person.name })}</a></p>` : ''}
+
+<section id="wishlist">
+  <h2>🎀 ${ctx.t('wish.ofName', { name: person.name })}</h2>
+  ${wish.kind === 'self' ? h`<p class="small muted">${ctx.t('wish.selfPerson')} <a href="/admin/wishlist">${ctx.t('wish.mineTitle')}</a></p>`
+    : wish.kind === 'none' ? h`<p class="small muted">${ctx.t('wish.adminPrivate', { name: person.name })}</p>`
+    : h`<p class="small muted">${wish.kind === 'admin' ? ctx.t('wish.othersIntro', { name: person.name }) : ctx.t('wish.personIntro')}</p>
+      ${wishSection(ctx, { w: wish.w, items: wish.items, choices: giveChoices, preselect, lists: wish.lists,
+        editable: wish.kind === 'person', personId: person.id, back: `/admin/give/people/${person.id}`, history: wish.history ?? [] })}`}
+</section>
 
 <section>
-  ${addGiftForm(ctx, { personId: person.id, back, choices, open: !history.length, others })}
+  <h2 class="history-title">🎁 ${ctx.t('give.historyTitle')}</h2>
+  ${addGiftForm(ctx, { personId: person.id, back, choices, others })}
   ${groups.length ? groups.map((grp) => h`
     <h2 id="year-${grp.year}">${grp.label}</h2>
-    <ul class="gifts">${grp.gifts.map((g) => giftRow(ctx, g, { back, others, forPerson: person.id, listChoices }))}</ul>`)
+    <ul class="gifts">${grp.gifts.map((g) => giftRow(ctx, g, { back, others, forPerson: person.id }))}</ul>`)
   : h`<p class="empty">${ctx.t('give.noGiftsYet')}</p>`}
 </section>
 
@@ -418,13 +419,15 @@ ${list.length ? h`<ul class="lists" id="occasion-list">
 
 /** "Pick from their wishlist" for people who are admins with a visible wishlist (not yourself). */
 function pickFromWishlist(ctx, person, occasionValue) {
-  if (!person.user_id || person.user_id === ctx.user.id) return '';
-  const w = wishlists.byOwner(person.user_id);
-  if (!w || w.visibility !== 'admins') return '';
-  return h`<p class="small"><a href="/admin/wishlists/${w.id}?occasion=${encodeURIComponent(occasionValue)}">🎀 ${ctx.t('wish.pickFromWishlist')}</a></p>`;
+  if (person.user_id === ctx.user.id) return '';
+  if (person.user_id) {
+    const w = wishlists.byOwner(person.user_id);
+    if (!w || w.visibility !== 'admins') return '';
+  }
+  return h`<p class="small"><a href="/admin/give/people/${person.id}?occasion=${encodeURIComponent(occasionValue)}#wishlist">🎀 ${ctx.t('wish.pickFromWishlist')}</a></p>`;
 }
 
-export function checklistPage(ctx, { occasion, rows, orphans, total, done, spent, onlyMissing, candidates, occasionForm, occasionError, listChoices = [] }) {
+export function checklistPage(ctx, { occasion, rows, orphans, total, done, spent, onlyMissing, candidates, occasionForm, occasionError }) {
   const back = `/admin/give/occasions/${occasion.id}${onlyMissing ? '?missing=1' : ''}`;
   const shown = onlyMissing ? rows.filter((r) => !r.done) : rows;
   const pct = total ? Math.round((done / total) * 100) : 0;
@@ -457,11 +460,11 @@ ${!rows.length ? h`<p class="empty">${ctx.t('give.noParticipants')}</p>` : ''}
     </div>
     ${pickFromWishlist(ctx, r.person, `occasion:${occasion.id}`)}
     ${r.previous.length ? h`<p class="small muted">${ctx.t('give.lastYear')}: ${r.previous.map((g) => g.name).join(', ')}</p>` : ''}
-    ${r.gifts.length ? h`<ul class="gifts">${r.gifts.map((g) => giftRow(ctx, g, { back, others: participants, anchor: firstTime(g.id), forPerson: r.person.id, listChoices }))}</ul>` : ''}
+    ${r.gifts.length ? h`<ul class="gifts">${r.gifts.map((g) => giftRow(ctx, g, { back, others: participants, anchor: firstTime(g.id), forPerson: r.person.id }))}</ul>` : ''}
     ${addGiftForm(ctx, { personId: r.person.id, back, occasion: `occasion:${occasion.id}`, others: participants.filter((p) => p.id !== r.person.id) })}
   </li>`)}
 </ul>
-${orphans.length ? h`<h2>${ctx.t('give.otherGifts')}</h2><ul class="gifts">${orphans.map((g) => giftRow(ctx, g, { back, others: participants, listChoices }))}</ul>` : ''}
+${orphans.length ? h`<h2>${ctx.t('give.otherGifts')}</h2><ul class="gifts">${orphans.map((g) => giftRow(ctx, g, { back, others: participants }))}</ul>` : ''}
 
 ${candidates.length ? h`<section class="card">
   <form method="post" action="/admin/give/occasions/${occasion.id}/participants" class="row">
@@ -491,39 +494,6 @@ ${candidates.length ? h`<section class="card">
     <hr>
     ${postButton(ctx, `/admin/give/occasions/${occasion.id}/delete`, ctx.t('give.deleteOccasion'), { cls: 'danger', confirm: ctx.t('give.deleteOccasionConfirm') })}
   </details>
-</section>`,
-  });
-}
-
-export function ideasListPage(ctx, { person, ideas, error }) {
-  return page(ctx, {
-    title: ctx.t('give.ideasToList', { name: person.name }),
-    active: 'people',
-    body: h`
-<h1>${ctx.t('give.ideasToList', { name: person.name })}</h1>
-<section class="card">
-  ${error ? h`<div class="flash flash-error" role="alert">${error}</div>` : ''}
-  <p class="small muted">${ctx.t('give.ideasToListHint')}${person.user_id ? h` <strong>${ctx.t('give.ideasForAdmin', { name: person.name })}</strong>` : ''}</p>
-  <form method="post" action="/admin/give/people/${person.id}/new-list" class="stack">
-    ${csrfField(ctx)}
-    <label>${ctx.t('admin.listTitle')}
-      <input name="title" required maxlength="120" value="${ctx.t('wish.defaultListTitle', { name: person.name })}">
-    </label>
-    <label>${ctx.t('admin.description')}
-      <textarea name="description" rows="2" maxlength="2000">${person.notes || ''}</textarea>
-    </label>
-    ${ideas.length ? h`<fieldset class="group">
-      <legend>${ctx.t('wish.whichItems')}</legend>
-      ${ideas.map((g) => h`<label class="check"><input type="checkbox" name="gifts" value="${g.id}" checked> ${g.name}${g.in_list_title ? h` <span class="muted small">· ${ctx.t('give.inList', { list: g.in_list_title })}</span>` : ''}</label>`)}
-    </fieldset>` : h`<p class="empty">${ctx.t('give.noIdeas')}</p>`}
-    <label>${ctx.t('give.visibility')}
-      <select name="visibility">
-        <option value="shared">${ctx.t('lists.vis.shared')}</option>
-        <option value="private">${ctx.t('lists.vis.private')}</option>
-      </select>
-    </label>
-    <button type="submit" class="primary">${ctx.t('admin.create')}</button>
-  </form>
 </section>`,
   });
 }

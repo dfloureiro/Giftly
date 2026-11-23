@@ -227,12 +227,13 @@ export const gifts = {
     return withPeople(db.prepare(`SELECT ${GIFT_COLS} ${GIFT_FROM} WHERE ${FOR_PERSON} AND g.occasion_id IS NULL AND g.year = $y
       AND ${GIFT_VISIBLE} ORDER BY g.id`).all({ uid, pid: personId, y: year }));
   },
-  /** What a person got for the same kind of occasion the year before. */
+  /** What a person actually got (bought/given) for the same kind of occasion the year before. */
   previous(uid, personId, { type, year }) {
-    if (type === 'birthday') return gifts.forBirthday(uid, personId, year - 1);
+    const got = (list) => list.filter((g) => HAS_GIFT.includes(g.status));
+    if (type === 'birthday') return got(gifts.forBirthday(uid, personId, year - 1));
     if (type !== 'christmas') return [];
-    return withPeople(db.prepare(`SELECT ${GIFT_COLS} ${GIFT_FROM} WHERE ${FOR_PERSON} AND o.type = 'christmas'
-      AND substr(o.date, 1, 4) = $y AND ${GIFT_VISIBLE} ORDER BY g.id`).all({ uid, pid: personId, y: String(year - 1) }));
+    return got(withPeople(db.prepare(`SELECT ${GIFT_COLS} ${GIFT_FROM} WHERE ${FOR_PERSON} AND o.type = 'christmas'
+      AND substr(o.date, 1, 4) = $y AND ${GIFT_VISIBLE} ORDER BY g.id`).all({ uid, pid: personId, y: String(year - 1) })));
   },
   /** `f.person_ids` (optional) adds co-recipients for a joint gift; `f.person_id` is the main one. */
   create(uid, f) {
@@ -328,6 +329,22 @@ export const gifts = {
 };
 
 // ---------- views built from the rules above ----------
+
+/**
+ * Occasions a gift for `person` can be for ("I'll give it", adding a gift): their next
+ * birthday and the upcoming occasions this admin can see, soonest first.
+ */
+export function occasionOptions(uid, person) {
+  const out = [];
+  if (person?.birthday_month) {
+    const nb = nextBirthday(person.birthday_month, person.birthday_day);
+    out.push({ value: `birthday:${nb.year}`, label: { key: 'give.birthdayYear', vars: { year: nb.year } }, date: nb.date });
+  }
+  for (const o of occasions.list(uid).filter((o) => o.date >= today())) {
+    out.push({ value: `occasion:${o.id}`, label: { text: o.name }, date: o.date });
+  }
+  return out.sort((a, b) => a.date.localeCompare(b.date));
+}
 
 /** Totals of bought/given gifts, per currency: [{ currency, cents }]. */
 export function spent(giftRows) {

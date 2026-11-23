@@ -2,14 +2,14 @@
 // which applies the shared/private rule for the logged-in user (ctx.user.id).
 import { config } from './config.js';
 import {
-  people, occasions, gifts, checklist, upcoming, today, nextBirthday, validDate,
+  people, occasions, gifts, checklist, upcoming, today, nextBirthday, validDate, occasionOptions,
   VISIBILITIES, STATUSES,
 } from './giving.js';
 import { saveImageBuffer, removeImage } from './preview.js';
 import { enqueuePreview, clearPreview, releaseImage } from './previewQueue.js';
 import * as gv from './givingViews.js';
 import { users } from './accounts.js';
-import { wishItems } from './wishlist.js';
+import { wishItems, wishlists } from './wishlist.js';
 import { db, lists, items } from './db.js';
 
 /** Price typed by hand: "12,50" / "12.5" / "€ 12" → cents, or null (empty), or NaN (invalid). */
@@ -104,7 +104,9 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
       history: gifts.forPerson(uid, person.id),
       choices: occasionChoices(uid, person, next),
       others: people.list(uid).filter((p) => p.id !== person.id),
-      listChoices: listChoicesFor(uid),
+      wish: wishFor(uid, person),
+      giveChoices: occasionOptions(uid, person),
+      preselect: String(ctx.url.searchParams.get('occasion') || ''),
       ...extra,
     }), status);
   }
@@ -217,7 +219,6 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
       ...c,
       onlyMissing: ctx.url.searchParams.get('missing') === '1',
       candidates: people.list(uid).filter((p) => !inList.has(p.id)),
-      listChoices: listChoicesFor(uid),
       ...extra,
     }), status);
   }
@@ -380,68 +381,33 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
     redirect(ctx.res, withMsg(back(ctx, `/admin/give/people/${gift.person_id}`), '', `gift-${gift.id}`));
   }, A);
 
-  // ----- gift ideas → guest lists (a copy, with a trace on the idea) -----
+  // ----- a person's wishlist on their page -----
 
-  /** Open lists this admin can add ideas to. */
-  const listChoicesFor = (uid) => lists.all(uid).filter((l) => !l.archived);
-
-  /** An idea for an admin must never go into a list that admin can see (it would spoil it). */
-  const allowedFor = (gift, listId) => {
-    const recipient = gifts.recipientUser(gift.id);
-    return !recipient || !lists.canSee(recipient, listId);
-  };
-
-  // Prices on guest lists are shown as text (in the instance's language).
-  const priceText = (g) => (g.price_cents != null ? gv.money({ lang: config.lang }, g.price_cents, g.price_currency) : '');
-
-  function copyToList(gift, listId) {
-    const itemId = items.create(listId, { title: gift.name, url: gift.url, notes: gift.notes });
-    const price = priceText(gift);
-    db.prepare("UPDATE items SET price = ?, image_file = ?, preview_status = CASE WHEN ? IS NOT NULL THEN 'uploaded' ELSE '' END WHERE id = ?")
-      .run(price, gift.image_file ?? null, gift.image_file ?? null, itemId);
-    if (gift.url) enqueuePreview(itemId); // keeps the copied photo; the price then follows the shop
-    gifts.setListItem(gift.id, itemId);
-    return itemId;
+  /**
+   * What the person page shows as "wishlist": for an admin's person, that admin's own wishlist
+   * (read-only, with what's taken); for yourself, just a link to your claim-blind page; for
+   * anyone else, their own wishlist, editable by whoever can see the person.
+   */
+  function wishFor(uid, person) {
+    if (person.user_id === uid) return { kind: 'self' };
+    if (person.user_id) {
+      const own = wishlists.byOwner(person.user_id);
+      if (!own || own.visibility !== 'admins') return { kind: 'none' };
+      const w = wishlists.get(own.id);
+      return { kind: 'admin', w, items: wishItems.othersView(w.id, uid), lists: lists.all(uid).filter((l) => l.source_wishlist_id === w.id) };
+    }
+    const w = wishlists.ofPerson(person.id);
+    return { kind: 'person', w, items: wishItems.othersView(w.id, uid), history: wishItems.ownerView(w.id).history,
+      lists: lists.all(uid).filter((l) => l.source_wishlist_id === w.id) };
   }
 
-  route('POST', '/admin/give/gifts/:id/to-list', (ctx) => {
-    const uid = uidOf(ctx);
-    const gift = gifts.get(uid, Number(ctx.params.id));
-    const list = gift && lists.visible(uid, Number(ctx.body.list_id));
-    if (!gift || !list || list.archived) return notFound(ctx);
-    const to = back(ctx, `/admin/give/people/${gift.person_id}`);
-    if (!allowedFor(gift, list.id)) return giftError(ctx, 'give.listWouldSpoil', to);
-    copyToList(gift, list.id);
-    redirect(ctx.res, withMsg(to, 'copiedToList', `gift-${gift.id}`));
-  }, A);
-
-  // A new guest list from a person's gift ideas (e.g. so the grandparents can pick from them).
+  // 3.1 "create a list from ideas" now means: from the person's wishlist.
   route('GET', '/admin/give/people/:id/new-list', (ctx) => {
-    const uid = uidOf(ctx);
-    const person = people.get(uid, Number(ctx.params.id));
+    const person = people.get(uidOf(ctx), Number(ctx.params.id));
     if (!person) return notFound(ctx);
-    const ideas = gifts.forPerson(uid, person.id).filter((g) => g.status === 'idea');
-    html(ctx.res, gv.ideasListPage(ctx, { person, ideas }));
-  }, A);
-
-  route('POST', '/admin/give/people/:id/new-list', (ctx) => {
-    const uid = uidOf(ctx);
-    const person = people.get(uid, Number(ctx.params.id));
-    if (!person) return notFound(ctx);
-    const title = clean(ctx.body.title, 120);
-    const chosen = new Set([].concat(ctx.body.gifts ?? []).map(Number));
-    const ideas = gifts.forPerson(uid, person.id).filter((g) => g.status === 'idea' && chosen.has(g.id));
-    if (!title) return html(ctx.res, gv.ideasListPage(ctx, { person, ideas: gifts.forPerson(uid, person.id).filter((g) => g.status === 'idea'), error: ctx.t('admin.titleRequired') }), 400);
-    // A list for an admin is never visible to them (LIST_VISIBLE, recipient_user_id).
-    const listId = lists.create({
-      title,
-      description: cleanMultiline(ctx.body.description, 2000),
-      owner_id: uid,
-      visibility: ctx.body.visibility === 'private' ? 'private' : 'shared',
-      recipient_user_id: person.user_id ?? null,
-    });
-    for (const g of ideas) copyToList(g, listId);
-    redirect(ctx.res, `/admin/lists/${listId}?m=created`);
+    const w = person.user_id ? wishlists.byOwner(person.user_id) : wishlists.ofPerson(person.id);
+    if (!w) return notFound(ctx);
+    redirect(ctx.res, `/admin/wishlists/${w.id}/new-list`);
   }, A);
 
   route('POST', '/admin/give/gifts/:id/preview', (ctx) => {

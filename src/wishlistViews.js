@@ -44,6 +44,41 @@ function itemFields(ctx, v = {}) {
     </label>`;
 }
 
+function editForm(ctx, it) {
+  return h`<details class="edit">
+        <summary class="button secondary">${ctx.t('admin.edit')}</summary>
+        <form method="post" action="/admin/wishlist/items/${it.id}" class="stack">
+          ${csrfField(ctx)}
+          ${itemFields(ctx, it)}
+          ${uploadField(ctx)}
+          <label>${ctx.t('preview.imageSource')}
+            <input name="image_source" type="url" maxlength="2000" value="${it.image_source || ''}" placeholder="https://…/foto.jpg">
+          </label>
+          ${it.image_file ? h`<label class="check"><input type="checkbox" name="remove_image" value="1"> ${ctx.t('preview.remove')}</label>` : ''}
+          <button type="submit" class="primary">${ctx.t('admin.save')}</button>
+        </form>
+        ${it.url ? postButton(ctx, `/admin/wishlist/items/${it.id}/preview`, ctx.t('preview.refresh'), { cls: 'link small' }) : ''}
+      </details>`;
+}
+
+/** `forPerson`: someone else's wishlist ("they already have it"), else your own ("I bought it"). */
+function removeForm(ctx, it, forPerson = false) {
+  const r = (k) => ctx.t(forPerson ? `wish.reasonFor.${k}` : `wish.reason.${k}`);
+  return h`<details class="edit">
+        <summary class="button danger">${ctx.t('wish.remove')}</summary>
+        <form method="post" action="/admin/wishlist/items/${it.id}/remove" class="stack">
+          ${csrfField(ctx)}
+          <fieldset class="group">
+            <legend>${ctx.t('wish.removeWhy')}</legend>
+            <label class="check"><input type="radio" name="reason" value="bought" required> ${r('bought')}</label>
+            <label class="check"><input type="radio" name="reason" value="unwanted"> ${r('unwanted')}</label>
+            <label class="check"><input type="radio" name="reason" value="received"> ${r('received')}</label>
+          </fieldset>
+          <button type="submit" class="danger">${ctx.t('wish.remove')}</button>
+        </form>
+      </details>`;
+}
+
 // ---------- my wishlist ----------
 
 export function ownWishlistPage(ctx, { wishlist, active, history, error, form }) {
@@ -64,33 +99,8 @@ ${active.length ? h`<ul class="items admin-items" data-sortable="/admin/wishlist
     <div class="actions">
       ${idx > 0 ? postButton(ctx, `/admin/wishlist/items/${it.id}/move`, '↑', { cls: 'icon move', extra: '<input type="hidden" name="dir" value="up">' }) : ''}
       ${idx < active.length - 1 ? postButton(ctx, `/admin/wishlist/items/${it.id}/move`, '↓', { cls: 'icon move', extra: '<input type="hidden" name="dir" value="down">' }) : ''}
-      <details class="edit">
-        <summary class="button secondary">${ctx.t('admin.edit')}</summary>
-        <form method="post" action="/admin/wishlist/items/${it.id}" class="stack">
-          ${csrfField(ctx)}
-          ${itemFields(ctx, it)}
-          ${uploadField(ctx)}
-          <label>${ctx.t('preview.imageSource')}
-            <input name="image_source" type="url" maxlength="2000" value="${it.image_source || ''}" placeholder="https://…/foto.jpg">
-          </label>
-          ${it.image_file ? h`<label class="check"><input type="checkbox" name="remove_image" value="1"> ${ctx.t('preview.remove')}</label>` : ''}
-          <button type="submit" class="primary">${ctx.t('admin.save')}</button>
-        </form>
-        ${it.url ? postButton(ctx, `/admin/wishlist/items/${it.id}/preview`, ctx.t('preview.refresh'), { cls: 'link small' }) : ''}
-      </details>
-      <details class="edit">
-        <summary class="button danger">${ctx.t('wish.remove')}</summary>
-        <form method="post" action="/admin/wishlist/items/${it.id}/remove" class="stack">
-          ${csrfField(ctx)}
-          <fieldset class="group">
-            <legend>${ctx.t('wish.removeWhy')}</legend>
-            <label class="check"><input type="radio" name="reason" value="bought" required> ${ctx.t('wish.reason.bought')}</label>
-            <label class="check"><input type="radio" name="reason" value="unwanted"> ${ctx.t('wish.reason.unwanted')}</label>
-            <label class="check"><input type="radio" name="reason" value="received"> ${ctx.t('wish.reason.received')}</label>
-          </fieldset>
-          <button type="submit" class="danger">${ctx.t('wish.remove')}</button>
-        </form>
-      </details>
+      ${editForm(ctx, it)}
+      ${removeForm(ctx, it)}
     </div>
   </li>`)}
 </ul>` : h`<p class="empty">${ctx.t('wish.empty')}</p>`}
@@ -147,11 +157,11 @@ ${list.length ? h`<ul class="lists">
   });
 }
 
-function giveForm(ctx, w, it, choices, preselect) {
+function giveForm(ctx, w, it, choices, preselect, back = '') {
   return h`<details class="edit"${preselect ? raw(' open') : ''}>
     <summary class="button primary">${ctx.t('wish.illGive')}</summary>
     <form method="post" action="/admin/wishlists/${w.id}/items/${it.id}/give" class="stack">
-      ${csrfField(ctx)}
+      ${csrfField(ctx)}${back ? h`<input type="hidden" name="back" value="${back}">` : ''}
       <label>${ctx.t('give.forOccasion')}
         <select name="occasion" required>
           ${choices.map((c) => h`<option value="${c.value}"${c.value === preselect ? raw(' selected') : ''}>${c.label.key ? ctx.t(c.label.key, c.label.vars) : c.label.text}</option>`)}
@@ -164,6 +174,53 @@ function giveForm(ctx, w, it, choices, preselect) {
   </details>`;
 }
 
+/**
+ * A wishlist seen by someone who is NOT its recipient: what's taken, "I'll give it", and
+ * "create a list". `editable` (a person's wishlist) adds edit/remove/reorder and an add form.
+ */
+export function wishSection(ctx, { w, items, choices = [], preselect = '', lists = [], editable = false, personId = null, back = '', history = [] }) {
+  const sortable = editable && items.length > 1;
+  return h`
+<p class="row">
+  <a class="button secondary" href="/admin/wishlists/${w.id}/new-list">＋ ${ctx.t('wish.createList')}</a>
+  ${lists.length ? h`<span class="small">${ctx.t('wish.yourLists')}: ${lists.map((l, i) => h`${i ? ', ' : ''}<a href="/admin/lists/${l.id}">${l.title}</a>`)}</span>` : ''}
+</p>
+${items.length ? h`<ul class="items admin-items"${sortable ? h` data-sortable="/admin/wishlist/order" data-sortable-extra="person_id=${personId}"` : ''}>
+  ${items.map((it, idx) => h`<li class="item${it.claimed ? ' picked' : ''}" id="wish-${it.id}" data-id="${it.id}">
+    ${sortable ? dragHandle(ctx) : ''}
+    ${wishThumb(it)}
+    <div class="body">${wishBody(ctx, it)}
+      <p class="status">${it.my_gift_id
+        ? h`🎁 <strong>${ctx.t('wish.youGive')}</strong>`
+        : it.claimed ? h`<span class="muted">🎀 ${ctx.t('wish.alreadyChosen')}</span>` : h`<span class="muted">${ctx.t('admin.free')}</span>`}</p>
+      ${it.preview_status === 'pending' ? h`<p class="small muted" data-preview-status="${it.id}">${ctx.t('preview.pending')}</p>` : ''}
+    </div>
+    <div class="actions">
+      ${it.claimed ? '' : giveForm(ctx, w, it, choices, preselect, back)}
+      ${editable ? h`
+        ${idx > 0 ? postButton(ctx, `/admin/wishlist/items/${it.id}/move`, '↑', { cls: 'icon move', extra: '<input type="hidden" name="dir" value="up">' }) : ''}
+        ${idx < items.length - 1 ? postButton(ctx, `/admin/wishlist/items/${it.id}/move`, '↓', { cls: 'icon move', extra: '<input type="hidden" name="dir" value="down">' }) : ''}
+        ${editForm(ctx, it)}
+        ${removeForm(ctx, it, true)}` : ''}
+    </div>
+  </li>`)}
+</ul>` : h`<p class="empty">${ctx.t('wish.emptyOther', { name: w.owner_name })}</p>`}
+${editable ? h`<details class="add-gift add-wish">
+  <summary>＋ ${ctx.t('wish.addToWishlist')}</summary>
+  <form method="post" action="/admin/wishlist/items" class="stack">
+    ${csrfField(ctx)}<input type="hidden" name="person_id" value="${personId}">
+    ${itemFields(ctx)}
+    ${uploadField(ctx)}
+    <button type="submit" class="primary">${ctx.t('admin.add')}</button>
+  </form>
+</details>` : ''}
+${editable && history.length ? h`<details>
+  <summary class="small">${ctx.t('wish.history')} (${history.length})</summary>
+  <ul class="plain">${history.map((it) => h`<li class="row"><span class="grow">${it.title} <span class="muted small">· ${ctx.t(`wish.reason.${it.removed_reason}`)}</span></span>
+    ${postButton(ctx, `/admin/wishlist/items/${it.id}/restore`, ctx.t('wish.restore'), { cls: 'link small' })}</li>`)}</ul>
+</details>` : ''}`;
+}
+
 export function othersWishlistPage(ctx, { wishlist: w, items, choices, preselect, linkedLists }) {
   return page(ctx, {
     title: ctx.t('wish.ofName', { name: w.owner_name }),
@@ -171,22 +228,7 @@ export function othersWishlistPage(ctx, { wishlist: w, items, choices, preselect
     body: h`
 <h1>${ctx.t('wish.ofName', { name: w.owner_name })}</h1>
 <p class="small muted">${ctx.t('wish.othersIntro', { name: w.owner_name })}</p>
-<p><a class="button secondary" href="/admin/wishlists/${w.id}/new-list">＋ ${ctx.t('wish.createList')}</a></p>
-${linkedLists.length ? h`<p class="small">${ctx.t('wish.yourLists')}: ${linkedLists.map((l, i) => h`${i ? ', ' : ''}<a href="/admin/lists/${l.id}">${l.title}</a>`)}</p>` : ''}
-
-${items.length ? h`<ul class="items admin-items">
-  ${items.map((it) => h`<li class="item${it.claimed ? ' picked' : ''}" id="wish-${it.id}">
-    ${wishThumb(it)}
-    <div class="body">${wishBody(ctx, it)}
-      <p class="status">${it.my_gift_id
-        ? h`🎁 <strong>${ctx.t('wish.youGive')}</strong>`
-        : it.claimed ? h`<span class="muted">🎀 ${ctx.t('wish.alreadyChosen')}</span>` : h`<span class="muted">${ctx.t('admin.free')}</span>`}</p>
-    </div>
-    <div class="actions">
-      ${it.claimed ? '' : giveForm(ctx, w, it, choices, preselect)}
-    </div>
-  </li>`)}
-</ul>` : h`<p class="empty">${ctx.t('wish.emptyOther', { name: w.owner_name })}</p>`}`,
+${wishSection(ctx, { w, items, choices, preselect, lists: linkedLists })}`,
   });
 }
 
