@@ -12,7 +12,7 @@ Self-hosted gift lists for families and friends.
 - Gifts with a link show the **shop's product image and price** automatically. Prices are re-checked daily and are never typed by hand.
 - **Several admins**, each with their own account, and optional **notifications** (ntfy, Telegram, Discord/Slack webhook) when someone picks a gift.
 - The admin always shows everything: who picked what and when, and who joined.
-- **Wishlists:** each admin keeps a personal wishlist; another admin can create a guest list from it (the owner never sees that list or what was reserved), or take an item with "I'll give it".
+- **Wishlists:** every admin keeps a personal wishlist, and every person in "gifts to give" has one too. Create guest lists from them (linked and kept in sync) or take an item with "I'll give it"; an admin never sees what was reserved for them.
 - **Gifts to give:** keep track of the gifts *you* give: people, birthdays, Christmas and other occasions, with a checklist per occasion, what each person got last year, shared or private entries per admin, and **reminders** when a gift is still missing.
 
 <p align="center">
@@ -20,6 +20,8 @@ Self-hosted gift lists for families and friends.
 </p>
 
 <p align="center">
+  <img src="docs/screenshots/guest-flow.gif" alt="A guest opens the list link on a phone, types their name, scrolls to a plant and taps “I'll give this one”; it moves to their picks" width="240">
+  &nbsp;
   <img src="docs/screenshots/join-mobile.png" alt="Joining a list on a phone: only a name is needed" width="240">
   &nbsp;
   <img src="docs/screenshots/guest-mobile-dark.png" alt="The gift list on a phone in dark mode" width="240">

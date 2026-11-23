@@ -25,6 +25,11 @@ for(const [id,p] of Object.entries(P)) d.prepare('UPDATE items SET price=?, pric
 pw "PHASE=2 node lists.js && node give.js && CHECK=${CHECK:-} node wish.js"
 if [ -n "${CHECK:-}" ]; then mkdir -p "${CHECK}" && mv "$WORK"/out/check-*.png "${CHECK}/"; fi
 cp "$WORK"/out/*.png docs/screenshots/
+# The guest-flow video → an optimised GIF for the README.
+$ENGINE run --rm -v "$WORK/out":/o:Z docker.io/library/alpine:3.20 sh -c 'apk add -q ffmpeg && ffmpeg -loglevel error -y -i /o/guest-flow.webm \
+  -vf "fps=12,scale=360:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=96:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle" \
+  /o/guest-flow.gif'
+cp "$WORK"/out/guest-flow.gif docs/screenshots/
 $ENGINE rm -f giftly-shots >/dev/null; $ENGINE volume rm giftly-shots-data >/dev/null
 rm -rf "$WORK"
 echo "Screenshots updated in docs/screenshots/"
