@@ -134,7 +134,7 @@ const NOTIFY_AGENTS = { 'http:': new http.Agent({ keepAlive: true }), 'https:': 
  * NOTIFY_ALLOWED_HOSTS (checked on the resolved address, so DNS tricks don't help), redirects
  * are never followed, and the response body is never returned (no reading internal services).
  */
-export function postJson(url, body, headers = {}, { timeout = 8000 } = {}) {
+export function postJson(url, body, headers = {}, { timeout = 8000, deadline = 10_000 } = {}) {
   return new Promise((resolve, reject) => {
     let u;
     try { u = new URL(url); } catch { return reject(new Error('Bad URL')); }
@@ -156,6 +156,10 @@ export function postJson(url, body, headers = {}, { timeout = 8000 } = {}) {
       reject(new Error(res.statusCode >= 300 && res.statusCode < 400 ? `HTTP ${res.statusCode} (redirects are not followed)` : `HTTP ${res.statusCode}`));
     });
     req.on('timeout', () => req.destroy(new Error('Timeout')));
+    // Total deadline: a server answering one byte at a time can't hold a notification (or the
+    // reminders queued behind it) for longer than this.
+    const timer = setTimeout(() => req.destroy(new Error('Too slow')), deadline);
+    req.on('close', () => clearTimeout(timer));
     req.on('error', (err) => reject(new Error(err.message.includes('Refusing private')
       ? `Refusing private address for ${bare(u.hostname)} (allow it with NOTIFY_ALLOWED_HOSTS)` : err.message)));
     req.end(data);

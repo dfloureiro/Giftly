@@ -9,3 +9,4 @@ compose*.yaml
 *.env
 cloudflared.env
 .giftly-tmp.*
+.giftly-backup/

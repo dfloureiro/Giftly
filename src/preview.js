@@ -20,15 +20,18 @@ mkdirSync(IMAGE_DIR, { recursive: true });
 const UA = 'Mozilla/5.0 (compatible; GiftlyLinkPreview/1.0; +https://github.com/dfloureiro/giftly)';
 const PAGE_LIMIT = 3 * 1024 * 1024;
 const IMAGE_LIMIT = 5 * 1024 * 1024;
-const TIMEOUT_MS = 10_000;
+const TIMEOUT_MS = 10_000; // idle socket
+const DEADLINE_MS = 15_000; // whole request, redirects included: a shop trickling bytes can't hold a slot
 
 // ---------- network guard ----------
 
 export { isPrivateIp };
 
 // `allowPrivate` exists only for the tests' local servers (see __test below); nothing else sets it.
-function get(url, { limit, accept, allowPrivate = false }, redirects = 0) {
+function get(url, { limit, accept, allowPrivate = false, deadline = Date.now() + DEADLINE_MS }, redirects = 0) {
   return new Promise((resolve, reject) => {
+    const left = deadline - Date.now();
+    if (left <= 0) return reject(new Error('Too slow'));
     let u;
     try { u = new URL(url); } catch { return reject(new Error('Bad URL')); }
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return reject(new Error('Bad protocol'));
@@ -53,7 +56,7 @@ function get(url, { limit, accept, allowPrivate = false }, redirects = 0) {
         // A shop may send any garbage here; this runs outside the promise executor, so it must not throw.
         let next;
         try { next = new URL(res.headers.location, u).toString(); } catch { return reject(new Error('Bad redirect')); }
-        return resolve(get(next, { limit, accept, allowPrivate }, redirects + 1));
+        return resolve(get(next, { limit, accept, allowPrivate, deadline }, redirects + 1));
       }
       if (res.statusCode !== 200) {
         res.resume();
@@ -79,6 +82,9 @@ function get(url, { limit, accept, allowPrivate = false }, redirects = 0) {
     });
     req.on('timeout', () => req.destroy(new Error('Timeout')));
     req.on('error', reject);
+    // Total deadline (the socket timeout only catches silence, not a slow trickle).
+    const timer = setTimeout(() => req.destroy(new Error('Too slow')), left);
+    req.on('close', () => clearTimeout(timer));
   });
 }
 
@@ -311,4 +317,7 @@ export async function fetchPreview(pageUrl, imageUrl, { wantImage = true } = {})
 }
 
 /** For tests only: fetch from a local test server (the private-address guard is tested separately). */
-export const __test = { get: (url) => get(url, { limit: 100_000, accept: '*/*', allowPrivate: true }) };
+export const __test = {
+  get: (url, { deadlineMs = DEADLINE_MS, limit = 100_000 } = {}) =>
+    get(url, { limit, accept: '*/*', allowPrivate: true, deadline: Date.now() + deadlineMs }),
+};

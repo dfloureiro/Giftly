@@ -110,13 +110,17 @@ function pump() {
   }
 }
 
+// Tests replace the fetcher to control timing; production always uses fetchPreview.
+let fetchImpl = fetchPreview;
+export const __test = { setFetch: (fn) => { fetchImpl = fn || fetchPreview; }, enqueue: (...a) => enqueuePreview(...a) };
+
 async function run({ id, kind, keepImage, prevStatus }) {
   const store = STORES[kind];
   const before = store.get(id);
   if (!before) return;
   let result, status;
   try {
-    result = await fetchPreview(before.url, keepImage ? '' : before.image_source, { wantImage: !keepImage });
+    result = await fetchImpl(before.url, keepImage ? '' : before.image_source, { wantImage: !keepImage });
     status = result.file ? 'ok' : 'none';
   } catch (err) {
     console.warn(`preview for ${kind} ${id} failed: ${err.message}`);
@@ -128,12 +132,18 @@ async function run({ id, kind, keepImage, prevStatus }) {
     releaseImage(result?.file);
     return;
   }
+  // Compare-and-set on the image itself: if it was uploaded, replaced or removed while we were
+  // fetching (no await between this check and the save below, so nothing can slip in), what the
+  // admin did wins and this fetch only updates the price.
+  const imageChanged = rec.image_file !== before.image_file || rec.preview_status !== before.preview_status;
+  if (imageChanged) keepImage = true; // the fetched image (if any) is released below
   const update = { price_checked_at: Date.now() };
   // An image is only ever replaced by another image: a failed fetch or a page without
   // one never loses what we have (e.g. an uploaded photo for a shop that blocks us).
   if (!keepImage) update.preview_status = status !== 'ok' && rec.image_file ? (prevStatus || 'ok') : status;
   if (result) {
     if (!keepImage && result.file && rec.image_file !== result.file) update.image_file = result.file;
+    else if (keepImage && result.file && result.file !== rec.image_file) releaseImage(result.file);
     // Bare links get the hostname as a placeholder title: replace it.
     if (result.title && rec.url && store.title(rec) === hostOf(rec.url)) update.title = result.title;
     // Shop prices: keep the last known one if this read found none.

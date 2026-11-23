@@ -6,3 +6,4 @@ node_modules/
 *.env
 cloudflared.env
 .giftly-tmp.*
+.giftly-backup/

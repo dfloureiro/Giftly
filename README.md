@@ -216,11 +216,34 @@ Optionally, protect `/admin` with a Cloudflare Access policy for extra safety.
 
 ## Backups
 
-Everything lives in `/data`: `giftly.db` (SQLite, WAL mode) and `images/`. To back it up while running:
+Everything lives in `/data`: the database (`giftly.db`) and the photos (`images/`). `scripts/backup.sh` saves both into one file, **outside** that folder, while Giftly keeps running:
 
 ```sh
-docker compose exec giftly node -e "new (require('node:sqlite').DatabaseSync)('/data/giftly.db').exec(\"VACUUM INTO '/data/backup.db'\")"
+cd giftly                                   # the folder with compose.yaml
+curl -fsSLO https://raw.githubusercontent.com/dfloureiro/Giftly/main/scripts/backup.sh
+curl -fsSLO https://raw.githubusercontent.com/dfloureiro/Giftly/main/scripts/restore.sh
+sh backup.sh --keep 14                      # → backups/giftly-backup-<date>.tar.gz (newest 14 kept)
 ```
+
+Not using Compose (e.g. Portainer)? Add `GIFTLY_CONTAINER=<container name>`. `BACKUP_DIR` chooses where the file goes.
+
+- **Copy it to another machine as well.** A backup on the same disk is lost with that disk. For example, use `rsync -a backups/ nas:/backups/giftly/`, [restic](https://restic.net), or a synced folder.
+- The file contains password hashes and two-factor secrets. It's written as private (`600`): keep it that way, and encrypt it if it leaves your machines.
+- By default it leaves out the session secret, so after a restore everyone just signs in again (guests by typing their name). `--include-secrets` keeps them signed in, which makes the file more sensitive.
+
+**Daily, with cron** (`crontab -e`):
+
+```
+30 3 * * * cd /home/me/giftly && sh backup.sh --keep 14 >> backups/backup.log 2>&1
+```
+
+**Restore** (on the same or a new machine, after installing Giftly there):
+
+```sh
+sh restore.sh backups/giftly-backup-20261123-033000.tar.gz
+```
+
+It checks the file first (checksums and version) and refuses a damaged backup or one from a newer Giftly. Then it stops Giftly, moves the current data aside to `/data/pre-restore-<date>/`, puts the backup in place and starts Giftly again. An older backup is upgraded automatically.
 
 ## Development
 

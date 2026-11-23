@@ -133,13 +133,13 @@ export async function runReminders({ now = new Date(), force = false } = {}) {
   running = true;
   let total = 0;
   try {
-  for (const user of users.all()) {
-    try {
-      total += await remindUser(user, { on: date });
-    } catch (err) {
-      console.warn(`reminders for user ${user.id} failed: ${err.message}`);
-    }
-  }
+  // Every user in parallel: a slow or failing channel of one never delays anyone else.
+  const everyone = users.all();
+  const results = await Promise.allSettled(everyone.map((user) => remindUser(user, { on: date })));
+  results.forEach((r, i) => {
+    if (r.status === 'fulfilled') total += r.value;
+    else console.warn(`reminders for user ${everyone[i].id} failed: ${r.reason?.message}`);
+  });
   } finally { running = false; }
   if (total) console.log(`reminders: sent ${total} message(s) for ${date}`);
   return total;

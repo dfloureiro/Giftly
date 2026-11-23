@@ -12,7 +12,7 @@ ok() { printf 'ok   %s\n' "$*"; }
 bad() { printf 'FAIL %s\n' "$*"; fails=$((fails + 1)); }
 check() { if eval "$2"; then ok "$1"; else bad "$1"; fi; }
 # shellcheck disable=SC2012 # fixed file names
-mode() { ls -l "$1" | cut -c1-10; }
+mode() { ls -ld "$1" | cut -c1-10; }
 cleanup() {
   for d in "$WORK"/*/; do (cd "$d" && docker compose --profile tunnel down -v >/dev/null 2>&1) || true; done
   # data/ belongs to the container's user (not the runner's): remove it from a container.
@@ -57,16 +57,36 @@ check "B: open .env permissions fixed" "[ \"\$(mode '$WORK/b/.env')\" = -rw-----
 
 down b
 
-# C. A 3.3 install (official compose, token in .env) whose tunnel then doesn't come up: rolled back.
+# C. A working 3.3 install whose update fails (here: the new image can't be pulled). Every file
+#    is put back (compose.yaml, .env; cloudflared.env and .compose.sha256 didn't exist → removed)
+#    and the previous setup, tunnel included, works again.
 mkdir -p "$WORK/c"; cp "$ROOT/test/install/compose-3.3.yaml" "$WORK/c/compose.yaml"
-printf 'ADMIN_USERNAME=c\nADMIN_PASSWORD=cccccccccccc\nTUNNEL_TOKEN=bad\n' > "$WORK/c/.env"; chmod 600 "$WORK/c/.env"; stub "$WORK/c"
-if install c; then bad "C: installer reports failure"; cat "$WORK/c.log"; else ok "C: installer reports failure"; fi
-check "C: compose.yaml was updated (it was the official one)" "cmp -s '$WORK/c/compose.yaml' '$ROOT/compose.yaml'"
-check "C: .env restored with the token" "grep -q '^TUNNEL_TOKEN=bad' '$WORK/c/.env' && [ ! -f '$WORK/c/cloudflared.env' ]"
-check "C: clear message" "grep -q \"Tunnel didn't connect\" '$WORK/c.log' && grep -q 'previous .env was put back' '$WORK/c.log'"
+printf 'ADMIN_USERNAME=c\nADMIN_PASSWORD=cccccccccccc\nTUNNEL_TOKEN=good-token\n' > "$WORK/c/.env"; chmod 600 "$WORK/c/.env"; stub "$WORK/c"
+cp "$WORK/c/.env" "$WORK/c.env.before"
+if install c GIFTLY_TAG=does-not-exist-342; then bad "C: installer reports failure"; cat "$WORK/c.log"; else ok "C: installer reports failure"; fi
+check "C: compose.yaml back to the 3.3 one" "cmp -s '$WORK/c/compose.yaml' '$ROOT/test/install/compose-3.3.yaml'"
+check "C: .env back as it was (token included)" "cmp -s '$WORK/c/.env' '$WORK/c.env.before'"
+check "C: files that didn't exist are gone" "[ ! -f '$WORK/c/cloudflared.env' ] && [ ! -f '$WORK/c/.compose.sha256' ]"
+check "C: the tunnel works again" "(cd '$WORK/c' && docker compose exec -T giftly wget -qO- http://cloudflared:20241/ready) >/dev/null 2>&1"
+check "C: says so" "grep -q 'restored and is working again' '$WORK/c.log'"
+check "C: snapshot is private" "[ \"\$(mode '$WORK/c/.giftly-backup')\" = drwx------ ] && [ -n \"\$(find '$WORK/c/.giftly-backup' -type f)\" ] && [ -z \"\$(find '$WORK/c/.giftly-backup' -type f ! -perm 600)\" ]"
 
 down c
+# E. The previous setup itself can't start the tunnel (bad token): files restored, and it says
+#    clearly that it didn't come back either.
+mkdir -p "$WORK/e"; cp "$ROOT/test/install/compose-3.3.yaml" "$WORK/e/compose.yaml"
+printf 'ADMIN_USERNAME=e\nADMIN_PASSWORD=eeeeeeeeeeee\nTUNNEL_TOKEN=bad\n' > "$WORK/e/.env"; chmod 600 "$WORK/e/.env"; stub "$WORK/e"
+if install e; then bad "E: installer reports failure"; cat "$WORK/e.log"; else ok "E: installer reports failure"; fi
+check "E: files restored, token back in .env" "grep -q '^TUNNEL_TOKEN=bad' '$WORK/e/.env' && [ ! -f '$WORK/e/cloudflared.env' ] && cmp -s '$WORK/e/compose.yaml' '$ROOT/test/install/compose-3.3.yaml'"
+check "E: says it didn't come back" "grep -q \"didn't come back either\" '$WORK/e.log'"
 
+down e
+# F. A failed FIRST install keeps its .env (the admin account may already use that password).
+mkdir -p "$WORK/f"
+if install f GIFTLY_TAG=does-not-exist-342 ADMIN_USERNAME=fiona; then bad "F: installer reports failure"; else ok "F: installer reports failure"; fi
+check "F: .env kept" "grep -q '^ADMIN_USERNAME=fiona' '$WORK/f/.env'"
+
+down f
 # D. The same 3.3 install with a working token: migrated and the tunnel is ready.
 mkdir -p "$WORK/d"; cp "$ROOT/test/install/compose-3.3.yaml" "$WORK/d/compose.yaml"
 printf 'ADMIN_USERNAME=d\nADMIN_PASSWORD=dddddddddddd\nTUNNEL_TOKEN=good-token\n' > "$WORK/d/.env"; chmod 600 "$WORK/d/.env"; stub "$WORK/d"
