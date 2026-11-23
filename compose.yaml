@@ -7,7 +7,7 @@ services:
     volumes:
       - ./data:/data
     ports:
-      - "127.0.0.1:3000:3000"   # local only; remove if you only use the tunnel
+      - "127.0.0.1:${GIFTLY_PORT:-3000}:3000"   # local only; remove if you only use the tunnel
 
   # Optional: expose through Cloudflare Tunnel (no ports opened on your router).
   # Start with: docker compose --profile tunnel up -d
@@ -17,6 +17,7 @@ services:
     restart: unless-stopped
     command: tunnel --no-autoupdate run
     environment:
-      - TUNNEL_TOKEN=${TUNNEL_TOKEN}
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN:-}
     depends_on:
-      - giftly
+      giftly:
+        condition: service_healthy

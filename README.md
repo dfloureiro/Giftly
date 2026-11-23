@@ -69,9 +69,19 @@ Guests need no account and no email, and nothing is tracked. It is a single smal
 
 ## Quick start
 
+One step, on any machine with Docker (a NAS, a Raspberry Pi, a server):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/dfloureiro/Giftly/main/install.sh -o install.sh && sh install.sh
+```
+
+It asks for your domain and a [Cloudflare Tunnel](#exposing-it-with-cloudflare-tunnel) token (both optional), creates a strong admin password, starts Giftly and shows you how to log in. Without a tunnel, Giftly is only reachable from that machine at <http://localhost:3000/admin>. Running it again updates Giftly and never changes your `.env`. You can read [the script](install.sh) first.
+
+Or by hand with Docker Compose:
+
 ```sh
 mkdir giftly && cd giftly
-curl -O https://raw.githubusercontent.com/dfloureiro/giftly/main/compose.yaml
+curl -O https://raw.githubusercontent.com/dfloureiro/Giftly/main/compose.yaml
 printf 'ADMIN_USERNAME=me\nADMIN_PASSWORD=%s\n' "$(openssl rand -base64 18)" > .env
 cat .env                     # keep this password
 docker compose up -d
@@ -177,12 +187,13 @@ On ntfy.sh, anyone who knows the topic name can read it, so make it long and ran
 
 ## Exposing it with Cloudflare Tunnel
 
-If your domain is on Cloudflare, you don't need to open any ports:
+If your domain is on Cloudflare, you don't need to open any ports, set up a reverse proxy or get certificates:
 
-1. In Cloudflare go to **Zero Trust → Networks → Tunnels → Create a tunnel** (type *Cloudflared*), and copy the token.
-2. Add a **public hostname**, e.g. `gifts.example.com`, with service `http://giftly:3000`.
-3. Put the token in `.env` as `TUNNEL_TOKEN=...` and set `BASE_URL=https://gifts.example.com`.
-4. Run `docker compose --profile tunnel up -d`.
+1. In Cloudflare, open **Zero Trust → Networks → Tunnels**, create a tunnel (type *Cloudflared*) and copy its token.
+2. Add a **public hostname** to the tunnel, e.g. `gifts.example.com`, with service `http://giftly:3000`.
+3. Run the [one-step install](#quick-start) and paste the domain and token when asked.
+
+Doing it by hand instead: put `TUNNEL_TOKEN=...` and `BASE_URL=https://gifts.example.com` in `.env` and run `docker compose --profile tunnel up -d`.
 
 Optionally, protect `/admin` with a Cloudflare Access policy for extra safety.
 
