@@ -23,7 +23,7 @@ Self-hosted gift lists (guest lists, wishlists, "gifts to give"). These are the 
 ## Testing
 
 - `npm test` runs the Node tests (each file starts real servers on random ports). Installer and backup tests need Docker: `sh test/install/run.sh` and `sh test/backup/run.sh` (they also run in CI).
-- **Mutation-check every protection:** break the guard on purpose (one line), confirm a test fails, then restore it. Most security fixes here came with that step, and it caught tests that passed for the wrong reason.
+- **Mutation-check every protection** with `tools/mutate.sh FILE FROM TO TEST...`. It breaks the guard in a temporary copy and must report `CAUGHT`. `SURVIVED` means the test passes for the wrong reason. Make the mutation remove the *guard*, not crash the code (a `ReferenceError` "catches" anything).
 - Verify UI changes in a real browser (Playwright, as in `tools/screenshots/`), on both phone and desktop widths.
 - Tests that need a local server for previews or notifications use the explicit test hooks (`preview.__test`, `previewQueue.__test`, `NOTIFY_ALLOWED_HOSTS=127.0.0.1`), never by loosening the guards.
 
@@ -44,4 +44,5 @@ Self-hosted gift lists (guest lists, wishlists, "gifts to give"). These are the 
 ## Reviews and releases
 
 - For outside security reviews: confirm every claim in the code first, fix what's real with a test and a mutation check, and argue with evidence when a proposal would hurt real deployments.
+- Outside reviews follow `.claude/skills/giftly-security-review/SKILL.md`.
 - Releases follow `.claude/skills/giftly-release/SKILL.md`. In short: CI green on `main` **before** tagging, then the tag, the release page, and a check that the image exists.
