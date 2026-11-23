@@ -285,6 +285,13 @@ const migrations = [
   CREATE INDEX list_sources_wishlist ON list_sources(wishlist_id);
   INSERT INTO list_sources (list_id, wishlist_id) SELECT id, source_wishlist_id FROM lists WHERE source_wishlist_id IS NOT NULL;
   `,
+  // v16 (3.3.2): guest sessions use a random, never-reused token instead of the row id
+  // (SQLite may reuse the id of a deleted guest, and every list starts at the same epoch).
+  `
+  ALTER TABLE guests ADD COLUMN token TEXT;
+  UPDATE guests SET token = lower(hex(randomblob(16)));
+  CREATE UNIQUE INDEX guests_token ON guests(token);
+  `,
 ];
 
 {
@@ -425,7 +432,13 @@ export const lists = {
 
 // ---------- guests ----------
 
+/** 128 random bits: what a guest's cookie points to (never reused, unlike row ids). */
+const guestToken = () => randomBytes(16).toString('base64url');
+
 export const guests = {
+  /** The guest a cookie entry names: by token, and only if it belongs to that list. */
+  bySession: (token, listId) => (typeof token === 'string' && token.length >= 20
+    ? db.prepare('SELECT * FROM guests WHERE token = ? AND list_id = ?').get(token, listId) ?? null : null),
   get(id) {
     return db.prepare('SELECT * FROM guests WHERE id = ?').get(id);
   },
@@ -444,8 +457,8 @@ export const guests = {
         guest = { ...existing, isNew: existing.last_seen === 0 }; // 0 = created by an admin, never visited
       } else {
         const id = Number(db.prepare(
-          'INSERT INTO guests (list_id, name, created_at, last_seen) VALUES (?, ?, ?, ?)'
-        ).run(listId, name, now(), now()).lastInsertRowid);
+          'INSERT INTO guests (list_id, name, token, created_at, last_seen) VALUES (?, ?, ?, ?, ?)'
+        ).run(listId, name, guestToken(), now(), now()).lastInsertRowid);
         guest = { ...guests.get(id), isNew: true };
       }
       // Reservations made for this name without a guest (older admin reservations) become theirs.
@@ -458,8 +471,8 @@ export const guests = {
   placeholder(listId, name) {
     const existing = db.prepare('SELECT * FROM guests WHERE list_id = ? AND name = ?').get(listId, name);
     if (existing) return existing;
-    const id = Number(db.prepare('INSERT INTO guests (list_id, name, created_at, last_seen) VALUES (?, ?, ?, 0)')
-      .run(listId, name, now()).lastInsertRowid);
+    const id = Number(db.prepare('INSERT INTO guests (list_id, name, token, created_at, last_seen) VALUES (?, ?, ?, ?, 0)')
+      .run(listId, name, guestToken(), now()).lastInsertRowid);
     return guests.get(id);
   },
   touch(id) {

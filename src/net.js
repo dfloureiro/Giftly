@@ -5,19 +5,69 @@ import dns from 'node:dns';
 import net from 'node:net';
 import { config } from './config.js';
 
-/** Loopback, private, link-local, CGNAT, multicast and other non-public addresses. */
-export function isPrivateIp(ip) {
-  if (net.isIPv4(ip)) {
-    const [a, b] = ip.split('.').map(Number);
-    return a === 0 || a === 10 || a === 127 || a >= 224 ||
-      (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) ||
-      (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) ||
-      (a === 192 && b === 0) || (a === 198 && (b === 18 || b === 19));
+// ---------- non-public addresses ----------
+
+const BLOCKED = new net.BlockList();
+for (const [addr, prefix] of [
+  ['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16],
+  ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15], ['224.0.0.0', 4], ['240.0.0.0', 4],
+]) BLOCKED.addSubnet(addr, prefix, 'ipv4');
+for (const [addr, prefix] of [
+  // IPv4-mapped (::ffff:0:0/96) and IPv4-compatible (::/96) are NOT listed: a BlockList IPv6 rule
+  // for them also matches every plain IPv4 address. normalizeAddress turns them into IPv4 first.
+  ['::', 128], ['::1', 128], ['64:ff9b::', 96], ['64:ff9b:1::', 48], // unspecified, loopback, NAT64
+  ['100::', 64], ['2001::', 32], ['2002::', 16], // discard, Teredo, 6to4
+  ['fc00::', 7], ['fe80::', 10], ['fec0::', 10], ['ff00::', 8], // unique local, link-local, site-local, multicast
+]) BLOCKED.addSubnet(addr, prefix, 'ipv6');
+
+/** The 8 groups of an IPv6 address (handles "::" and a trailing dotted IPv4), or null. */
+function ipv6Groups(ip) {
+  let s = ip;
+  const dotted = /(\d+\.\d+\.\d+\.\d+)$/.exec(s);
+  if (dotted) {
+    if (!net.isIPv4(dotted[1])) return null;
+    const [a, b, c, d] = dotted[1].split('.').map(Number);
+    s = s.slice(0, -dotted[1].length) + `${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
   }
-  const v = String(ip).toLowerCase();
-  if (v.startsWith('::ffff:')) return isPrivateIp(v.slice(7));
-  return v === '::' || v === '::1' || v.startsWith('fc') || v.startsWith('fd') ||
-    v.startsWith('fe8') || v.startsWith('fe9') || v.startsWith('fea') || v.startsWith('feb') || v.startsWith('ff');
+  const halves = s.split('::');
+  if (halves.length > 2) return null;
+  const part = (x) => (x ? x.split(':') : []);
+  const head = part(halves[0]);
+  const tail = halves.length === 2 ? part(halves[1]) : [];
+  const fill = 8 - head.length - tail.length;
+  if (halves.length === 1 ? head.length !== 8 : fill < 0) return null;
+  const groups = [...head, ...Array(halves.length === 2 ? fill : 0).fill('0'), ...tail].map((g) => parseInt(g, 16));
+  return groups.length === 8 && groups.every((g) => g >= 0 && g <= 0xffff) ? groups : null;
+}
+
+/**
+ * One canonical form for comparisons: brackets and zone removed, lower case, and IPv6 forms
+ * that carry an IPv4 address (::ffff:a.b.c.d, ::ffff:7f00:1, ::a.b.c.d) turned into that IPv4.
+ */
+export function normalizeAddress(raw) {
+  let ip = String(raw ?? '').trim().replace(/^\[|\]$/g, '').toLowerCase();
+  ip = ip.replace(/%.*$/, '');
+  if (net.isIPv4(ip)) return ip;
+  if (!net.isIPv6(ip)) return ip;
+  const g = ipv6Groups(ip);
+  if (!g) return ip;
+  const v4 = (hi, lo) => `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+  const zeros = (n) => g.slice(0, n).every((x) => x === 0);
+  if (zeros(5) && g[5] === 0xffff) return v4(g[6], g[7]); // IPv4-mapped
+  if (zeros(6) && (g[6] || g[7] > 1)) return v4(g[6], g[7]); // IPv4-compatible (not :: or ::1)
+  return g.map((x) => x.toString(16)).join(':');
+}
+
+/**
+ * Loopback, private, link-local, CGNAT, multicast, documentation and other non-public
+ * addresses, in any notation (IPv4-mapped/compatible IPv6, NAT64, 6to4, Teredo…).
+ * Anything that isn't a valid IP address counts as non-public too.
+ */
+export function isPrivateIp(raw) {
+  const ip = normalizeAddress(raw);
+  if (net.isIPv4(ip)) return BLOCKED.check(ip, 'ipv4');
+  if (net.isIPv6(ip)) return BLOCKED.check(ip, 'ipv6');
+  return true;
 }
 
 /** DNS lookup that refuses private addresses — used by http(s).request, so it also covers DNS rebinding. */
@@ -38,16 +88,16 @@ export function safeLookup(hostname, options, cb) {
  */
 export const trustedProxyPeer = (remoteAddress) => config.trustProxy && !!remoteAddress && isPrivateIp(remoteAddress);
 
-const bare = (host) => String(host).replace(/^\[|\]$/g, '').toLowerCase();
+const bare = (host) => normalizeAddress(host);
 
 /** Hosts the operator explicitly allowed for notifications on the local network (NOTIFY_ALLOWED_HOSTS). */
-export const notifyHostAllowed = (host) => config.notifyAllowedHosts.includes(bare(host));
+export const notifyHostAllowed = (host) => config.notifyAllowedHosts.map(normalizeAddress).includes(bare(host));
 
 /** Is this notification URL's host obviously local (checked when saving; DNS is checked when sending)? */
 export function isLocalNotifyHost(host) {
   const h = bare(host);
   if (notifyHostAllowed(h)) return false;
-  return h === 'localhost' || h.endsWith('.localhost') || (net.isIP(h) > 0 && isPrivateIp(h));
+  return h === 'localhost' || h.endsWith('.localhost') || h === 'localhost.' || (net.isIP(h) > 0 && isPrivateIp(h));
 }
 
 /**

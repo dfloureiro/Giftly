@@ -26,17 +26,18 @@ const TIMEOUT_MS = 10_000;
 
 export { isPrivateIp };
 
-function get(url, { limit, accept }, redirects = 0) {
+// `allowPrivate` exists only for the tests' local servers (see __test below); nothing else sets it.
+function get(url, { limit, accept, allowPrivate = false }, redirects = 0) {
   return new Promise((resolve, reject) => {
     let u;
     try { u = new URL(url); } catch { return reject(new Error('Bad URL')); }
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return reject(new Error('Bad protocol'));
-    if (net.isIP(u.hostname.replace(/^\[|\]$/g, '')) && isPrivateIp(u.hostname.replace(/^\[|\]$/g, ''))) {
-      return reject(new Error('Refusing private address'));
-    }
+    // IP literals skip DNS (so safeLookup never sees them): check them here, in any notation.
+    const host = u.hostname.replace(/^\[|\]$/g, '');
+    if (!allowPrivate && net.isIP(host) && isPrivateIp(host)) return reject(new Error('Refusing private address'));
     const lib = u.protocol === 'https:' ? https : http;
     const req = lib.get(u, {
-      lookup: safeLookup,
+      lookup: allowPrivate ? undefined : safeLookup,
       timeout: TIMEOUT_MS,
       headers: {
         'User-Agent': UA,
@@ -48,7 +49,10 @@ function get(url, { limit, accept }, redirects = 0) {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         res.resume();
         if (redirects >= 5) return reject(new Error('Too many redirects'));
-        return resolve(get(new URL(res.headers.location, u).toString(), { limit, accept }, redirects + 1));
+        // A shop may send any garbage here; this runs outside the promise executor, so it must not throw.
+        let next;
+        try { next = new URL(res.headers.location, u).toString(); } catch { return reject(new Error('Bad redirect')); }
+        return resolve(get(next, { limit, accept, allowPrivate }, redirects + 1));
       }
       if (res.statusCode !== 200) {
         res.resume();
@@ -304,3 +308,6 @@ export async function fetchPreview(pageUrl, imageUrl, { wantImage = true } = {})
   const file = src ? await downloadImage(src) : null;
   return { file, title: meta.title, ...price };
 }
+
+/** For tests only: fetch from a local test server (the private-address guard is tested separately). */
+export const __test = { get: (url) => get(url, { limit: 100_000, accept: '*/*', allowPrivate: true }) };

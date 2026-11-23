@@ -204,13 +204,16 @@ function route(method, path, handler, { auth } = {}) {
 // ----- guest -----
 //
 // Each list has a secret link /l/<token>. Guests only type their name.
-// The guest cookie holds [guestId, listEpoch] pairs, so one browser can be in several lists.
+// The guest cookie (signed) holds [guestToken, listId, listEpoch] entries, so one browser can be in
+// several lists. The token is random and never reused; the list id and epoch must both match.
 
 const MAX_GUEST_LISTS = 20;
 
 function guestEntries(ctx) {
   const p = tokens.verifyGuest(ctx.cookies[GUEST_COOKIE]);
-  return Array.isArray(p?.s) ? p.s.filter((e) => Array.isArray(e) && e.length === 2) : [];
+  // Older cookies ([guestId, epoch]) are no longer accepted: the guest just types their name again.
+  return Array.isArray(p?.s) ? p.s.filter((e) => Array.isArray(e) && e.length === 3
+    && typeof e[0] === 'string' && Number.isInteger(e[1]) && Number.isInteger(e[2])) : [];
 }
 
 function guestCookie(ctx, entries) {
@@ -222,10 +225,10 @@ function guestCookie(ctx, entries) {
 /** All lists this browser is currently in, as { guest, list }. */
 function guestSessions(ctx) {
   const out = [];
-  for (const [g, e] of guestEntries(ctx)) {
-    const guest = guests.get(g);
-    const list = guest && lists.get(guest.list_id);
-    if (list && !list.archived && list.epoch === e) out.push({ guest, list });
+  for (const [t, listId, e] of guestEntries(ctx)) {
+    const guest = guests.bySession(t, listId);
+    const list = guest && lists.get(listId);
+    if (list && guest.list_id === list.id && !list.archived && list.epoch === e) out.push({ guest, list });
   }
   return out;
 }
@@ -233,9 +236,10 @@ function guestSessions(ctx) {
 /** May this browser see a stored image? Admins (signed in) see all; guests only their lists' images. */
 function canSeeImage(cookies, file) {
   if (sessions.user(cookies[SESSION_COOKIE])) return true;
-  for (const [g, e] of guestEntries({ cookies })) {
+  for (const [t, listId, e] of guestEntries({ cookies })) {
     if (db.prepare(`SELECT 1 FROM items i JOIN guests gu ON gu.list_id = i.list_id JOIN lists l ON l.id = i.list_id
-        WHERE gu.id = ? AND l.epoch = ? AND l.archived = 0 AND i.image_file = ? AND i.pending = 0 LIMIT 1`).get(g, e, file)) return true;
+        WHERE gu.token = ? AND l.id = ? AND l.epoch = ? AND l.archived = 0 AND i.image_file = ? AND i.pending = 0 LIMIT 1`)
+      .get(t, listId, e, file)) return true;
   }
   return false;
 }
@@ -281,12 +285,12 @@ route('POST', '/l/:token/join', (ctx) => {
   if (!name) return html(ctx.res, views.joinPage(ctx, { list, name, error: ctx.t('login.noName') }), 400);
   const guest = guests.findOrCreate(list.id, name);
   if (guest.isNew) notify('join', { list, guest });
-  const others = guestEntries(ctx).filter(([g]) => guests.get(g)?.list_id !== list.id);
-  redirect(ctx.res, `/l/${list.token}`, [guestCookie(ctx, [...others, [guest.id, list.epoch]])]);
+  const others = guestEntries(ctx).filter(([, listId]) => listId !== list.id);
+  redirect(ctx.res, `/l/${list.token}`, [guestCookie(ctx, [...others, [guest.token, list.id, list.epoch]])]);
 });
 
 route('POST', '/l/:token/logout', (ctx) => {
-  const keep = guestEntries(ctx).filter(([g]) => g !== ctx.session.guest.id);
+  const keep = guestEntries(ctx).filter(([t]) => t !== ctx.session.guest.token);
   redirect(ctx.res, `/l/${ctx.session.list.token}`, [guestCookie(ctx, keep)]);
 }, { auth: 'guest' });
 
@@ -938,6 +942,13 @@ const server = http.createServer((req, res) => {
     if (!res.headersSent) send(res, err.status || 500, 'Error', { 'Content-Type': 'text/plain' });
     else res.end();
   });
+});
+
+// Last line of defence: a bug in a background job must never take the site down silently.
+process.on('unhandledRejection', (err) => console.error('Unhandled rejection:', err));
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception, exiting (Docker restarts Giftly):', err);
+  process.exit(1);
 });
 
 server.listen({ port: config.port, host: config.host }, () => {
