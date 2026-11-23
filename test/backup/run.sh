@@ -29,9 +29,9 @@ B0=$(find "$WORK/g/backups" -name 'giftly-backup-*.tar.gz' | sort | head -n 1)
 mkdir -p "$WORK/b0keep" && mv "$B0" "$WORK/b0keep/" && B0="$WORK/b0keep/$(basename "$B0")"
 data seed || exit 1
 # A backup made by the previous backup.sh (3.4.2 format): still restorable.
-git -C "$ROOT" show 4df9c30:scripts/backup.sh > "$WORK/backup-342.sh"
+# (test/backup/backup-3.4.2.sh is that release's script, kept as a fixture: CI clones without history.)
 mkdir -p "$WORK/old"
-in_dir env BACKUP_DIR="$WORK/old" sh "$WORK/backup-342.sh" > "$WORK/bold.log" 2>&1 || { cat "$WORK/bold.log"; exit 1; }
+in_dir env BACKUP_DIR="$WORK/old" sh "$ROOT/test/backup/backup-3.4.2.sh" > "$WORK/bold.log" 2>&1 || { cat "$WORK/bold.log"; exit 1; }
 BOLD=$(find "$WORK/old" -name 'giftly-backup-*.tar.gz' | head -n 1)
 sleep 1
 
