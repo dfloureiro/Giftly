@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -23,6 +24,7 @@ import { users, sessions, links, checkLogin, hashPassword, verifyPassword, valid
 import { newSecret, verifyTotp, otpauthUri, newRecoveryCodes } from './totp.js';
 import { qrSvg } from './qr.js';
 import { bootstrapAccounts } from './bootstrap.js';
+import { APP_VERSION, pruneReleases, readManifest, writeFileAtomic } from './release.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const GUEST_COOKIE = 'giftly_guest';
@@ -904,6 +906,21 @@ route('GET', '/healthz', (ctx) => {
   send(ctx.res, 200, 'ok', { 'Content-Type': 'text/plain' });
 });
 
+// Which data release this process serves (checked against its manifest when first opened), for
+// restore, upgrade and rollback (scripts/served.js). Only for whoever can read the token file,
+// written at start in the data folder; never public. /healthz alone passes on an empty database.
+const DATA_TOKEN = randomBytes(32).toString('hex');
+route('GET', '/healthz/data', (ctx) => {
+  const auth = String(ctx.req.headers.authorization || '');
+  if (!safeEqual(auth, `Bearer ${DATA_TOKEN}`)) return notFound(ctx);
+  db.prepare('SELECT 1').get();
+  const m = readManifest(config.dataRoot, config.release) || {};
+  send(ctx.res, 200, JSON.stringify({
+    release: config.release, origin: m.origin ?? null, parent: m.parent ?? null, verified_at: m.verified_at ?? null,
+    schema: db.prepare('PRAGMA user_version').get().user_version, giftly: APP_VERSION,
+  }), { 'Content-Type': 'application/json' });
+});
+
 function notFound(ctx) {
   html(ctx.res, views.errorPage(ctx, ctx.t('error.notFound')), 404);
 }
@@ -1020,6 +1037,8 @@ process.on('uncaughtException', (err) => {
 });
 
 server.listen({ port: config.port, host: config.host }, () => {
+  writeFileAtomic(join(config.dataRoot, '.healthz-token'), `${DATA_TOKEN}\n`, 0o600);
+  try { pruneReleases(config.dataRoot); } catch (err) { console.error('Removing old data releases failed:', err.message); }
   startPreviewQueue();
   startReminders();
   const { address, port } = server.address();

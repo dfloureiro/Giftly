@@ -16,9 +16,10 @@
 # The file always holds password hashes and two-factor secrets: keep it private (it is written
 # as 600) and encrypt it if it leaves your machines.
 #
-# Giftly keeps running. Each backup holds exactly the photos its database snapshot uses, checked
-# before anything is written; if one is replaced while the backup runs, it retries from a fresh
-# snapshot. A backup that can't be completed is not written, and old backups are not pruned.
+# Giftly keeps running. Each backup holds the current data release: exactly the photos its
+# database snapshot uses, with a fingerprint that restore.sh checks; if a photo is replaced
+# while the backup runs, it retries from a fresh snapshot. A backup that can't be completed is
+# not written, and old backups are not pruned. Restore it with restore.sh (Giftly 4 or newer).
 set -eu
 
 say() { printf '%s\n' "$*"; }
@@ -52,75 +53,17 @@ OUT="$BACKUP_DIR/giftly-backup-$STAMP.tar.gz"
 TMP=$(umask 077 && mktemp "$BACKUP_DIR/.giftly-backup.XXXXXX")
 trap 'rm -f "$TMP"' EXIT
 
-# Inside the container (script on stdin, archive on stdout): a consistent snapshot (VACUUM INTO,
-# safe while Giftly runs), the photos THAT snapshot uses, a check that they are all there, then
-# a manifest and checksums, streamed out as one tar.gz. The staging folder is always removed.
-# Photo files are never changed once written, only deleted when nothing uses them any more; so a
-# photo missing here was replaced meanwhile, and a fresh snapshot no longer needs it.
+# Inside the container (scripts/backup.js, archive on stdout): a consistent snapshot of the
+# current data release (VACUUM INTO, safe while Giftly runs), exactly the photos THAT snapshot
+# uses, a fingerprint, manifest and checksums. It retries if a photo is replaced meanwhile, and
+# fails rather than write an incomplete backup.
 # GIFTLY_BACKUP_TEST_HOOK is for the tests only: a command run after each snapshot (ATTEMPT=n).
-docker exec -i -e STAMP="$STAMP" -e SECRETS="$SECRETS" -e ALLOW_MISSING="$ALLOW_MISSING" \
-  -e HOOK="${GIFTLY_BACKUP_TEST_HOOK:-}" "$CID" sh -s > "$TMP" <<'INNER' || die "the backup failed (see above); nothing was written, and no old backup was removed"
-set -eu
-fail() { printf 'Error: %s\n' "$*" >&2; exit 3; }
-T=$(mktemp -d "/data/.backup-$STAMP.XXXXXX")
-trap 'rm -rf "$T"' EXIT
-attempt=1
-while :; do
-  rm -rf "$T/giftly.db" "$T/images"; mkdir -p "$T/images"
-  T="$T" node -e '
-    const { DatabaseSync } = require("node:sqlite");
-    const fs = require("node:fs");
-    const T = process.env.T;
-    const live = new DatabaseSync("/data/giftly.db");
-    live.exec(`VACUUM INTO '\''${T}/giftly.db'\''`);
-    live.close();
-    // Every photo the snapshot uses (list gifts, gifts to give, wishlist items).
-    const db = new DatabaseSync(`${T}/giftly.db`, { readOnly: true });
-    const refs = new Set();
-    for (const t of ["items", "gifts", "wishlist_items"]) {
-      if (!db.prepare(`SELECT 1 FROM pragma_table_info(?) WHERE name = ?`).get(t, "image_file")) continue;
-      for (const r of db.prepare(`SELECT DISTINCT image_file AS f FROM ${t} WHERE image_file IS NOT NULL AND image_file != ?`).all("")) refs.add(r.f);
-    }
-    const bad = [...refs].filter((f) => !/^[a-z0-9]{8,40}\.(jpg|png|webp|gif|avif)$/.test(f));
-    if (bad.length) { console.error(`Error: the database names unexpected photo files: ${bad.join(" ")}`); process.exit(3); }
-    fs.writeFileSync(`${T}/.refs`, [...refs].sort().map((f) => f + "\n").join(""));
-    fs.writeFileSync(`${T}/.schema`, String(db.prepare("PRAGMA user_version").get().user_version));
-  '
-  if [ -n "$HOOK" ]; then ATTEMPT=$attempt sh -c "$HOOK" </dev/null >&2; fi
-  missing=''
-  while IFS= read -r f; do
-    cp -p "/data/images/$f" "$T/images/$f" 2>/dev/null || missing="$missing $f"
-  done < "$T/.refs"
-  [ -n "$missing" ] || break
-  [ "$attempt" -lt 3 ] || break
-  printf 'Note: photo(s)%s changed while backing up; trying again from a fresh snapshot.\n' "$missing" >&2
-  attempt=$((attempt + 1))
-done
-if [ -n "$missing" ]; then
-  if [ "$ALLOW_MISSING" != 1 ]; then
-    fail "the database uses photo(s) missing from /data/images:$missing. Put them back, or replace or remove the photo on the gift that uses each one; or run with --allow-missing-images to back up without them."
-  fi
-  printf 'Warning: backing up WITHOUT these missing photo(s) (--allow-missing-images):%s\n' "$missing" >&2
-fi
-# The archive must hold exactly the photos the snapshot uses (minus any allowed missing ones).
-expected=$(for f in $(cat "$T/.refs"); do case " $missing " in *" $f "*) ;; *) echo "$f" ;; esac; done)
-got=$(cd "$T/images" && find . -type f | sed 's|^\./||' | sort)
-[ "$expected" = "$got" ] || fail "the photos copied don't match the ones the database uses"
-for f in $got; do [ -s "$T/images/$f" ] || fail "photo $f is empty"; done
-if [ "$SECRETS" = 1 ] && [ -f /data/.session-secret ]; then cp -p /data/.session-secret "$T/session-secret"; fi
-cd "$T"
-version=$(node -p 'require("/app/package.json").version')
-images=$(printf '%s' "$got" | grep -c . || true)
-missing_json=''
-if [ -n "$missing" ]; then
-  missing_json=",\"missing_images\":[$(for f in $missing; do printf '"%s",' "$f"; done | sed 's/,$//')]"
-fi
-printf '{"format":1,"giftly":"%s","schema":%s,"created_at":"%s","images":%s,"includes_secrets":%s%s}\n' \
-  "$version" "$(cat .schema)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$images" "$([ "$SECRETS" = 1 ] && echo true || echo false)" "$missing_json" > manifest.json
-rm -f .schema .refs
-find . -type f ! -name SHA256SUMS | sed "s|^\./||" | sort | while read -r f; do sha256sum "$f"; done > SHA256SUMS
-tar czf - .
-INNER
+set --
+[ "$SECRETS" = 1 ] && set -- "$@" --include-secrets
+[ "$ALLOW_MISSING" = 1 ] && set -- "$@" --allow-missing-images
+docker exec -i -e GIFTLY_BACKUP_TEST_HOOK="${GIFTLY_BACKUP_TEST_HOOK:-}" "$CID" \
+  node --disable-warning=ExperimentalWarning /app/scripts/backup.js "$@" > "$TMP" \
+  || die "the backup failed (see above); nothing was written, and no old backup was removed"
 
 [ -s "$TMP" ] || die "the backup came out empty; nothing was written"
 chmod 600 "$TMP"

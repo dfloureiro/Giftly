@@ -75,9 +75,11 @@ One step, on any machine with Docker (a NAS, a Raspberry Pi, a server):
 curl -fsSL https://raw.githubusercontent.com/dfloureiro/Giftly/main/install.sh -o install.sh && sh install.sh
 ```
 
-It asks for your domain and a [Cloudflare Tunnel](#exposing-it-with-cloudflare-tunnel) token (both optional), creates a strong admin password, starts Giftly and shows you how to log in. Without a tunnel, Giftly is only reachable from that machine at <http://localhost:3000/admin>. Files come from the latest release. Running it again updates Giftly and never changes your `.env` or `cloudflared.env`, nor a `compose.yaml` you edited (put your own changes in `compose.override.yaml`). It checks that Giftly and the tunnel really came up. Before an update starts the new version, it stops Giftly for a moment and saves a verified recovery point of your data in `data/pre-upgrade-<date>/` (the last 3 are kept). If the update leaves Giftly or the tunnel down, it puts back your settings, the exact images that were working (even if the new one has the same tag) and, if the new version already ran, the data from the recovery point, then tells you why. Whatever the failed version wrote is kept in `data/failed-upgrade-<date>/`, never deleted. A failed download changes nothing. You can read [the script](install.sh) first. Needs Docker Compose 2.24 or newer.
+It asks for your domain and a [Cloudflare Tunnel](#exposing-it-with-cloudflare-tunnel) token (both optional), creates a strong admin password, starts Giftly and shows you how to log in. Without a tunnel, Giftly is only reachable from that machine at <http://localhost:3000/admin>. Files come from the latest release. You can read [the script](install.sh) first. Needs Docker Compose 2.24 or newer.
 
-The image follows `ghcr.io/dfloureiro/giftly:3`: fixes and new features within 3.x, never a breaking 4.0. To pin an exact version, set `GIFTLY_TAG=3.4.0` in `.env`.
+Running it again updates Giftly. It never changes your `.env` or `cloudflared.env`. It manages `compose.yaml` itself: the images are named **by digest** (the exact image, not a tag that can move), and the file is rewritten on every update, so put your own changes in `compose.override.yaml` (a `compose.yaml` you had edited is kept next to it as `compose.yaml.local-<date>`). An update counts as successful only when Giftly serves your data (not just answers), and the tunnel is connected if you use one. Otherwise it puts back your settings, the exact previous images (by digest) and the [data release](#data-and-recovery) they served, checks that they work again, and tells you why. A failed download changes nothing.
+
+The image follows `ghcr.io/dfloureiro/giftly:4`: fixes and new features within 4.x, never a breaking 5.0. To follow an exact version, set `GIFTLY_TAG=4.0.0` in `.env`.
 
 Or by hand with Docker Compose:
 
@@ -210,13 +212,41 @@ Optionally, protect `/admin` with a Cloudflare Access policy for extra safety.
 - **Order:** drag gifts by their handle (⋮⋮) to reorder a list or your wishlist, with the mouse or a finger. The ↑/↓ buttons remain as a fallback without JavaScript.
 - **Picks:** picks are atomic, so if two people click at the same moment, only one gets the gift. Guests can give up their own picks. In the admin you can release any gift.
 - **Reserving on someone's behalf:** use *Reserve* on a gift and type a name (or pick a guest who already joined), for someone who told you in person. The reservation belongs to that guest: when they open the list with that name, they see it in their picks ("Reserved for you by …") and can give it up. The other admins are notified.
-- **Images:** when you add a link, the server fetches the page in the background, reads its Open Graph, Twitter card, JSON-LD or microdata product image (with Amazon-specific fallbacks), and **stores a copy of the image** in `/data/images`. Guests never load anything from the shops. Some shops block automated requests (e.g. Akamai-protected ones); in that case, **upload a photo** (resized in the browser) or paste an image link. An image is only ever replaced by another image.
+- **Images:** when you add a link, the server fetches the page in the background, reads its Open Graph, Twitter card, JSON-LD or microdata product image (with Amazon-specific fallbacks), and **stores a copy of the image** with your data. Guests never load anything from the shops. Some shops block automated requests (e.g. Akamai-protected ones); in that case, **upload a photo** (resized in the browser) or paste an image link. An image is only ever replaced by another image.
 - **Prices:** prices only come from the shop link (`product:price`, JSON-LD offers, microdata, Amazon page data) and there is no price field. Available gifts are re-checked once a day, and the last known price is kept if a check fails. Gifts without a link, or from shops that block us, show no price. Requests to private and internal addresses are refused, and only JPEG, PNG, WebP, GIF and AVIF up to 5 MB are accepted.
 - **Archive:** archive a list to close it without deleting anything.
 
-## Backups
+## Data and recovery
 
-Everything lives in `/data`: the database (`giftly.db`) and the photos (`images/`). `scripts/backup.sh` saves both into one file, **outside** that folder, while Giftly keeps running:
+Everything Giftly keeps is in `/data` (the `data/` folder next to `compose.yaml`), in **releases**:
+
+```
+data/
+  current -> releases/2026-11-23T15-00-00-000Z      the release Giftly serves
+  releases/
+    2026-11-23T15-00-00-000Z/   giftly.db, images/, .session-secret, manifest.json
+    2026-11-20T09-00-00-000Z/   …
+```
+
+Restoring a backup and upgrading the database never change the data they might need to return to. Each one creates a **new release**, and switching between releases is one atomic step (the `current` link). Each release has a `manifest.json` with the Giftly version, the database schema, where it came from (`initial`, `upgrade`, `restore`), its parent release, and a fingerprint of its data. Giftly refuses to serve a release that doesn't match its fingerprint the first time it opens it.
+
+- **Upgrades:** when a new Giftly needs a newer database schema, it copies the current release (photos are hard links, so they take no extra space), upgrades **the copy**, and only then switches `current` to it. If that fails, it doesn't start, and `current` still points to the untouched previous release. This works the same with `install.sh`, plain Compose or `docker run`.
+- **Retention:** the newest 3 releases are kept, plus the current one and its parent. Older ones are removed when Giftly starts.
+- **From Giftly 3.x:** on its first start, Giftly 4 *copies* the old `data/giftly.db` and `data/images/` into the first release. The old files stay where they are, untouched, so going back to 3.x still finds them. (If a 3.x runs on them again, the next Giftly 4 copies them again.) Once you're happy with 4.x, you can delete `data/giftly.db*`, `data/images/`, `data/.session-secret` and any `data/pre-upgrade-*`, `data/pre-restore-*`, `data/failed-*` folders left by 3.x.
+
+**Rolling back by hand:** stop Giftly, point `current` at the release you want, put the previous image back, and start it:
+
+```sh
+docker compose stop giftly
+docker compose run --rm --no-deps --entrypoint node giftly scripts/release.js list     # * = current
+docker compose run --rm --no-deps --entrypoint node giftly scripts/release.js switch 2026-11-20T09-00-00-000Z
+# install.sh users: the previous compose.yaml (with its image digests) is in .giftly-backup/<date>/
+docker compose up -d
+```
+
+### Backups
+
+`scripts/backup.sh` saves the current release (database, photos, fingerprint) into one file, **outside** the data folder, while Giftly keeps running:
 
 ```sh
 cd giftly                                   # the folder with compose.yaml
@@ -225,12 +255,13 @@ curl -fsSLO https://raw.githubusercontent.com/dfloureiro/Giftly/main/scripts/res
 sh backup.sh --keep 14                      # → backups/giftly-backup-<date>.tar.gz (newest 14 kept)
 ```
 
-Not using Compose (e.g. Portainer)? Add `GIFTLY_CONTAINER=<container name>`. `BACKUP_DIR` chooses where the file goes.
+Not using Compose (e.g. Portainer)? Add `GIFTLY_CONTAINER=<container name>`. `BACKUP_DIR` chooses where the file goes. The work is done inside the container by `scripts/backup.js`.
 
 - **Copy it to another machine as well.** A backup on the same disk is lost with that disk. For example, use `rsync -a backups/ nas:/backups/giftly/`, [restic](https://restic.net), or a synced folder.
 - The file contains password hashes and two-factor secrets. It's written as private (`600`): keep it that way, and encrypt it if it leaves your machines.
-- By default it leaves out the session secret, so after a restore everyone just signs in again (guests by typing their name). `--include-secrets` keeps them signed in, which makes the file more sensitive.
-- A backup is only written if it is complete: it holds exactly the photos its database uses, checked before the file is written. If a photo is replaced while it runs, it tries again from a fresh snapshot. If it still can't be completed, it says which photos are missing, exits with an error (so cron notices), writes nothing and doesn't prune older backups. `--allow-missing-images` writes it anyway and lists the missing photos in the backup.
+- By default it leaves out the session secret; a restore then keeps the one in use, so on the same machine nobody is signed out. `--include-secrets` brings the backup's own secret along (useful on a new machine, where guests and admins would otherwise sign in again), which makes the file more sensitive.
+- A backup is only written if it is complete: it holds exactly the photos its database uses. If a photo is replaced while it runs, it tries again from a fresh snapshot. If it still can't be completed, it says which photos are missing, exits with an error (so cron notices), writes nothing and doesn't prune older backups. `--allow-missing-images` writes it anyway and lists the missing photos in the backup.
+- **Backups from Giftly 3.x can't be restored by Giftly 4.** Take a new backup after updating.
 
 **Daily, with cron** (`crontab -e`):
 
@@ -244,9 +275,11 @@ Not using Compose (e.g. Portainer)? Add `GIFTLY_CONTAINER=<container name>`. `BA
 sh restore.sh backups/giftly-backup-20261123-033000.tar.gz
 ```
 
-Before changing anything, it checks the file (checksums, the database itself, and that every photo it uses is there) and refuses a damaged or incomplete backup or one from a newer Giftly. (`--allow-missing-images` restores one with missing photos anyway.) Then it copies the backup next to the data, stops Giftly, moves the current data aside to `/data/pre-restore-<date>/`, puts the backup in place and starts Giftly again. An older backup is upgraded automatically.
+1. While Giftly keeps running, it checks the backup and unpacks it into a **new release**. It checks that the archive holds only the expected files, every checksum, that it doesn't come from a newer Giftly, the database itself, that every photo it uses is there, and the fingerprint. A backup that fails any check is refused before Giftly is stopped, and nothing changes. (`--allow-missing-images` accepts one with missing photos.)
+2. It stops Giftly, switches `current` to the new release and starts Giftly. Restore succeeds only if Giftly then **serves that release** (an older backup is upgraded into a new release automatically).
+3. Otherwise it switches `current` back to the previous release, starts Giftly again and checks that it serves it. It still exits with an error and tells you where the failed release is (kept for inspection).
 
-If any of that fails, including Giftly not starting with the restored data, it puts the previous data back as it was, keeps the failed attempt in `/data/failed-restore-<date>/` and starts the previous Giftly again (if it was running). If even that fails, it stops and tells you where each copy is; nothing is deleted.
+The previous release is never modified. A Giftly that was stopped before the restore stays stopped: the switch is done, and Giftly checks the release when it starts.
 
 ## Development
 

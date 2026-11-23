@@ -13,6 +13,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdirSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { config } from './config.js';
+import { IMAGE_FILE_RE } from './release.js';
 
 export const IMAGE_DIR = join(config.dataDir, 'images');
 mkdirSync(IMAGE_DIR, { recursive: true });
@@ -258,7 +259,7 @@ function imageExt(buf) {
 }
 
 export const IMAGE_TYPES = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif', avif: 'image/avif' };
-export const IMAGE_FILE_RE = /^[a-z0-9]{8,40}\.(jpg|png|webp|gif|avif)$/;
+export { IMAGE_FILE_RE } from './release.js';
 
 /** Save an uploaded image (already resized by the browser). Returns the file name or throws. */
 export function saveImageBuffer(buf) {

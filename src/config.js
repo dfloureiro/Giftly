@@ -1,15 +1,19 @@
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { ensureData } from './release.js';
 
 const env = process.env;
 
-const dataDir = env.DATA_DIR || './data';
+// DATA_DIR holds the data releases; the app only ever reads and writes the one `current` points
+// to (resolved once here, before any other module opens a file).
+const dataRoot = resolve(env.DATA_DIR || './data');
+export const release = ensureData(dataRoot);
+const dataDir = release.dir;
 
 function loadSecret() {
   if (env.SESSION_SECRET) return env.SESSION_SECRET;
-  // Generate once and persist alongside the database so sessions survive restarts.
-  mkdirSync(dataDir, { recursive: true });
+  // Generate once and keep it in the data release, so it switches together with the data.
   const file = join(dataDir, '.session-secret');
   if (existsSync(file)) return readFileSync(file, 'utf8').trim();
   const secret = randomBytes(32).toString('hex');
@@ -22,7 +26,9 @@ export const config = {
   port: env.PORT ? Number(env.PORT) : 3000, // 0 = random free port (tests)
   // Unset = Node's default: all interfaces, IPv6 and IPv4 (dual-stack) when available.
   host: env.HOST || undefined,
+  dataRoot,
   dataDir,
+  release: release.name,
   // Only used on first start, to create the first account when none exists.
   bootstrapUsername: (env.ADMIN_USERNAME || 'admin').trim().toLowerCase(),
   bootstrapPassword: env.ADMIN_PASSWORD || '',
