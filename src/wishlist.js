@@ -26,7 +26,7 @@ export const wishlists = {
     return w;
   },
   /** owner_name is the admin's name, or the person's name for a person's wishlist. */
-  get: (id) => db.prepare(`SELECT w.*, COALESCE(u.name, p.name) AS owner_name FROM wishlists w
+  get: (id) => db.prepare(`SELECT w.*, COALESCE(u.name, p.name) AS owner_name, p.user_id AS person_user_id FROM wishlists w
     LEFT JOIN users u ON u.id = w.owner_id LEFT JOIN people p ON p.id = w.person_id WHERE w.id = ?`).get(id) ?? null,
   /** The wishlist of a person in "gifts to give" (created on first use). Admins use their own. */
   ofPerson(personId) {
@@ -213,23 +213,49 @@ function insertLinked(listId, wi, { pending = false } = {}) {
 /** A new wishlist item joins every list made from that wishlist (or waits for approval). */
 function addToLinkedLists(wishItemId) {
   const wi = wishItems.get(wishItemId);
-  for (const l of db.prepare('SELECT id, auto_add_new FROM lists WHERE source_wishlist_id = ? AND archived = 0').all(wi.wishlist_id)) {
+  for (const l of db.prepare(`SELECT l.id, l.auto_add_new FROM lists l JOIN list_sources ls ON ls.list_id = l.id
+      WHERE ls.wishlist_id = ? AND l.archived = 0`).all(wi.wishlist_id)) {
     insertLinked(l.id, wi, { pending: !l.auto_add_new });
   }
 }
 
 /**
- * Create a guest list from another admin's wishlist, with the chosen items in wishlist order.
- * Returns the new list id, or null if not allowed (own wishlist, or not visible).
+ * The wishlists that belong to the same recipient as `w`, as `uid` may use them: an admin's
+ * own wishlist and the ideas others keep on that admin's record in "gifts to give". The first
+ * is `w` itself. Only wishlists `uid` may view as a giver.
+ */
+export function siblingWishlists(uid, w) {
+  const out = [w];
+  if (w.owner_id) {
+    const person = people.list(uid).find((p) => p.user_id === w.owner_id);
+    if (person) out.push(wishlists.ofPerson(person.id));
+  } else if (w.person_user_id) {
+    const own = wishlists.byOwner(w.person_user_id);
+    if (own) out.push(wishlists.get(own.id));
+  }
+  return out.filter((x) => wishlists.viewableByOther(uid, x));
+}
+
+/** Ids of the lists made from (also) this wishlist. */
+export const listIdsFrom = (wishlistId) =>
+  new Set(db.prepare('SELECT list_id FROM list_sources WHERE wishlist_id = ?').all(wishlistId).map((r) => r.list_id));
+
+/**
+ * Create a guest list from a wishlist (and its siblings: an admin's own + the ideas for them),
+ * with the chosen items in wishlist order. Returns the new list id, or null if not allowed.
  */
 export function createListFromWishlist(uid, wishlistId, { title, description = '', visibility = 'private', auto_add_new = true, itemIds = null }) {
   const w = wishlists.get(wishlistId);
   if (!wishlists.viewableByOther(uid, w)) return null; // never from your own wishlist (you could never see it)
+  const sources = siblingWishlists(uid, w);
   return tx(() => {
     const id = lists.create({ title, description, owner_id: uid, visibility, source_wishlist_id: w.id, auto_add_new });
     const chosen = itemIds ? new Set(itemIds.map(Number)) : null;
-    for (const wi of db.prepare("SELECT * FROM wishlist_items WHERE wishlist_id = ? AND status = 'active' ORDER BY position, id").all(w.id)) {
-      if (!chosen || chosen.has(wi.id)) insertLinked(id, wi);
+    for (const src of sources) {
+      db.prepare('INSERT OR IGNORE INTO list_sources (list_id, wishlist_id) VALUES (?, ?)').run(id, src.id);
+      for (const wi of db.prepare("SELECT * FROM wishlist_items WHERE wishlist_id = ? AND status = 'active' ORDER BY position, id").all(src.id)) {
+        if (!chosen || chosen.has(wi.id)) insertLinked(id, wi);
+      }
     }
     return id;
   });

@@ -4,6 +4,7 @@ import { db, tx, lists } from './db.js';
 import { users } from './accounts.js';
 import {
   wishlists, wishItems, createListFromWishlist, claimForGift, REMOVE_REASONS, WISHLIST_VISIBILITIES,
+  siblingWishlists, listIdsFrom,
 } from './wishlist.js';
 import { people, occasions, gifts, occasionOptions } from './giving.js';
 import { saveImageBuffer } from './preview.js';
@@ -61,7 +62,7 @@ export function registerWishlistRoutes({ route, html, redirect, notFound, clean,
   function targetWishlist(ctx) {
     if (!ctx.body.person_id) return wishlists.ofUser(ctx.user.id);
     const person = people.get(ctx.user.id, Number(ctx.body.person_id));
-    if (!person || person.user_id) return null; // admins keep their own wishlist
+    if (!person || person.user_id === ctx.user.id) return null; // never the ideas others keep for you
     return wishlists.ofPerson(person.id);
   }
 
@@ -205,14 +206,17 @@ export function registerWishlistRoutes({ route, html, redirect, notFound, clean,
       items: wishItems.othersView(w.id, ctx.user.id),
       choices: giveChoices(ctx.user.id, person),
       preselect: String(ctx.url.searchParams.get('occasion') || ''),
-      linkedLists: lists.all(ctx.user.id).filter((l) => l.source_wishlist_id === w.id),
+      linkedLists: lists.all(ctx.user.id).filter((l) => listIdsFrom(w.id).has(l.id)),
     }));
   }, A);
+
+  /** The items to choose from: this wishlist and its sibling (an admin's own + ideas for them). */
+  const groupsFor = (uid, w) => siblingWishlists(uid, w).map((x) => ({ w: x, items: wishItems.othersView(x.id, uid) }));
 
   route('GET', '/admin/wishlists/:id/new-list', (ctx) => {
     const w = loadOthers(ctx);
     if (!w) return;
-    html(ctx.res, wv.newListPage(ctx, { wishlist: w, items: wishItems.othersView(w.id, ctx.user.id) }));
+    html(ctx.res, wv.newListPage(ctx, { wishlist: w, groups: groupsFor(ctx.user.id, w) }));
   }, A);
 
   route('POST', '/admin/wishlists/:id/new-list', (ctx) => {
@@ -220,7 +224,7 @@ export function registerWishlistRoutes({ route, html, redirect, notFound, clean,
     if (!w) return;
     const title = clean(ctx.body.title, 120);
     if (!title) {
-      return html(ctx.res, wv.newListPage(ctx, { wishlist: w, items: wishItems.othersView(w.id, ctx.user.id), error: ctx.t('admin.titleRequired') }), 400);
+      return html(ctx.res, wv.newListPage(ctx, { wishlist: w, groups: groupsFor(ctx.user.id, w), error: ctx.t('admin.titleRequired') }), 400);
     }
     const id = createListFromWishlist(ctx.user.id, w.id, {
       title,

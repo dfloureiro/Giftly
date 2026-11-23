@@ -66,5 +66,26 @@ const WISHES = [
   await emma.goto(listUrl);
   await emma.setViewportSize({ width: 980, height: 1250 });
   await emma.screenshot({ path: `${OUT}/wishlist-list.png` });
+
+  // Ideas Emma keeps for Sam (an admin) on Sam's record in "gifts to give" — Sam never sees them.
+  await emma.goto(`${B}/admin/give/people`);
+  await emma.locator('a', { hasText: 'Sam' }).first().click();
+  const person = emma.url().split('?')[0].split('#')[0];
+  for (const w of [{ t: 'Pottery workshop for two', e: '🏺', bg: ['#fed7aa', '#fdba74'] }, { t: 'Board game: Wingspan', e: '🐦', bg: ['#bae6fd', '#7dd3fc'] }]) {
+    await emma.goto(person);
+    const d = emma.locator('details.add-wish');
+    await d.locator(':scope > summary').click();
+    await d.locator('input[name=title]').fill(w.t);
+    await d.locator('[data-upload-data]').evaluate((el, v) => { el.value = v; }, await art(emma, w.e, w.bg, 320));
+    await d.locator('button[type=submit]').click();
+    await emma.waitForURL(/m=added/);
+  }
+  if (process.env.CHECK) {
+    await emma.setViewportSize({ width: 980, height: 900 });
+    await emma.goto(person);
+    await emma.screenshot({ path: `${OUT}/check-admin-person.png`, fullPage: true });
+    await emma.goto(`${B}/admin/wishlists/${wid}/new-list`);
+    await emma.screenshot({ path: `${OUT}/check-new-list.png`, fullPage: true });
+  }
   await browser.close();
 })().catch((e) => { console.error(e); process.exit(1); });

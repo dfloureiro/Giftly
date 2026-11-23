@@ -343,11 +343,19 @@ ${person.notes ? h`<p class="description">${person.notes}</p>` : ''}
 <section id="wishlist">
   <h2>🎀 ${ctx.t('wish.ofName', { name: person.name })}</h2>
   ${wish.kind === 'self' ? h`<p class="small muted">${ctx.t('wish.selfPerson')} <a href="/admin/wishlist">${ctx.t('wish.mineTitle')}</a></p>`
-    : wish.kind === 'none' ? h`<p class="small muted">${ctx.t('wish.adminPrivate', { name: person.name })}</p>`
-    : h`<p class="small muted">${wish.kind === 'admin' ? ctx.t('wish.othersIntro', { name: person.name }) : ctx.t('wish.personIntro')}</p>
+    : wish.kind === 'person' ? h`<p class="small muted">${ctx.t('wish.personIntro')}</p>
       ${wishSection(ctx, { w: wish.w, items: wish.items, choices: giveChoices, preselect, lists: wish.lists,
-        editable: wish.kind === 'person', personId: person.id, back: `/admin/give/people/${person.id}`, history: wish.history ?? [] })}`}
+        editable: true, personId: person.id, back: `/admin/give/people/${person.id}`, history: wish.history ?? [] })}`
+    : h`${wish.own ? h`<p class="small muted">${ctx.t('wish.othersIntro', { name: person.name })}</p>
+      ${wishSection(ctx, { w: wish.own.w, items: wish.own.items, choices: giveChoices, preselect, lists: wish.own.lists })}`
+      : h`<p class="small muted">${ctx.t('wish.adminPrivate', { name: person.name })}</p>`}`}
 </section>
+${wish.kind === 'admin' ? h`<section id="ideas">
+  <h2>💡 ${ctx.t('wish.ideasFor', { name: person.name })}</h2>
+  <p class="small muted">${ctx.t('wish.ideasForIntro', { name: person.name })}</p>
+  ${wishSection(ctx, { w: wish.w, items: wish.items, choices: giveChoices, preselect, lists: wish.lists,
+        editable: true, banner: !wish.own, personId: person.id, back: `/admin/give/people/${person.id}`, history: wish.history ?? [] })}
+</section>` : ''}
 
 <section>
   <h2 class="history-title">🎁 ${ctx.t('give.historyTitle')}</h2>
@@ -420,10 +428,6 @@ ${list.length ? h`<ul class="lists" id="occasion-list">
 /** "Pick from their wishlist" for people who are admins with a visible wishlist (not yourself). */
 function pickFromWishlist(ctx, person, occasionValue) {
   if (person.user_id === ctx.user.id) return '';
-  if (person.user_id) {
-    const w = wishlists.byOwner(person.user_id);
-    if (!w || w.visibility !== 'admins') return '';
-  }
   return h`<p class="small"><a href="/admin/give/people/${person.id}?occasion=${encodeURIComponent(occasionValue)}#wishlist">🎀 ${ctx.t('wish.pickFromWishlist')}</a></p>`;
 }
 

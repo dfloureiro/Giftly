@@ -81,21 +81,42 @@ test('private people: their wishlist is invisible and uneditable for other admin
   assert.equal(order.status, 404);
 });
 
-test("a person linked to an admin shows that admin's wishlist (read-only); lists from a person's wishlist hide from them if linked later", async () => {
+test("an admin's record: her own wishlist (read-only) + ideas for her she never sees; lists can mix both", async () => {
   await maria.post('/admin/wishlist/items', { title: 'Maria own wish' }, { from: '/admin/wishlist' });
   const mariaPerson = await addPerson(diogo, { name: 'Maria (person)', user_id: String(mariaUserId) });
   const page = (await diogo.get(`/admin/give/people/${mariaPerson}`)).text;
   assert.match(page, /Maria own wish/);
-  assert.ok(!page.includes('Add to the wishlist'), 'no add form: she edits her own wishlist');
-  assert.equal((await diogo.post('/admin/wishlist/items', { person_id: String(mariaPerson), title: 'x' }, { from: '/admin' })).status, 404);
+  assert.match(page, /Ideas for Maria \(person\)/);
+  const idea = await addWish(diogo, mariaPerson, 'Secret idea for Maria');
+
+  // Maria never sees nor touches the ideas for her.
+  assert.ok(!(await maria.get(`/admin/give/people/${mariaPerson}`)).text.includes('Secret idea'));
+  assert.equal((await maria.post('/admin/wishlist/items', { person_id: String(mariaPerson), title: 'x' }, { from: '/admin' })).status, 404);
+  assert.equal((await maria.post(`/admin/wishlist/items/${idea}`, { title: 'peek' }, { from: '/admin' })).status, 404);
+  const ideasWid = Number(new RegExp(`/admin/wishlists/(\\d+)/new-list`).exec(page.split('id="ideas"')[1])[1]);
+  assert.equal((await maria.get(`/admin/wishlists/${ideasWid}`)).status, 404);
+
+  // A list from both wishlists: Diogo picks items from each; new items of either join it; Maria can't see it.
+  const ownWid = await wishlistIdOf(diogo, mariaPerson);
+  const newList = (await diogo.get(`/admin/wishlists/${ownWid}/new-list`)).text;
+  assert.match(newList, /Maria own wish/);
+  assert.match(newList, /Secret idea for Maria/);
+  const ids = [...newList.matchAll(/name="items" value="(\d+)"/g)].map((m) => Number(m[1]));
+  const list = await listFrom(diogo, ownWid, ids, 'For Maria');
+  await addWish(diogo, mariaPerson, 'Later idea');
+  const guest = await joinList(server.base, list.token, 'Primo');
+  const shown = (await guest.get(`/l/${list.token}`)).text;
+  for (const t of ['Maria own wish', 'Secret idea for Maria', 'Later idea']) assert.match(shown, new RegExp(t));
+  assert.equal((await maria.get(`/admin/lists/${list.id}`)).status, 404);
+  assert.ok(!(await maria.get('/admin')).text.includes('For Maria'));
 
   // A plain person with a list from their wishlist, later linked to Maria's account → hidden from Maria.
   const cousin = await addPerson(diogo, { name: 'Becomes admin' });
   const w = await addWish(diogo, cousin, 'Linked later');
-  const list = await listFrom(diogo, await wishlistIdOf(diogo, cousin), [w], 'Before linking');
-  assert.equal((await maria.get(`/admin/lists/${list.id}`)).status, 200);
+  const list2 = await listFrom(diogo, await wishlistIdOf(diogo, cousin), [w], 'Before linking');
+  assert.equal((await maria.get(`/admin/lists/${list2.id}`)).status, 200);
   await diogo.post(`/admin/give/people/${cousin}`, { name: 'Becomes admin', user_id: String(mariaUserId) }, { from: `/admin/give/people/${cousin}` });
-  assert.equal((await maria.get(`/admin/lists/${list.id}`)).status, 404);
+  assert.equal((await maria.get(`/admin/lists/${list2.id}`)).status, 404);
 });
 
 test('"last year" only lists gifts that were actually bought or given', async () => {

@@ -1,5 +1,7 @@
 const strings = {
   pt: {
+    "wish.ideasFor": "Ideias para {name}",
+    "wish.ideasForIntro": "A wishlist “geral”, como a de qualquer pessoa: todos os administradores que veem esta ficha a podem editar e criar listas (que podem juntar artigos das duas wishlists). {name} nunca vê esta secção, nem as listas com artigos daqui.",
     "wish.illGiveHintPerson": "Fica reservado em todas as listas e entra em “Prendas a dar”, partilhado com os outros administradores.",
     "wish.pickingFor": "A escolher para",
     "wish.pickBack": "Voltar à ocasião",
@@ -422,6 +424,8 @@ const strings = {
     'error.home': 'Ir para o início',
   },
   en: {
+    "wish.ideasFor": "Ideas for {name}",
+    "wish.ideasForIntro": "The “general” wishlist, like anyone's: every admin who can see this record can edit it and create lists (which can mix items from both wishlists). {name} never sees this section, nor lists with items from it.",
     "wish.illGiveHintPerson": "It gets reserved in every list and goes into “Gifts to give”, shared with the other admins.",
     "wish.pickingFor": "Choosing for",
     "wish.pickBack": "Back to the occasion",

@@ -175,7 +175,7 @@ function giveForm(ctx, w, it, choices, preselect, back = '', pick = null) {
         </select>
       </label>
       ${choices.length ? '' : h`<p class="small muted">${ctx.t('wish.noGiveChoices')}</p>`}
-      <p class="small muted">${ctx.t(w.person_id ? 'wish.illGiveHintPerson' : 'wish.illGiveHint', { name: w.owner_name })}</p>
+      <p class="small muted">${ctx.t(w.person_id && !w.person_user_id ? 'wish.illGiveHintPerson' : 'wish.illGiveHint', { name: w.owner_name })}</p>
       <button type="submit" class="primary">${ctx.t('wish.illGive')}</button>
     </form>
   </details>`;
@@ -185,13 +185,13 @@ function giveForm(ctx, w, it, choices, preselect, back = '', pick = null) {
  * A wishlist seen by someone who is NOT its recipient: what's taken, "I'll give it", and
  * "create a list". `editable` (a person's wishlist) adds edit/remove/reorder and an add form.
  */
-export function wishSection(ctx, { w, items, choices = [], preselect = '', lists = [], editable = false, personId = null, back = '', history = [] }) {
+export function wishSection(ctx, { w, items, choices = [], preselect = '', lists = [], editable = false, personId = null, back = '', history = [], banner = true }) {
   // Coming from an occasion ("pick from the wishlist"): a banner, one-tap buttons, back to it after.
   const pick = choices.find((c) => c.value === preselect) ?? null;
   const pickBack = pick?.value.startsWith('occasion:') ? `/admin/give/occasions/${pick.value.split(':')[1]}` : back;
   const sortable = editable && items.length > 1 && !pick;
   return h`
-${pick ? h`<div class="pick-banner">
+${pick && banner ? h`<div class="pick-banner">
   <span>🎁 ${ctx.t('wish.pickingFor')} <strong>${pick.label.key ? ctx.t(pick.label.key, pick.label.vars) : pick.label.text}</strong></span>
   ${pickBack !== back ? h`<a class="small" href="${pickBack}">← ${ctx.t('wish.pickBack')}</a>` : ''}
 </div>` : ''}
@@ -246,7 +246,10 @@ ${wishSection(ctx, { w, items, choices, preselect, lists: linkedLists })}`,
   });
 }
 
-export function newListPage(ctx, { wishlist: w, items, error }) {
+/** "Maria's wishlist" (hers) or "Ideas for Maria" (what others keep on an admin's record). */
+export const wishTitle = (ctx, w) => ctx.t(w.person_user_id ? 'wish.ideasFor' : 'wish.ofName', { name: w.owner_name });
+
+export function newListPage(ctx, { wishlist: w, groups, error }) {
   return page(ctx, {
     title: ctx.t('wish.createList'),
     active: 'others',
@@ -263,10 +266,11 @@ export function newListPage(ctx, { wishlist: w, items, error }) {
     <label>${ctx.t('admin.description')}
       <textarea name="description" rows="2" maxlength="2000"></textarea>
     </label>
-    <fieldset class="group">
-      <legend>${ctx.t('wish.whichItems')}</legend>
-      ${items.map((it) => h`<label class="check"><input type="checkbox" name="items" value="${it.id}" checked> ${it.title}${it.price ? h` <span class="muted small">· ${it.price}</span>` : ''}</label>`)}
-    </fieldset>
+    ${groups.map((g) => h`<fieldset class="group">
+      <legend>${groups.length > 1 ? wishTitle(ctx, g.w) : ctx.t('wish.whichItems')}</legend>
+      ${g.items.length ? g.items.map((it) => h`<label class="check"><input type="checkbox" name="items" value="${it.id}" checked> ${it.title}${it.price ? h` <span class="muted small">· ${it.price}</span>` : ''}</label>`)
+        : h`<p class="small muted">${ctx.t('wish.emptyOther', { name: g.w.owner_name })}</p>`}
+    </fieldset>`)}
     <label class="check"><input type="checkbox" name="auto_add_new" value="1" checked> ${ctx.t('wish.autoAdd')}</label>
     <label>${ctx.t('give.visibility')}
       <select name="visibility">

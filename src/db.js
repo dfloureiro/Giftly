@@ -275,6 +275,16 @@ const migrations = [
   DROP TABLE wishlists;
   ALTER TABLE wishlists_new RENAME TO wishlists;
   ` },
+  // v15 (3.3): a list can come from several wishlists (an admin's own + the ideas others keep for them).
+  `
+  CREATE TABLE list_sources (
+    list_id INTEGER NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
+    wishlist_id INTEGER NOT NULL REFERENCES wishlists(id) ON DELETE CASCADE,
+    PRIMARY KEY (list_id, wishlist_id)
+  );
+  CREATE INDEX list_sources_wishlist ON list_sources(wishlist_id);
+  INSERT INTO list_sources (list_id, wishlist_id) SELECT id, source_wishlist_id FROM lists WHERE source_wishlist_id IS NOT NULL;
+  `,
 ];
 
 {
@@ -349,6 +359,7 @@ export const LIST_VISIBLE = `((l.visibility = 'shared' OR l.owner_id = $uid)
   AND NOT EXISTS (SELECT 1 FROM wishlists w WHERE (w.owner_id = $uid
         OR w.person_id IN (SELECT pp.id FROM people pp WHERE pp.user_id = $uid)) AND (
         w.id = l.source_wishlist_id
+     OR EXISTS (SELECT 1 FROM list_sources ls WHERE ls.list_id = l.id AND ls.wishlist_id = w.id)
      OR EXISTS (SELECT 1 FROM items li JOIN wishlist_items lwi ON lwi.id = li.wishlist_item_id
                 WHERE li.list_id = l.id AND lwi.wishlist_id = w.id))))`;
 
@@ -374,10 +385,12 @@ export const lists = {
     return db.prepare('SELECT * FROM lists WHERE token = ?').get(token);
   },
   create({ title, description, owner_id = null, visibility = 'shared', source_wishlist_id = null, auto_add_new = true, recipient_user_id = null }) {
-    return Number(db.prepare(
+    const id = Number(db.prepare(
       `INSERT INTO lists (title, description, token, owner_id, visibility, source_wishlist_id, auto_add_new, recipient_user_id, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(title, description, newToken(), owner_id, visibility, source_wishlist_id, auto_add_new ? 1 : 0, recipient_user_id, now()).lastInsertRowid);
+    if (source_wishlist_id) db.prepare('INSERT OR IGNORE INTO list_sources (list_id, wishlist_id) VALUES (?, ?)').run(id, source_wishlist_id);
+    return id;
   },
   /**
    * Only the owner changes visibility; an ownerless (pre-3.0) list becomes yours if you make

@@ -22,7 +22,8 @@ $ENGINE exec giftly-shots node -e "
 const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync('/data/giftly.db');
 const P={1:'€89.99',2:'€24.90',4:'€32.00',5:'€45.50',6:'€18.99'};
 for(const [id,p] of Object.entries(P)) d.prepare('UPDATE items SET price=?, price_checked_at=? WHERE id=?').run(p,Date.now(),Number(id));" 2>/dev/null
-pw "PHASE=2 node lists.js && node give.js && node wish.js"
+pw "PHASE=2 node lists.js && node give.js && CHECK=${CHECK:-} node wish.js"
+if [ -n "${CHECK:-}" ]; then mkdir -p "${CHECK}" && mv "$WORK"/out/check-*.png "${CHECK}/"; fi
 cp "$WORK"/out/*.png docs/screenshots/
 $ENGINE rm -f giftly-shots >/dev/null; $ENGINE volume rm giftly-shots-data >/dev/null
 rm -rf "$WORK"

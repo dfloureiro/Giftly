@@ -9,7 +9,7 @@ import { saveImageBuffer, removeImage } from './preview.js';
 import { enqueuePreview, clearPreview, releaseImage } from './previewQueue.js';
 import * as gv from './givingViews.js';
 import { users } from './accounts.js';
-import { wishItems, wishlists } from './wishlist.js';
+import { wishItems, wishlists, listIdsFrom } from './wishlist.js';
 import { db, lists, items } from './db.js';
 
 /** Price typed by hand: "12,50" / "12.5" / "€ 12" → cents, or null (empty), or NaN (invalid). */
@@ -390,16 +390,16 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
    */
   function wishFor(uid, person) {
     if (person.user_id === uid) return { kind: 'self' };
-    if (person.user_id) {
-      const own = wishlists.byOwner(person.user_id);
-      if (!own || own.visibility !== 'admins') return { kind: 'none' };
-      const w = wishlists.get(own.id);
-      return { kind: 'admin', w, items: wishItems.othersView(w.id, uid), lists: lists.all(uid).filter((l) => l.source_wishlist_id === w.id) };
-    }
-    const w = wishlists.ofPerson(person.id);
-    return { kind: 'person', w, items: wishItems.othersView(w.id, uid), history: wishItems.ownerView(w.id).history,
-      lists: lists.all(uid).filter((l) => l.source_wishlist_id === w.id) };
+    const linked = (w) => lists.all(uid).filter((l) => listIdsFrom(w.id).has(l.id));
+    const gw = wishlists.ofPerson(person.id); // "ideas for them" — editable by everyone who sees the person
+    const general = { w: gw, items: wishItems.othersView(gw.id, uid), history: wishItems.ownerView(gw.id).history, lists: linked(gw) };
+    if (!person.user_id) return { kind: 'person', ...general };
+    // An admin: their own wishlist (read-only, if they share it) + the ideas others keep for them.
+    const own = wishlists.byOwner(person.user_id);
+    const ow = own && own.visibility === 'admins' ? wishlists.get(own.id) : null;
+    return { kind: 'admin', own: ow && { w: ow, items: wishItems.othersView(ow.id, uid), lists: linked(ow) }, ...general };
   }
+
 
   // 3.1 "create a list from ideas" now means: from the person's wishlist.
   route('GET', '/admin/give/people/:id/new-list', (ctx) => {

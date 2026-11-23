@@ -303,3 +303,8 @@ details.to-list[open] { flex: 1 1 100%; }
   background: var(--accent-soft, #fdecea); border-radius: 12px; padding: 10px 14px; margin: .6rem 0 1rem; }
 .pick-banner strong { font-weight: 600; }
 form.give-now { margin: 0; }
+
+/* An open edit/remove/give form gets its own full-width row under the item (desktop too). */
+.item:has(> .actions > details[open]) { flex-wrap: wrap; }
+.item > .actions:has(> details[open]) { flex: 1 1 100%; }
+.item > .body { min-width: 0; }
