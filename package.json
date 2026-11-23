@@ -1,6 +1,6 @@
 {
   "name": "giftly",
-  "version": "3.3.0",
+  "version": "3.3.1",
   "description": "Self-hosted gift lists: share a link, people pick a gift, it disappears for everyone else.",
   "type": "module",
   "private": true,

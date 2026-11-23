@@ -25,6 +25,7 @@ export async function startServer(extraEnv = {}, { dataDir: existing } = {}) {
       HOST: '127.0.0.1',
       LINK_PREVIEWS: 'false',
       TRUST_PROXY: 'false',
+      NOTIFY_ALLOWED_HOSTS: '127.0.0.1', // the tests' webhook receivers
       APP_LANG: 'en',
       ...extraEnv,
     },

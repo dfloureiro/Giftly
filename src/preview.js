@@ -6,9 +6,9 @@
 
 import http from 'node:http';
 import https from 'node:https';
-import dns from 'node:dns';
 import net from 'node:net';
 import zlib from 'node:zlib';
+import { isPrivateIp, safeLookup } from './net.js';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -24,30 +24,7 @@ const TIMEOUT_MS = 10_000;
 
 // ---------- network guard ----------
 
-export function isPrivateIp(ip) {
-  if (net.isIPv4(ip)) {
-    const [a, b] = ip.split('.').map(Number);
-    return a === 0 || a === 10 || a === 127 || a >= 224 ||
-      (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) ||
-      (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) ||
-      (a === 192 && b === 0) || (a === 198 && (b === 18 || b === 19));
-  }
-  const v = ip.toLowerCase();
-  if (v.startsWith('::ffff:')) return isPrivateIp(v.slice(7));
-  return v === '::' || v === '::1' || v.startsWith('fc') || v.startsWith('fd') ||
-    v.startsWith('fe8') || v.startsWith('fe9') || v.startsWith('fea') || v.startsWith('feb') || v.startsWith('ff');
-}
-
-/** DNS lookup that refuses private addresses — used by http(s).request, so it also covers DNS rebinding. */
-function safeLookup(hostname, options, cb) {
-  dns.lookup(hostname, { ...options, all: true }, (err, addresses) => {
-    if (err) return cb(err);
-    const bad = addresses.find((a) => isPrivateIp(a.address));
-    if (bad || !addresses.length) return cb(new Error(`Refusing private address for ${hostname}`));
-    if (options.all) return cb(null, addresses);
-    cb(null, addresses[0].address, addresses[0].family);
-  });
-}
+export { isPrivateIp };
 
 function get(url, { limit, accept }, redirects = 0) {
   return new Promise((resolve, reject) => {

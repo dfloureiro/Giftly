@@ -38,9 +38,12 @@ export const config = {
   lang: (env.APP_LANG || 'pt').toLowerCase().startsWith('en') ? 'en' : 'pt',
   timeZone: env.TZ || 'Europe/Lisbon',
   // Trust X-Forwarded-* / CF-Connecting-IP headers (set when behind Cloudflare Tunnel or a reverse proxy).
+  // Only ever believed from private/loopback peers (see trustedProxyPeer in net.js).
   trustProxy: ['1', 'true', 'yes'].includes(String(env.TRUST_PROXY ?? 'true').toLowerCase()),
   // Fetch product pages to show an image for each gift.
   previews: !['0', 'false', 'no'].includes(String(env.LINK_PREVIEWS ?? 'true').toLowerCase()),
+  // Notification servers on your own network (e.g. a self-hosted ntfy): host names or IPs, comma-separated.
+  notifyAllowedHosts: String(env.NOTIFY_ALLOWED_HOSTS || '').split(',').map((h) => h.trim().replace(/^\[|\]$/g, '').toLowerCase()).filter(Boolean),
   // 'auto' = Secure cookies when the request arrived over HTTPS.
   cookieSecure: (env.COOKIE_SECURE || 'auto').toLowerCase(),
 };

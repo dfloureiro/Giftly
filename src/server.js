@@ -10,6 +10,7 @@ import { tokens, csrfFor, safeEqual, rateLimit, resetRateLimit } from './securit
 import { makeT } from './i18n.js';
 import * as views from './views.js';
 import { IMAGE_DIR, IMAGE_FILE_RE, IMAGE_TYPES, removeImage, saveImageBuffer, sweepImages } from './preview.js';
+import { trustedProxyPeer } from './net.js';
 import { enqueuePreview, clearPreview, startPreviewQueue, allImageFiles, releaseImage } from './previewQueue.js';
 import { deleteUserData, gifts as givingGifts } from './giving.js';
 import { registerGivingRoutes } from './givingRoutes.js';
@@ -71,7 +72,7 @@ function pickLang(req, cookies) {
 }
 
 function clientIp(req) {
-  if (config.trustProxy) {
+  if (trustedProxyPeer(req.socket.remoteAddress)) {
     const cf = req.headers['cf-connecting-ip'];
     if (cf) return String(cf);
     const xff = req.headers['x-forwarded-for'];
@@ -82,12 +83,12 @@ function clientIp(req) {
 
 function isHttps(req) {
   if (req.socket.encrypted) return true;
-  return config.trustProxy && String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
+  return trustedProxyPeer(req.socket.remoteAddress) && String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
 }
 
 function baseUrl(req) {
   if (process.env.BASE_URL) return process.env.BASE_URL.replace(/\/$/, '');
-  const host = (config.trustProxy && req.headers['x-forwarded-host']) || req.headers.host || 'localhost';
+  const host = (trustedProxyPeer(req.socket.remoteAddress) && req.headers['x-forwarded-host']) || req.headers.host || 'localhost';
   return `${isHttps(req) ? 'https' : 'http'}://${host}`;
 }
 
@@ -227,6 +228,16 @@ function guestSessions(ctx) {
     if (list && !list.archived && list.epoch === e) out.push({ guest, list });
   }
   return out;
+}
+
+/** May this browser see a stored image? Admins (signed in) see all; guests only their lists' images. */
+function canSeeImage(cookies, file) {
+  if (sessions.user(cookies[SESSION_COOKIE])) return true;
+  for (const [g, e] of guestEntries({ cookies })) {
+    if (db.prepare(`SELECT 1 FROM items i JOIN guests gu ON gu.list_id = i.list_id JOIN lists l ON l.id = i.list_id
+        WHERE gu.id = ? AND l.epoch = ? AND l.archived = 0 AND i.image_file = ? AND i.pending = 0 LIMIT 1`).get(g, e, file)) return true;
+  }
+  return false;
 }
 
 const sessionFor = (ctx, list) => guestSessions(ctx).find((s) => s.list.id === list.id) || null;
@@ -837,21 +848,22 @@ async function handle(req, res) {
     return send(res, 200, body, { 'Content-Type': type, 'Cache-Control': 'public, max-age=86400' });
   }
 
-  // Stored preview images: random names, never change → cache forever.
-  if (req.method === 'GET' && path.startsWith('/img/')) {
+  const cookies = parseCookies(req.headers.cookie);
+
+  // Stored images (shop photos and uploads): only for a signed-in admin, or a guest of a list
+  // that shows the image. Names never change, so the browser may keep them — but no shared cache.
+  if ((req.method === 'GET' || req.method === 'HEAD') && path.startsWith('/img/')) {
     const file = path.slice(5);
-    if (IMAGE_FILE_RE.test(file)) {
+    if (IMAGE_FILE_RE.test(file) && canSeeImage(cookies, file)) {
       try {
         const body = await readFile(join(IMAGE_DIR, file));
         return send(res, 200, body, {
           'Content-Type': IMAGE_TYPES[file.split('.').pop()],
-          'Cache-Control': 'public, max-age=31536000, immutable',
+          'Cache-Control': 'private, max-age=31536000, immutable',
         });
       } catch { /* fall through to 404 */ }
     }
   }
-
-  const cookies = parseCookies(req.headers.cookie);
 
   // Language switch: GET /lang?to=en&back=/list
   if (req.method === 'GET' && path === '/lang') {
@@ -933,6 +945,10 @@ server.listen({ port: config.port, host: config.host }, () => {
   startReminders();
   const { address, port } = server.address();
   console.log(`giftly listening on ${address}:${port} (lang=${config.lang}, data=${config.dataDir})`);
+  if (!process.env.BASE_URL) {
+    console.warn('BASE_URL is not set: invite, reset and notification links use the address each request came in on. '
+      + 'Set BASE_URL=https://your.domain when Giftly is reachable from the internet.');
+  }
 });
 
 for (const sig of ['SIGTERM', 'SIGINT']) {

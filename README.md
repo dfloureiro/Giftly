@@ -92,7 +92,7 @@ Open <http://localhost:3000/admin>, log in with that username and password, and 
 Or with plain Docker:
 
 ```sh
-docker run -d --name giftly -p 3000:3000 \
+docker run -d --name giftly -p 127.0.0.1:3000:3000 \
   -e ADMIN_USERNAME=me -e ADMIN_PASSWORD=your-long-password \
   -v giftly-data:/data \
   ghcr.io/dfloureiro/giftly:latest
@@ -106,10 +106,11 @@ docker run -d --name giftly -p 3000:3000 \
 | `ADMIN_PASSWORD` | — | Password of the first account (at least 8 characters). Only used on the very first start, when there are no accounts yet; ignored afterwards (with a warning). |
 | `APP_LANG` | `pt` | Fallback language (`pt` or `en`) when the browser asks for neither. |
 | `SITE_TITLE` | `Giftly` | Name shown on the home page and in the browser tab. |
-| `BASE_URL` | auto | Public URL used for the share link in the admin, e.g. `https://gifts.example.com`. |
+| `BASE_URL` | auto | Public URL used for share, invite and new-password links and in notifications, e.g. `https://gifts.example.com`. **Set it** whenever Giftly is reachable from the internet. |
 | `TZ` | `Europe/Lisbon` | Time zone for dates in the admin. |
 | `LINK_PREVIEWS` | `true` | Fetch product pages to show each gift's image and price. Set to `false` to turn it off. |
-| `TRUST_PROXY` | `true` | Trust `CF-Connecting-IP` / `X-Forwarded-*`. Set to `false` if the app is exposed directly. |
+| `TRUST_PROXY` | `true` | Trust `CF-Connecting-IP` / `X-Forwarded-*` from a reverse proxy or Cloudflare Tunnel. They are only believed when the connection comes from a private or local address (the proxy next to Giftly), never from the internet. Set to `false` to never trust them. |
+| `NOTIFY_ALLOWED_HOSTS` | — | Notification servers on your own network that Giftly may send to, e.g. `ntfy.lan,192.168.1.10`. Local and private addresses are refused otherwise. |
 | `COOKIE_SECURE` | `auto` | `auto` sets `Secure` cookies when the request came over HTTPS. |
 | `SESSION_SECRET` | generated | Generated once and stored in `/data` if not set. |
 | `REQUIRE_2FA` | `false` | Require two-factor authentication for every admin. |
@@ -184,6 +185,8 @@ Each admin sets up their own notifications under **Profile → Notifications**: 
 Tokens are never shown back in the page: leave the field empty to keep the current one, or tick *Clear* to remove it. With `BASE_URL` set, each message links to the list in the admin. Messages use `APP_LANG`. A failing channel is logged and never affects guests.
 
 On ntfy.sh, anyone who knows the topic name can read it, so make it long and random (for example `giftly-` followed by `openssl rand -hex 12`).
+
+For safety, notifications are never sent to local or private addresses (`localhost`, `192.168.…`, `10.…`, and names that resolve to them), and redirects are not followed. That way a stolen admin account can't use Giftly to reach other services on your network. If your ntfy or webhook server runs on your own network, allow it with `NOTIFY_ALLOWED_HOSTS`, e.g. `NOTIFY_ALLOWED_HOSTS=ntfy.lan,192.168.1.10`.
 
 ## Exposing it with Cloudflare Tunnel
 

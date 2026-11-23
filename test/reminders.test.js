@@ -14,6 +14,7 @@ before(async () => {
   process.env.ADMIN_PASSWORD = '';
   process.env.TZ = 'Europe/Lisbon';
   process.env.APP_LANG = 'en';
+  process.env.NOTIFY_ALLOWED_HOSTS = '127.0.0.1'; // the test's webhook receivers
   r = await import('../src/reminders.js');
   g = await import('../src/giving.js');
   accounts = await import('../src/accounts.js');

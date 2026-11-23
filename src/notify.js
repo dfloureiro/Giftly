@@ -7,6 +7,7 @@ import { config } from './config.js';
 import { makeT } from './i18n.js';
 import { db, settings, lists } from './db.js';
 import { users } from './accounts.js';
+import { postJson, isLocalNotifyHost } from './net.js';
 
 const env = process.env;
 const TIMEOUT_MS = 8000;
@@ -101,6 +102,12 @@ export function validateNotifySettings(s) {
   const errors = [];
   if (s.ntfy_url && parseNtfy(s.ntfy_url)?.error) errors.push('notify.badNtfy');
   if (s.webhook_url && !validWebhook(s.webhook_url)) errors.push('notify.badWebhook');
+  // Servers on your own network only when the operator allowed them (NOTIFY_ALLOWED_HOSTS).
+  const ntfy = s.ntfy_url && parseNtfy(s.ntfy_url);
+  const local = (raw) => { try { return isLocalNotifyHost(new URL(raw).hostname); } catch { return false; } };
+  if ((ntfy && !ntfy.error && local(ntfy.origin)) || (s.webhook_url && validWebhook(s.webhook_url) && local(s.webhook_url))) {
+    errors.push('notify.privateHost');
+  }
   if (!!s.telegram_bot_token !== !!s.telegram_chat_id) errors.push('notify.badTelegram');
   return errors;
 }
@@ -183,15 +190,7 @@ export function saveNotifySettings(userId, body) {
   return { errors: [] };
 }
 
-async function post(url, body, headers = {}) {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...headers },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(TIMEOUT_MS),
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status} ${(await res.text()).slice(0, 200)}`);
-}
+const post = (url, body, headers = {}) => postJson(url, body, headers, { timeout: TIMEOUT_MS });
 
 const iconUrl = () => {
   const base = (env.BASE_URL || '').replace(/\/$/, '');
