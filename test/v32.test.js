@@ -144,3 +144,19 @@ test('upgrading: shared ideas for non-admins move to the wishlist; private ideas
   assert.deepEqual(left, ['Idea for admin', 'Private idea']);
   assert.equal(settings.all('migrations.').ideas_to_wishlists, '1');
 });
+
+test('"pick from the wishlist" from an occasion: one-tap buttons, then back to the occasion', async () => {
+  const kid = await addPerson(diogo, { name: 'Pick32' });
+  const wi = await addWish(diogo, kid, 'Robot kit');
+  await addWish(diogo, kid, 'Paint set');
+  const y = new Date().getFullYear() + 40;
+  const occ = idFrom((await diogo.post('/admin/give/occasions/christmas', { year: String(y) }, { from: '/admin/give/occasions' })).location, 'give/occasions');
+  const page = (await diogo.get(`/admin/give/people/${kid}?occasion=occasion:${occ}`)).text;
+  assert.match(page, new RegExp(`Choosing for <strong>Christmas ${y}</strong>`));
+  assert.equal((page.match(/class="give-now"/g) || []).length, 2, 'one button per free item');
+  assert.ok(!/<details class="edit" open>/.test(page), 'no forms opened all at once');
+  const wid = await wishlistIdOf(diogo, kid);
+  const r = await diogo.post(`/admin/wishlists/${wid}/items/${wi}/give`, { occasion: `occasion:${occ}`, back: `/admin/give/occasions/${occ}` }, { from: `/admin/give/people/${kid}` });
+  assert.match(r.location, new RegExp(`^/admin/give/occasions/${occ}\\?m=giving#gift-\\d+$`));
+  assert.match((await diogo.get(`/admin/give/occasions/${occ}`)).text, /Robot kit/);
+});

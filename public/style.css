@@ -73,12 +73,12 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 1.2rem 0; }
 label { display: grid; gap: 6px; font-weight: 600; font-size: .92rem; }
 label.check { display: flex; align-items: center; gap: 8px; font-weight: 500; }
 label .small { font-weight: 400; }
-input, textarea {
+input, textarea, select {
   font: inherit; color: inherit; background: var(--bg);
   border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; width: 100%;
 }
-input[type=checkbox] { width: auto; }
-input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+input[type=checkbox], input[type=radio] { width: auto; }
+input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
 .row { display: flex; gap: 12px; flex-wrap: wrap; }
 .row .grow { flex: 1 1 220px; }
 details summary { cursor: pointer; color: var(--accent); font-weight: 600; margin-top: .5rem; }
@@ -297,3 +297,9 @@ details.to-list[open] { flex: 1 1 100%; }
 [data-sortable].sorting > .item:not(.dragging) { transition: transform .15s; }
 .js-sortable button.move, .js-sortable form:has(> button.move) { display: none; }
 @media (max-width: 520px) { .item > .drag-handle { align-self: flex-start; margin-top: 2px; } }
+
+/* "Pick from the wishlist", opened from an occasion */
+.pick-banner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px;
+  background: var(--accent-soft, #fdecea); border-radius: 12px; padding: 10px 14px; margin: .6rem 0 1rem; }
+.pick-banner strong { font-weight: 600; }
+form.give-now { margin: 0; }

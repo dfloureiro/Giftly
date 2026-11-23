@@ -1,5 +1,8 @@
 const strings = {
   pt: {
+    "wish.illGiveHintPerson": "Fica reservado em todas as listas e entra em “Prendas a dar”, partilhado com os outros administradores.",
+    "wish.pickingFor": "A escolher para",
+    "wish.pickBack": "Voltar à ocasião",
     "wish.selfPerson": "Esta ficha és tu. A tua wishlist (sem saber o que já foi escolhido) está em",
     "wish.adminPrivate": "{name} tem a wishlist privada.",
     "wish.personIntro": "O que esta pessoa gostava de receber. Todos os administradores que a veem podem editar, criar listas a partir daqui (ligadas, com sync) e usar “Dou eu”.",
@@ -419,6 +422,9 @@ const strings = {
     'error.home': 'Ir para o início',
   },
   en: {
+    "wish.illGiveHintPerson": "It gets reserved in every list and goes into “Gifts to give”, shared with the other admins.",
+    "wish.pickingFor": "Choosing for",
+    "wish.pickBack": "Back to the occasion",
     "wish.selfPerson": "This record is you. Your wishlist (without knowing what was chosen) is at",
     "wish.adminPrivate": "{name}'s wishlist is private.",
     "wish.personIntro": "What this person would like to receive. Every admin who can see them can edit it, create lists from it (linked, kept in sync) and use “I'll give it”.",

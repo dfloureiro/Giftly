@@ -272,7 +272,7 @@ export function registerWishlistRoutes({ route, html, redirect, notFound, clean,
     } catch (err) {
       if (!err.taken) throw err; // someone reserved it first (a guest, or another admin)
     }
-    if (!giftId) return redirect(ctx.res, `${back}?m=taken#wish-${wi.id}`);
-    redirect(ctx.res, `${back}?m=giving#wish-${wi.id}`);
+    if (!giftId) return redirect(ctx.res, `${back}?m=taken${back.startsWith('/admin/give/occasions/') ? '' : `#wish-${wi.id}`}`);
+    redirect(ctx.res, `${back}?m=giving${back.startsWith('/admin/give/occasions/') ? `#gift-${giftId}` : `#wish-${wi.id}`}`);
   }, A);
 }

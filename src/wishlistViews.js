@@ -157,7 +157,14 @@ ${list.length ? h`<ul class="lists">
   });
 }
 
-function giveForm(ctx, w, it, choices, preselect, back = '') {
+function giveForm(ctx, w, it, choices, preselect, back = '', pick = null) {
+  // Opened from an occasion: one tap, the occasion is already chosen.
+  if (pick) {
+    return h`<form method="post" action="/admin/wishlists/${w.id}/items/${it.id}/give" class="give-now">
+      ${csrfField(ctx)}<input type="hidden" name="occasion" value="${pick.value}">${back ? h`<input type="hidden" name="back" value="${back}">` : ''}
+      <button type="submit" class="primary">🎁 ${ctx.t('wish.illGive')}</button>
+    </form>`;
+  }
   return h`<details class="edit"${preselect ? raw(' open') : ''}>
     <summary class="button primary">${ctx.t('wish.illGive')}</summary>
     <form method="post" action="/admin/wishlists/${w.id}/items/${it.id}/give" class="stack">
@@ -168,7 +175,7 @@ function giveForm(ctx, w, it, choices, preselect, back = '') {
         </select>
       </label>
       ${choices.length ? '' : h`<p class="small muted">${ctx.t('wish.noGiveChoices')}</p>`}
-      <p class="small muted">${ctx.t('wish.illGiveHint', { name: w.owner_name })}</p>
+      <p class="small muted">${ctx.t(w.person_id ? 'wish.illGiveHintPerson' : 'wish.illGiveHint', { name: w.owner_name })}</p>
       <button type="submit" class="primary">${ctx.t('wish.illGive')}</button>
     </form>
   </details>`;
@@ -179,8 +186,15 @@ function giveForm(ctx, w, it, choices, preselect, back = '') {
  * "create a list". `editable` (a person's wishlist) adds edit/remove/reorder and an add form.
  */
 export function wishSection(ctx, { w, items, choices = [], preselect = '', lists = [], editable = false, personId = null, back = '', history = [] }) {
-  const sortable = editable && items.length > 1;
+  // Coming from an occasion ("pick from the wishlist"): a banner, one-tap buttons, back to it after.
+  const pick = choices.find((c) => c.value === preselect) ?? null;
+  const pickBack = pick?.value.startsWith('occasion:') ? `/admin/give/occasions/${pick.value.split(':')[1]}` : back;
+  const sortable = editable && items.length > 1 && !pick;
   return h`
+${pick ? h`<div class="pick-banner">
+  <span>🎁 ${ctx.t('wish.pickingFor')} <strong>${pick.label.key ? ctx.t(pick.label.key, pick.label.vars) : pick.label.text}</strong></span>
+  ${pickBack !== back ? h`<a class="small" href="${pickBack}">← ${ctx.t('wish.pickBack')}</a>` : ''}
+</div>` : ''}
 <p class="row">
   <a class="button secondary" href="/admin/wishlists/${w.id}/new-list">＋ ${ctx.t('wish.createList')}</a>
   ${lists.length ? h`<span class="small">${ctx.t('wish.yourLists')}: ${lists.map((l, i) => h`${i ? ', ' : ''}<a href="/admin/lists/${l.id}">${l.title}</a>`)}</span>` : ''}
@@ -196,8 +210,8 @@ ${items.length ? h`<ul class="items admin-items"${sortable ? h` data-sortable="/
       ${it.preview_status === 'pending' ? h`<p class="small muted" data-preview-status="${it.id}">${ctx.t('preview.pending')}</p>` : ''}
     </div>
     <div class="actions">
-      ${it.claimed ? '' : giveForm(ctx, w, it, choices, preselect, back)}
-      ${editable ? h`
+      ${it.claimed ? '' : giveForm(ctx, w, it, choices, preselect, pick ? pickBack : back, pick)}
+      ${editable && !pick ? h`
         ${idx > 0 ? postButton(ctx, `/admin/wishlist/items/${it.id}/move`, '↑', { cls: 'icon move', extra: '<input type="hidden" name="dir" value="up">' }) : ''}
         ${idx < items.length - 1 ? postButton(ctx, `/admin/wishlist/items/${it.id}/move`, '↓', { cls: 'icon move', extra: '<input type="hidden" name="dir" value="down">' }) : ''}
         ${editForm(ctx, it)}
