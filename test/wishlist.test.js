@@ -4,7 +4,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp } from 'node:fs/promises';
 import {
-  startServer, Client, loginAdmin, inviteAdmin, joinList, pickableIds, webhookReceiver, sleep,
+  startServer, Client, loginAdmin, inviteAdmin, joinList, pickableIds, webhookReceiver, sleep, formFields,
 } from './helpers.js';
 
 let server, diogo, maria, bea, mariaWishlist;
@@ -262,4 +262,32 @@ test('archiving a list marks its reserved wishlist items as received; "given" do
   const gid2 = Number(/id="gift-(\d+)"/.exec((await diogo.get(`/admin/give/occasions/${occId}`)).text)[1]);
   await diogo.post(`/admin/give/gifts/${gid2}/status`, { status: 'given' }, { from: `/admin/give/occasions/${occId}` });
   assert.match((await maria.get('/admin/wishlist')).text, /Removed and received[\s\S]*Give then hand over/);
+});
+
+test('saving a linked item\'s edit form opened before a guest picked keeps the pick and the claim in other lists', async () => {
+  const w = await addWish('Stale-form wish');
+  const l1 = await listFromWishlist(diogo, [w], { title: 'Stale L1' });
+  const l2 = await listFromWishlist(bea, [w], { title: 'Stale L2' });
+  const [i1] = l1.itemIds;
+  const [i2] = l2.itemIds;
+  const editPage = (await diogo.get(`/admin/items/${i1}`)).text;
+  const stale = formFields(editPage, `/admin/items/${i1}`);
+  const g1 = await joinList(server.base, l1.token, 'Stale G1');
+  const g2 = await joinList(server.base, l2.token, 'Stale G2');
+  assert.match((await g1.post(`/l/${l1.token}/pick/${i1}`, {}, { from: `/l/${l1.token}` })).location, /m=picked/);
+  assert.ok(!(await pickableIds(g2, l2.token)).includes(i2), 'claimed: gone from L2');
+
+  // The stale save (also with the field older pages had, empty = "release") changes only the notes.
+  const r = await diogo.request(`/admin/items/${i1}`, { method: 'POST', form: { ...stale, notes: 'Blue one', reserved_name: '' } });
+  assert.match(r.location, /m=saved/);
+  assert.match((await g1.get(`/l/${l1.token}`)).text, /Your picks[\s\S]*Stale-form wish/);
+  assert.ok(!(await pickableIds(g2, l2.token)).includes(i2), 'still claimed: not offered in L2');
+  assert.match((await diogo.get(`/admin/lists/${l1.id}`)).text, /Blue one/);
+
+  // The old page's "Reserve for…" doesn't take it from G1; a deliberate release frees it everywhere.
+  const res = await diogo.request(`/admin/items/${i1}/reserve`, { method: 'POST', form: { ...formFields(editPage, `/admin/items/${i1}/reserve`), name: 'Someone' } });
+  assert.match(res.location, /m=reservationChanged/);
+  const fresh = (await diogo.get(`/admin/items/${i1}`)).text;
+  assert.match((await diogo.request(`/admin/items/${i1}/release`, { method: 'POST', form: formFields(fresh, `/admin/items/${i1}/release`) })).location, /m=released/);
+  assert.ok((await pickableIds(g2, l2.token)).includes(i2), 'released: offered in L2 again');
 });

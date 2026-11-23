@@ -156,3 +156,21 @@ export async function webhookReceiver() {
 }
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * The fields of the `<form action="ACTION">` in a page, as a browser would submit them (text,
+ * hidden and checked inputs; CSRF token included). Used to submit a form opened earlier.
+ */
+export function formFields(html, action) {
+  const start = html.indexOf(`action="${action}"`);
+  if (start < 0) throw new Error(`no form with action ${action}`);
+  const form = html.slice(start, html.indexOf('</form>', start));
+  const unescape = (s) => s.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  const fields = {};
+  for (const [tag] of form.matchAll(/<input\b[^>]*>/g)) {
+    const name = /\bname="([^"]*)"/.exec(tag)?.[1];
+    if (!name || (/type="(checkbox|radio)"/.test(tag) && !/\bchecked\b/.test(tag)) || /type="file"/.test(tag)) continue;
+    fields[name] = unescape(/\bvalue="([^"]*)"/.exec(tag)?.[1] ?? '');
+  }
+  return fields;
+}

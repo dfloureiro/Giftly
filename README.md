@@ -75,7 +75,7 @@ One step, on any machine with Docker (a NAS, a Raspberry Pi, a server):
 curl -fsSL https://raw.githubusercontent.com/dfloureiro/Giftly/main/install.sh -o install.sh && sh install.sh
 ```
 
-It asks for your domain and a [Cloudflare Tunnel](#exposing-it-with-cloudflare-tunnel) token (both optional), creates a strong admin password, starts Giftly and shows you how to log in. Without a tunnel, Giftly is only reachable from that machine at <http://localhost:3000/admin>. Files come from the latest release. Running it again updates Giftly and never changes your `.env` or `cloudflared.env`, nor a `compose.yaml` you edited (put your own changes in `compose.override.yaml`). It checks that Giftly and the tunnel really came up; if an update leaves them down, it puts your settings back and tells you why. You can read [the script](install.sh) first. Needs Docker Compose 2.24 or newer.
+It asks for your domain and a [Cloudflare Tunnel](#exposing-it-with-cloudflare-tunnel) token (both optional), creates a strong admin password, starts Giftly and shows you how to log in. Without a tunnel, Giftly is only reachable from that machine at <http://localhost:3000/admin>. Files come from the latest release. Running it again updates Giftly and never changes your `.env` or `cloudflared.env`, nor a `compose.yaml` you edited (put your own changes in `compose.override.yaml`). It checks that Giftly and the tunnel really came up. Before an update starts the new version, it stops Giftly for a moment and saves a verified recovery point of your data in `data/pre-upgrade-<date>/` (the last 3 are kept). If the update leaves Giftly or the tunnel down, it puts back your settings, the exact images that were working (even if the new one has the same tag) and, if the new version already ran, the data from the recovery point, then tells you why. Whatever the failed version wrote is kept in `data/failed-upgrade-<date>/`, never deleted. A failed download changes nothing. You can read [the script](install.sh) first. Needs Docker Compose 2.24 or newer.
 
 The image follows `ghcr.io/dfloureiro/giftly:3`: fixes and new features within 3.x, never a breaking 4.0. To pin an exact version, set `GIFTLY_TAG=3.4.0` in `.env`.
 
@@ -230,6 +230,7 @@ Not using Compose (e.g. Portainer)? Add `GIFTLY_CONTAINER=<container name>`. `BA
 - **Copy it to another machine as well.** A backup on the same disk is lost with that disk. For example, use `rsync -a backups/ nas:/backups/giftly/`, [restic](https://restic.net), or a synced folder.
 - The file contains password hashes and two-factor secrets. It's written as private (`600`): keep it that way, and encrypt it if it leaves your machines.
 - By default it leaves out the session secret, so after a restore everyone just signs in again (guests by typing their name). `--include-secrets` keeps them signed in, which makes the file more sensitive.
+- A backup is only written if it is complete: it holds exactly the photos its database uses, checked before the file is written. If a photo is replaced while it runs, it tries again from a fresh snapshot. If it still can't be completed, it says which photos are missing, exits with an error (so cron notices), writes nothing and doesn't prune older backups. `--allow-missing-images` writes it anyway and lists the missing photos in the backup.
 
 **Daily, with cron** (`crontab -e`):
 
@@ -243,7 +244,9 @@ Not using Compose (e.g. Portainer)? Add `GIFTLY_CONTAINER=<container name>`. `BA
 sh restore.sh backups/giftly-backup-20261123-033000.tar.gz
 ```
 
-It checks the file first (checksums and version) and refuses a damaged backup or one from a newer Giftly. Then it stops Giftly, moves the current data aside to `/data/pre-restore-<date>/`, puts the backup in place and starts Giftly again. An older backup is upgraded automatically.
+Before changing anything, it checks the file (checksums, the database itself, and that every photo it uses is there) and refuses a damaged or incomplete backup or one from a newer Giftly. (`--allow-missing-images` restores one with missing photos anyway.) Then it copies the backup next to the data, stops Giftly, moves the current data aside to `/data/pre-restore-<date>/`, puts the backup in place and starts Giftly again. An older backup is upgraded automatically.
+
+If any of that fails, including Giftly not starting with the restored data, it puts the previous data back as it was, keeps the failed attempt in `/data/failed-restore-<date>/` and starts the previous Giftly again (if it was running). If even that fails, it stops and tells you where each copy is; nothing is deleted.
 
 ## Development
 

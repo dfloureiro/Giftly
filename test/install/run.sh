@@ -13,7 +13,11 @@ bad() { printf 'FAIL %s\n' "$*"; fails=$((fails + 1)); }
 check() { if eval "$2"; then ok "$1"; else bad "$1"; fi; }
 # shellcheck disable=SC2012 # fixed file names
 mode() { ls -ld "$1" | cut -c1-10; }
+REG=127.0.0.1:5555
+SAME=$REG/giftly:same   # one tag, first a good image, then a broken one
 cleanup() {
+  docker rm -f giftly-test-registry >/dev/null 2>&1 || true
+  docker images --format '{{.Repository}}:{{.Tag}}' | grep -E "^(localhost/giftly-rollback|$REG/)" | xargs -r docker rmi >/dev/null 2>&1 || true
   for d in "$WORK"/*/; do (cd "$d" && docker compose --profile tunnel down -v >/dev/null 2>&1) || true; done
   # data/ belongs to the container's user (not the runner's): remove it from a container.
   docker run --rm -v "$WORK":/w busybox:1.36 sh -c 'rm -rf /w/*/data' >/dev/null 2>&1 || true
@@ -95,6 +99,56 @@ check "D: token migrated" "! grep -q TUNNEL_TOKEN '$WORK/d/.env' && grep -q '^TU
 check "D: no backup left behind" "[ -z \"\$(ls -A '$WORK/d' | grep '^.env.backup')\" ]"
 
 down d
+
+# G/H. An update that downloads fine but whose new image (same tag) changes the database and then
+#      never becomes healthy: the old image, the data and the service all come back; the failed
+#      version's data is kept apart. G with a tunnel, H without.
+docker run -d --name giftly-test-registry -p "$REG:5000" registry:2 >/dev/null
+docker pull -q "ghcr.io/dfloureiro/giftly:$GIFTLY_TAG" >/dev/null
+GOOD_ID=$(docker image inspect -f '{{.Id}}' "ghcr.io/dfloureiro/giftly:$GIFTLY_TAG")
+mkdir -p "$WORK/broken"
+cat > "$WORK/broken/Dockerfile" <<'DOCKERFILE'
+ARG BASE
+FROM ${BASE}
+# Changes the data like a migration would, then fails.
+CMD ["node", "-e", "const { DatabaseSync } = require('node:sqlite'); new DatabaseSync('/data/giftly.db').exec('CREATE TABLE candidate_was_here (x)'); process.exit(1)"]
+DOCKERFILE
+docker build -q --build-arg BASE="ghcr.io/dfloureiro/giftly:$GIFTLY_TAG" -t giftly-test-broken "$WORK/broken" >/dev/null
+publish() { # publish IMAGE-ID: push it as $SAME (the registry now serves it under that tag)
+  docker tag "$1" "$SAME" && docker push -q "$SAME" >/dev/null
+}
+sql() { # sql DIR "query": run a query in that install's Giftly, print the rows
+  (cd "$WORK/$1" && docker compose exec -T giftly node -e "const { DatabaseSync } = require('node:sqlite'); console.log(JSON.stringify(new DatabaseSync('/data/giftly.db').prepare(process.argv[1]).all()))" "$2")
+}
+same_tag_case() { # same_tag_case DIR LABEL [env...]
+  d=$1 label=$2; shift 2
+  mkdir -p "$WORK/$d"
+  # The image comes from the override (installer never touches it); G also gets the tunnel stub.
+  if [ "$label" = G ]; then stub "$WORK/$d"; else echo 'services:' > "$WORK/$d/compose.override.yaml"; fi
+  printf '  giftly:\n    image: %s\n' "$SAME" >> "$WORK/$d/compose.override.yaml"
+  publish "$GOOD_ID"
+  if install "$d" ADMIN_USERNAME=gina "$@"; then ok "$label: install with the good image"; else bad "$label: install with the good image"; cat "$WORK/$d.log"; return; fi
+  (cd "$WORK/$d" && docker compose exec -T giftly node -e "new (require('node:sqlite').DatabaseSync)('/data/giftly.db').exec(\"CREATE TABLE before_update (x); INSERT INTO before_update VALUES ('kept')\")")
+  old_id=$(cd "$WORK/$d" && docker inspect -f '{{.Image}}' "$(docker compose ps -q giftly)")
+  # The registry now serves the broken image under the same tag; this machine still has the good one.
+  publish "$(docker image inspect -f '{{.Id}}' giftly-test-broken)"
+  docker tag "$old_id" "$SAME"
+  if install "$d"; then bad "$label: installer reports failure"; cat "$WORK/$d.log"; else ok "$label: installer reports failure"; fi
+  if grep -q 'restored and is working again' "$WORK/$d.log" && grep -q 'failed-upgrade-' "$WORK/$d.log"; then ok "$label: says it is working again with the data put back"
+  else bad "$label: says it is working again with the data put back"; cat "$WORK/$d.log"; fi
+  check "$label: running the exact old image again" "[ \"\$(cd '$WORK/$d' && docker inspect -f '{{.Image}}' \"\$(docker compose ps -q giftly)\")\" = '$old_id' ]"
+  check "$label: the tag points to the old image again" "[ \"\$(docker image inspect -f '{{.Id}}' '$SAME')\" = '$old_id' ]"
+  check "$label: data as before the update" "sql $d \"SELECT x FROM before_update\" | grep -q kept && ! sql $d \"SELECT 1 FROM candidate_was_here\" >/dev/null 2>&1"
+  check "$label: the failed version's data is kept" "(cd '$WORK/$d' && docker compose exec -T giftly node -e \"new (require('node:sqlite').DatabaseSync)(require('node:fs').globSync('/data/failed-upgrade-*/giftly.db')[0]).prepare('SELECT 1 FROM candidate_was_here').all()\")"
+  check "$label: the recovery point is still there" "(cd '$WORK/$d' && docker compose exec -T giftly sh -c 'ls /data/pre-upgrade-*/giftly.db') >/dev/null 2>&1"
+  check "$label: Giftly answers" "(cd '$WORK/$d' && docker compose exec -T giftly wget -qO- http://127.0.0.1:3000/healthz) >/dev/null 2>&1"
+  if [ "$label" = G ]; then
+    check "G: the tunnel works again" "(cd '$WORK/$d' && docker compose exec -T giftly wget -qO- http://cloudflared:20241/ready) >/dev/null 2>&1"
+  fi
+  down "$d"
+}
+same_tag_case g G GIFTLY_DOMAIN=gifts.example.com TUNNEL_TOKEN=good-token
+same_tag_case h H
 
 if [ "$fails" != 0 ]; then echo "install.sh: $fails check(s) failed"; exit 1; fi
 echo "install.sh: all checks passed"

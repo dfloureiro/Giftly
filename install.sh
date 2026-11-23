@@ -11,8 +11,11 @@
 #
 # Re-running it updates and restarts. It never overwrites .env or cloudflared.env, never
 # replaces a compose.yaml you changed (the new one is saved as compose.yaml.new; put your
-# changes in compose.override.yaml, which it never touches), and if the update leaves Giftly
-# or the tunnel down, it puts your settings back and says so.
+# changes in compose.override.yaml, which it never touches). Before the new version can touch
+# your data it saves a recovery point of it (data/pre-upgrade-<date>/). If the update leaves
+# Giftly or the tunnel down, it puts back your settings, the exact images that worked and
+# (if the new version ran) that data, keeping the failed attempt's data in
+# data/failed-upgrade-<date>/, and says so.
 #
 # Non-interactive: set GIFTLY_DOMAIN, TUNNEL_TOKEN, ADMIN_USERNAME (and GIFTLY_DIR, GIFTLY_PORT)
 # in the environment, and GIFTLY_YES=1 to skip the questions.
@@ -78,7 +81,9 @@ rm -f ./.giftly-tmp.?????? # leftovers of an interrupted earlier run
 # exist yet), so a failed update can put back exactly the setup that worked. Private folder;
 # the last 3 snapshots are kept.
 SNAP_FILES='compose.yaml compose.override.yaml .env cloudflared.env .compose.sha256'
-SNAP=".giftly-backup/$(date +%Y%m%d-%H%M%S)-$$"
+SNAP_NAME="$(date +%Y%m%d-%H%M%S)-$$"
+SNAP=".giftly-backup/$SNAP_NAME"
+PIN=localhost/giftly-rollback   # private tags that keep the images a snapshot needs
 HAD_INSTALL=0
 [ -f .env ] && HAD_INSTALL=1
 (umask 077 && mkdir -p "$SNAP")
@@ -87,9 +92,32 @@ for f in $SNAP_FILES; do
   if [ -f "$f" ]; then cp "$f" "$SNAP/$f" && chmod 600 "$SNAP/$f"; else echo "$f" >> "$SNAP/.absent"; fi
 done
 chmod 600 "$SNAP/.absent" 2>/dev/null || true
+# The exact images the current containers run (a pull is about to move their tags to new ones),
+# pinned under private tags so they can't be cleaned up while this snapshot exists.
+#   .images: "service  image-as-configured  image-id"
+OLD_CID=''
+OLD_ID=''
+if [ "$HAD_INSTALL" = 1 ] && [ -f compose.yaml ]; then
+  for svc in giftly cloudflared; do
+    cid=$($COMPOSE --profile tunnel ps -aq "$svc" 2>/dev/null | head -n 1) || cid=''
+    [ -n "$cid" ] || continue
+    ref=$(docker inspect -f '{{.Config.Image}}' "$cid" 2>/dev/null) || continue
+    id=$(docker inspect -f '{{.Image}}' "$cid" 2>/dev/null) || continue
+    docker tag "$id" "$PIN:$svc-$SNAP_NAME" >/dev/null 2>&1 || continue
+    printf '%s %s %s\n' "$svc" "$ref" "$id" >> "$SNAP/.images"
+    [ "$svc" = giftly ] && OLD_CID=$cid && OLD_ID=$id
+  done
+fi
+# Keep the last 3 snapshots, with their image pins and data recovery points.
 # shellcheck disable=SC2012 # our own timestamped folder names
 old=$(ls -1d .giftly-backup/*/ 2>/dev/null | sort -r | tail -n +4)
-for d in $old; do rm -rf "${d:?}"; done
+# shellcheck disable=SC2012 # our own timestamped folder names
+KEEP_POINTS=$(ls -1d .giftly-backup/*/ 2>/dev/null | sort -r | head -n 3 | xargs -n 1 basename | tr '\n' ' ')
+for d in $old; do
+  name=$(basename "$d")
+  for svc in giftly cloudflared; do docker rmi "$PIN:$svc-$name" >/dev/null 2>&1 || true; done
+  rm -rf "${d:?}"
+done
 
 # Files from the latest release (a fixed tag), unless GIFTLY_REPO_RAW points elsewhere.
 if [ -n "${GIFTLY_REPO_RAW:-}" ]; then
@@ -155,13 +183,103 @@ profile_now() {
   then echo '--profile tunnel'; fi
 }
 
-# A failed update: put back every file from the snapshot (and remove those that didn't exist),
-# restart, and check that the previous setup works again. A failed FIRST install is not rolled
-# back: Giftly may already have created the admin account with the password in .env.
+# Data recovery point: run a script against Giftly's /data with the previous container's mounts
+# and image (or, without a container, as the compose files define it), script on stdin.
+# `up -d` replaces the old container, so a stopped "holder" container keeps its mounts (and its
+# volumes in use) for as long as this run may need them; it is removed when the script ends.
+DATA_HOLDER=''
+remove_holder() {
+  if [ -n "$DATA_HOLDER" ]; then docker rm -f "$DATA_HOLDER" >/dev/null 2>&1 || true; fi
+}
+trap remove_holder EXIT
+in_data() {
+  if [ -n "$OLD_CID" ]; then
+    if [ -z "$DATA_HOLDER" ]; then
+      DATA_HOLDER=$(docker create --network none --volumes-from "$OLD_CID" --entrypoint true "$OLD_ID") || return 1
+    fi
+    docker run --rm -i --network none --volumes-from "$DATA_HOLDER" -e NAME="$SNAP_NAME" -e KEEP_POINTS="$KEEP_POINTS" \
+      --entrypoint sh "$OLD_ID" -s
+  else
+    $COMPOSE run --rm --no-deps -T -e NAME="$SNAP_NAME" -e KEEP_POINTS="$KEEP_POINTS" --entrypoint sh giftly -s
+  fi
+}
+# With Giftly stopped: a verified copy of the database (VACUUM INTO + integrity check), the
+# session secret, and the photos (hard links: photo files never change once written).
+checkpoint() {
+  in_data <<'CHECKPOINT'
+set -eu
+C="/data/pre-upgrade-$NAME"
+rm -rf "$C.tmp"; mkdir -p "$C.tmp/images"
+if [ -f /data/giftly.db ]; then
+  C="$C" node -e '
+    const { DatabaseSync } = require("node:sqlite");
+    const out = `${process.env.C}.tmp/giftly.db`;
+    new DatabaseSync("/data/giftly.db").exec(`VACUUM INTO '\''${out}'\''`);
+    const check = new DatabaseSync(out, { readOnly: true }).prepare("PRAGMA integrity_check").get();
+    if (Object.values(check)[0] !== "ok") { console.error("the copy of the database is damaged"); process.exit(1); }
+  '
+fi
+if [ -d /data/images ]; then
+  for f in /data/images/*; do [ -f "$f" ] || continue; ln "$f" "$C.tmp/images/" 2>/dev/null || cp -p "$f" "$C.tmp/images/"; done
+  [ "$(ls /data/images | wc -l)" = "$(ls "$C.tmp/images" | wc -l)" ]
+fi
+if [ -f /data/.session-secret ]; then cp -p /data/.session-secret "$C.tmp/.session-secret"; fi
+mv "$C.tmp" "$C"
+# Recovery points whose snapshot is gone (only the last 3 are kept).
+for d in /data/pre-upgrade-*; do
+  [ -d "$d" ] || continue
+  case " $KEEP_POINTS " in *" ${d#/data/pre-upgrade-} "*) ;; *) rm -rf "$d" ;; esac
+done
+CHECKPOINT
+}
+# After a failed candidate: its data (everything it may have written) goes to failed-upgrade-…,
+# then the recovery point is copied back (the recovery point itself stays as it was).
+restore_checkpoint() {
+  in_data <<'RESTORE'
+set -eu
+C="/data/pre-upgrade-$NAME"; F="/data/failed-upgrade-$NAME"
+[ -d "$C" ] || { echo "no recovery point at $C" >&2; exit 1; }
+mkdir -p "$F"
+for n in giftly.db giftly.db-wal giftly.db-shm .session-secret; do
+  if [ -e "/data/$n" ]; then mv "/data/$n" "$F/$n"; fi
+done
+if [ -d /data/images ]; then
+  mkdir -p "$F/images"
+  for f in /data/images/*; do [ -f "$f" ] || continue; ln "$f" "$F/images/" 2>/dev/null || cp -p "$f" "$F/images/"; done
+fi
+if [ -f "$C/giftly.db" ]; then cp -p "$C/giftly.db" /data/giftly.db; fi
+if [ -f "$C/.session-secret" ]; then cp -p "$C/.session-secret" /data/.session-secret; fi
+mkdir -p /data/images
+for f in "$C"/images/*; do
+  [ -f "$f" ] || continue
+  [ -e "/data/images/${f##*/}" ] || ln "$f" /data/images/ 2>/dev/null || cp -p "$f" /data/images/
+done
+RESTORE
+}
+
+# A failed update: put back every file from the snapshot (and remove those that didn't exist)
+# and point the image tags back to the exact images that worked; if the new version already ran,
+# put the data recovery point back too. Then restart and check that the previous setup works
+# again. A failed FIRST install is not rolled back: Giftly may already have created the admin
+# account with the password in .env.
+DATA_POINT=0   # 2 = a recovery point exists and the new version may have changed the data
 rollback() {
   reason=$1
   if [ "$HAD_INSTALL" != 1 ]; then die "$reason"; fi
   say "The update failed ($reason). Putting your previous setup back…"
+  DATA_NOTE=''
+  if [ "$DATA_POINT" = 2 ]; then
+    # shellcheck disable=SC2086
+    $COMPOSE --profile tunnel stop >/dev/null 2>&1 || true
+    if restore_checkpoint; then
+      DATA_NOTE=" Your data is back as it was before the update (recovery point: $(pwd)/data/pre-upgrade-$SNAP_NAME, or that folder inside Giftly's data volume); anything the failed version wrote is kept in data/failed-upgrade-$SNAP_NAME."
+    else
+      die "the update failed: $reason. Putting the data recovery point back failed too, so Giftly was left stopped. Nothing was deleted: the recovery point is in data/pre-upgrade-$SNAP_NAME and the failed version's data in data/failed-upgrade-$SNAP_NAME (inside Giftly's data volume). Settings snapshot: $(pwd)/$SNAP"
+    fi
+  fi
+  if [ -f "$SNAP/.images" ]; then
+    while read -r svc ref id; do docker tag "$id" "$ref" >/dev/null 2>&1 || true; done < "$SNAP/.images"
+  fi
   for f in $SNAP_FILES; do
     if [ -f "$SNAP/$f" ]; then cp "$SNAP/$f" "$f"; fi
   done
@@ -171,9 +289,9 @@ rollback() {
   PROFILE=$(profile_now)
   # shellcheck disable=SC2086
   if $COMPOSE $PROFILE up -d >/dev/null 2>&1 && healthy; then
-    die "the update failed: $reason. Your previous setup was restored and is working again (snapshot: $(pwd)/$SNAP)."
+    die "the update failed: $reason. Your previous setup was restored and is working again (snapshot: $(pwd)/$SNAP).$DATA_NOTE"
   fi
-  die "the update failed: $reason. Your previous files were restored from $(pwd)/$SNAP, but it didn't come back either ($REASON). Logs: cd $(pwd) && $COMPOSE logs"
+  die "the update failed: $reason. Your previous files were restored from $(pwd)/$SNAP, but it didn't come back either ($REASON).$DATA_NOTE Logs: cd $(pwd) && $COMPOSE logs"
 }
 
 FRESH=0
@@ -236,8 +354,16 @@ healthy() {
 # --- Start ----------------------------------------------------------------------------------
 PROFILE=$(profile_now)
 say "Starting Giftly…"
+# Download first, while the current version keeps running (a failed download changes no data).
 # shellcheck disable=SC2086
 $COMPOSE $PROFILE pull -q || rollback "couldn't download the images"
+if [ "$HAD_INSTALL" = 1 ] && [ -f "$SNAP/compose.yaml" ]; then
+  # Before the new version can migrate anything: stop Giftly and save a verified recovery point.
+  say "Saving a recovery point of your data…"
+  if [ -n "$OLD_CID" ]; then docker stop "$OLD_CID" >/dev/null 2>&1 || rollback "couldn't stop Giftly to save a recovery point"; fi
+  checkpoint || rollback "couldn't save a recovery point of your data (nothing was changed)"
+  DATA_POINT=2 # from here on, the new version may change the data
+fi
 # shellcheck disable=SC2086
 $COMPOSE $PROFILE up -d || rollback "couldn't start the containers"
 healthy || rollback "$REASON"
@@ -268,6 +394,9 @@ if [ "$FRESH" = 1 ]; then
   say "  Username: $ADMIN_USERNAME"
   say "  Password: $PASSWORD"
   say "Keep this password: it's also in $(pwd)/.env (readable only by you)."
+fi
+if [ "$DATA_POINT" = 2 ]; then
+  say "  Your data from before this update: data/pre-upgrade-$SNAP_NAME (inside Giftly's data folder; the last 3 are kept)."
 fi
 C="$COMPOSE${PROFILE:+ $PROFILE}"
 say "Update later: run this script again (or: cd $(pwd) && $C pull && $C up -d)"

@@ -572,7 +572,6 @@ export const items = {
   allImageFiles() {
     return db.prepare('SELECT image_file FROM items WHERE image_file IS NOT NULL').all().map((r) => r.image_file);
   },
-  /** Admin sets/clears the reservation by free-text name (e.g. someone who told you in person). */
   /**
    * An admin reserves (or re-assigns) a gift on behalf of a guest named `name`. The guest is
    * found or created in that list, so the gift shows in their picks when they open the list.
@@ -593,14 +592,6 @@ export const items = {
         .run(guest.id, guest.name, now(), userId ?? null, id);
       return guest;
     });
-  },
-  /** The edit form's "Reserved by" field: empty releases, a name reserves for that guest. */
-  setManualReservation(id, name, userId) {
-    if (!name) {
-      items.release(id);
-      return null;
-    }
-    return items.reserveForGuest(id, name, userId);
   },
   /** Atomic: only succeeds if nobody else got there first. */
   reserve(id, guest) {

@@ -48,6 +48,42 @@ function postButton(ctx, action, label, { confirm, cls = '', extra = '' } = {}) 
     ${csrfField(ctx)}${raw(extra)}<button type="submit" class="${cls}">${label}</button></form>`;
 }
 
+/**
+ * Which reservation an admin page showed ("free" when none). The reserve/release forms send it
+ * back as `expect`, and the server only acts if it still holds.
+ */
+export function reservationKey(item) {
+  return item.reserved_name ? `${item.reserved_guest_id ?? 'manual'}.${item.reserved_at ?? ''}` : 'free';
+}
+
+/** Who has an item reserved (or that it's free / taken in another list). */
+function reservationStatus(ctx, it, adminNames) {
+  return it.claimed_elsewhere && !it.reserved_name
+    ? h`<span class="muted">🎀 ${ctx.t('wish.claimedElsewhere')}</span>`
+    : it.reserved_name
+    ? h`🎀 ${ctx.t('admin.reservedBy', { name: it.reserved_name })} <span class="muted">· ${fmtDate(ctx, it.reserved_at)}${it.reserved_by_user_id ? ` · ${ctx.t('admin.byAdmin', { name: adminNames[it.reserved_by_user_id] || '—' })}` : ''}${it.reserved_guest_id ? '' : ` · ${ctx.t('admin.manual')}`}</span>`
+    : h`<span class="muted">${ctx.t('admin.free')}</span>`;
+}
+
+/** The explicit reservation actions: release, and reserve for / reassign to someone by name. */
+function reservationActions(ctx, it, datalistId) {
+  const expect = h`<input type="hidden" name="expect" value="${reservationKey(it)}">`;
+  if (it.claimed_elsewhere && !it.reserved_name) return '';
+  const label = it.reserved_name ? ctx.t('admin.reassignButton') : ctx.t('admin.reserveButton');
+  return h`${it.reserved_name ? postButton(ctx, `/admin/items/${it.id}/release`, ctx.t('admin.release'), { cls: 'secondary', confirm: ctx.t('admin.releaseConfirm'), extra: String(expect) }) : ''}
+        <details class="reserve-for">
+          <summary class="button secondary">${label}</summary>
+          <form method="post" action="/admin/items/${it.id}/reserve" class="stack">
+            ${csrfField(ctx)}${expect}
+            <label>${ctx.t('admin.reserveFor')}
+              <input name="name" required maxlength="60" list="${datalistId}" autocomplete="off" placeholder="${ctx.t('login.namePlaceholder')}">
+            </label>
+            <p class="small muted">${ctx.t('admin.reserveHint')}</p>
+            <button type="submit" class="primary">${label}</button>
+          </form>
+        </details>`;
+}
+
 function flash(ctx) {
   if (!ctx.flash) return '';
   return h`<div class="flash flash-${ctx.flash.type}" role="status">${ctx.flash.text}</div>`;
@@ -409,27 +445,12 @@ ${list.source_wishlist_id ? h`<p class="small muted">🎀 ${ctx.t('wish.listFrom
         ${itemBody(ctx, it)}
         ${previewStatus(ctx, it)}
         ${it.wishlist_item_id ? h`<p class="small muted">🎀 ${ctx.t('wish.fromWishlist')}${it.hidden ? h` · <strong>${ctx.t('wish.hiddenHere')}</strong>` : ''}${it.wish_status && it.wish_status !== 'active' ? h` · <strong class="warn">${ctx.t(`wish.removedFlag.${it.wish_removed_reason}`)}</strong>` : ''}</p>` : ''}
-        <p class="status">${it.claimed_elsewhere && !it.reserved_name
-          ? h`<span class="muted">🎀 ${ctx.t('wish.claimedElsewhere')}</span>`
-          : it.reserved_name
-          ? h`🎀 ${ctx.t('admin.reservedBy', { name: it.reserved_name })} <span class="muted">· ${fmtDate(ctx, it.reserved_at)}${it.reserved_by_user_id ? ` · ${ctx.t('admin.byAdmin', { name: adminNames[it.reserved_by_user_id] || '—' })}` : ''}${it.reserved_guest_id ? '' : ` · ${ctx.t('admin.manual')}`}</span>`
-          : h`<span class="muted">${ctx.t('admin.free')}</span>`}</p>
+        <p class="status">${reservationStatus(ctx, it, adminNames)}</p>
       </div>
       <div class="actions">
         <a class="button secondary" href="/admin/items/${it.id}">${ctx.t('admin.edit')}</a>
-        ${it.reserved_name ? postButton(ctx, `/admin/items/${it.id}/release`, ctx.t('admin.release'), { cls: 'secondary', confirm: ctx.t('admin.releaseConfirm') }) : ''}
         ${it.wishlist_item_id ? postButton(ctx, `/admin/items/${it.id}/hide`, it.hidden ? ctx.t('wish.unhide') : ctx.t('wish.hide'), { cls: 'secondary', extra: `<input type="hidden" name="hidden" value="${it.hidden ? '0' : '1'}">` }) : ''}
-        ${it.reserved_name || it.claimed_elsewhere ? '' : h`<details class="reserve-for">
-          <summary class="button secondary">${ctx.t('admin.reserveButton')}</summary>
-          <form method="post" action="/admin/items/${it.id}/reserve" class="stack">
-            ${csrfField(ctx)}
-            <label>${ctx.t('admin.reserveFor')}
-              <input name="name" required maxlength="60" list="guests-${list.id}" autocomplete="off" placeholder="${ctx.t('login.namePlaceholder')}">
-            </label>
-            <p class="small muted">${ctx.t('admin.reserveHint')}</p>
-            <button type="submit" class="primary">${ctx.t('admin.reserveButton')}</button>
-          </form>
-        </details>`}
+        ${reservationActions(ctx, it, `guests-${list.id}`)}
         ${idx > 0 ? postButton(ctx, `/admin/items/${it.id}/move`, '↑', { cls: 'icon move', extra: '<input type="hidden" name="dir" value="up">' }) : ''}
         ${idx < allItems.length - 1 ? postButton(ctx, `/admin/items/${it.id}/move`, '↓', { cls: 'icon move', extra: '<input type="hidden" name="dir" value="down">' }) : ''}
         ${postButton(ctx, `/admin/items/${it.id}/delete`, ctx.t('admin.delete'), { cls: 'danger', confirm: ctx.t('admin.deleteItemConfirm') })}
@@ -497,8 +518,15 @@ ${pending.length ? h`<section class="card">
   });
 }
 
-export function adminItemPage(ctx, { item, list, form, error }) {
+export function adminItemPage(ctx, { item, list, form, error, allGuests = [], adminNames = {} }) {
   const v = form || item;
+  // Shown outside the edit form: saving the form never changes who is bringing the gift.
+  const reservation = h`<section class="card" id="reservation">
+  <h2>${ctx.t('admin.reservation')}</h2>
+  <p class="status">${reservationStatus(ctx, item, adminNames)}</p>
+  <div class="actions">${reservationActions(ctx, item, `guests-${list.id}`)}</div>
+  <datalist id="guests-${list.id}">${allGuests.map((g) => h`<option value="${g.name}"></option>`)}</datalist>
+</section>`;
   // Linked to a wishlist: its name/link/image follow the wishlist; only this list's notes and the reservation here.
   if (item.wishlist_item_id) {
     return layout(ctx, {
@@ -513,13 +541,10 @@ ${adminHeader(ctx, `/admin/lists/${list.id}`, ctx.t('admin.backToList'))}
     <label>${ctx.t('wish.listNotes')}
       <input name="notes" maxlength="1000" value="${item.notes || ''}">
     </label>
-    ${item.claimed_elsewhere ? h`<p class="small muted">🎀 ${ctx.t('wish.claimedElsewhere')}</p>` : h`<label>${ctx.t('admin.reservedName')}
-      <input name="reserved_name" maxlength="60" value="${item.reserved_name || ''}">
-      <span class="small muted">${ctx.t('admin.reservedNameHint')}</span>
-    </label>`}
     <button type="submit" class="primary">${ctx.t('admin.save')}</button>
   </form>
-</section>`,
+</section>
+${reservation}`,
     });
   }
   return layout(ctx, {
@@ -548,14 +573,11 @@ ${adminHeader(ctx, `/admin/lists/${list.id}`, ctx.t('admin.backToList'))}
         </div>
       </div>
     </fieldset>
-    <label>${ctx.t('admin.reservedName')}
-      <input name="reserved_name" maxlength="60" value="${v.reserved_name || ''}">
-      <span class="small muted">${ctx.t('admin.reservedNameHint')}</span>
-    </label>
     <button type="submit" class="primary">${ctx.t('admin.save')}</button>
   </form>
   ${item.url || item.image_source ? h`<hr>${postButton(ctx, `/admin/items/${item.id}/preview`, ctx.t('preview.refresh'), { cls: 'secondary' })}` : ''}
-</section>`,
+</section>
+${reservation}`,
   });
 }
 

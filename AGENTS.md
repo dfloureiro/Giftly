@@ -39,6 +39,11 @@ Self-hosted gift lists (guest lists, wishlists, "gifts to give"). These are the 
 - BusyBox `sha256sum` has no `--quiet`. `cloudflared` images have no shell (probe it from the giftly container). `env_file: {path, required: false}` needs Compose ≥ 2.24.
 - In `set -e` shell, a final `[ … ] && …` that is false exits the script.
 - Files a container writes into a bind mount aren't removable by the CI user; delete them from a container.
+- A form must not carry state that other people change. The item edit form used to resubmit "Reserved by", so a page opened before a guest picked freed the pick when saved. Reservations change only through explicit actions that send what the page showed (`expect`, `views.reservationKey`), and the server refuses if it changed.
+- A backup must be checked against its own snapshot: copying "whatever is in `images/`" after `VACUUM INTO` can miss a photo deleted in between. Copy exactly the snapshot's references and compare before publishing.
+- `docker compose pull` moves the tag, so a "rollback" that only restores files restarts the new image. Record and pin the image IDs before pulling, and tag them back on rollback.
+- Before a new version can migrate, take a verified data recovery point. If the new version fails, move its data aside rather than deleting it.
+- A restore must be able to put the old data back as a set (db, WAL/SHM, images, secret). Journal what was moved, and only start the cutover after the incoming data is checked and staged on the same disk.
 - Default security settings must not silently break common deployments (behind nginx or Cloudflare Tunnel). The owner decided that an empty `TRUSTED_PROXIES` means "private/local peers": keep it.
 
 ## Reviews and releases

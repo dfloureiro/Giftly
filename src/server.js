@@ -204,6 +204,7 @@ const FLASH = {
   giving: ['success', 'wish.givingDone'],
   pickOccasion: ['error', 'give.pickOccasion'],
   reservedFor: ['success', 'admin.reservedDone'],
+  reservationChanged: ['error', 'admin.reservationChanged'],
   badItem: ['error', 'admin.titleRequired'],
   twofaOff: ['success', 'tf.disabled'],
   twofaReset: ['success', 'tf.resetDone'],
@@ -699,7 +700,6 @@ function validateItem(ctx, body) {
     image_source: imageSource ?? String(body.image_source ?? ''),
     remove_image: body.remove_image === '1',
     notes: clean(body.notes, 1000),
-    reserved_name: clean(body.reserved_name, 60),
   };
   let error;
   if (!form.title) error = ctx.t('admin.titleRequired');
@@ -759,27 +759,27 @@ function loadItem(ctx) {
   return item;
 }
 
+const itemPageData = (item) => ({ item, list: lists.get(item.list_id), allGuests: guests.forList(item.list_id), adminNames: adminNames() });
+
 route('GET', '/admin/items/:id', (ctx) => {
   const item = loadItem(ctx);
-  if (item) html(ctx.res, views.adminItemPage(ctx, { item, list: lists.get(item.list_id) }));
+  if (item) html(ctx.res, views.adminItemPage(ctx, itemPageData(item)));
 }, { auth: 'admin' });
 
 route('POST', '/admin/items/:id', (ctx) => {
   const item = loadItem(ctx);
   if (!item) return;
+  // Saving never touches the reservation: the form may be older than a guest's pick or a release.
+  // Reserve, reassign and release are their own actions (below).
   // Linked to a wishlist: name/link/image come from the wishlist; only this list's notes change here.
   if (item.wishlist_item_id) {
     items.setListNotes(item.id, cleanMultiline(ctx.body.notes, 1000));
-    const reservedFor = items.setManualReservation(item.id, clean(ctx.body.reserved_name, 60), ctx.user.id);
-    if (reservedFor) notifyAdminReservation(ctx, item.id, reservedFor);
     return redirect(ctx.res, `/admin/lists/${item.list_id}?m=saved#item-${item.id}`);
   }
   const { form, error } = validateItem(ctx, ctx.body);
-  if (error) return html(ctx.res, views.adminItemPage(ctx, { item, list: lists.get(item.list_id), form, error }), 400);
+  if (error) return html(ctx.res, views.adminItemPage(ctx, { ...itemPageData(item), form, error }), 400);
   if (form.remove_image) form.image_source = '';
   items.update(item.id, form);
-  const reservedFor = items.setManualReservation(item.id, form.reserved_name, ctx.user.id);
-  if (reservedFor) notifyAdminReservation(ctx, item.id, reservedFor);
   const uploaded = applyUpload(item.id, ctx.body.image_data);
   if (!uploaded && form.remove_image) clearPreview(item.id);
   if (!uploaded && form.image_source && form.image_source !== item.image_source) {
@@ -855,10 +855,22 @@ function notifyAdminReservation(ctx, itemId, guest) {
   notify('pick', { list: lists.get(item.list_id), guest, item, byUser: ctx.user }, { exceptUserId: ctx.user.id });
 }
 
-// Reserve on behalf of a guest (by name). They see it in their picks when they open the list.
+/**
+ * Reserve/reassign/release act only on the reservation the admin's page showed (`expect`, see
+ * views.reservationKey; missing = "free"). A page opened before a guest picked or gave it up
+ * gets a "changed meanwhile" message instead of overriding the guest.
+ */
+function reservationStillAsShown(ctx, item) {
+  if (views.reservationKey(item) === String(ctx.body.expect || 'free')) return true;
+  redirect(ctx.res, `/admin/lists/${item.list_id}?m=reservationChanged#item-${item.id}`);
+  return false;
+}
+
+// Reserve on behalf of a guest (by name), or reassign to someone else. They see it in their
+// picks when they open the list.
 route('POST', '/admin/items/:id/reserve', (ctx) => {
   const item = loadItem(ctx);
-  if (!item) return;
+  if (!item || !reservationStillAsShown(ctx, item)) return;
   const name = clean(ctx.body.name, 60);
   if (!name) return redirect(ctx.res, `/admin/lists/${item.list_id}#item-${item.id}`);
   const guest = items.reserveForGuest(item.id, name, ctx.user.id);
@@ -868,7 +880,7 @@ route('POST', '/admin/items/:id/reserve', (ctx) => {
 
 route('POST', '/admin/items/:id/release', (ctx) => {
   const item = loadItem(ctx);
-  if (!item) return;
+  if (!item || !reservationStillAsShown(ctx, item)) return;
   items.release(item.id);
   redirect(ctx.res, `/admin/lists/${item.list_id}?m=released`);
 }, { auth: 'admin' });
