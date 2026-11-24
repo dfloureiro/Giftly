@@ -27,6 +27,7 @@ async function phase1(admin) {
   await admin.goto(`${B}/admin/lists/new`);
   await admin.fill('input[name=title]', "Emma's Christmas list");
   await admin.fill('textarea[name=description]', 'Emma is 34, loves reading, plants and good coffee. Clothes size M.');
+  await admin.check('input[type=checkbox][name=ask_buyer]'); // guests say who buys the gift
   await admin.click('form[action="/admin/lists"] button[type=submit]');
   const listUrl = admin.url().split('?')[0];
   fs.writeFileSync(`${OUT}/../listurl`, listUrl);
@@ -54,8 +55,8 @@ async function phase2(browser, admin) {
     await p.goto(share);
     await p.fill('input[name=name]', name);
     await p.click('button[type=submit]');
-    for (const title of picks) {
-      await p.locator('li.item', { hasText: title }).locator('button').click();
+    for (const [title, buyer] of picks) {
+      await p.locator('li.item', { hasText: title }).locator(`button[value=${buyer}]`).click();
       await p.waitForURL(/m=/);
     }
     await p.goto(share);
@@ -70,10 +71,10 @@ async function phase2(browser, admin) {
     await p.screenshot({ path: `${OUT}/join-mobile.png` });
     await ctx.close();
   }
-  const tom = await guest('Uncle Tom', desktop, ['Wireless headphones']);
+  const tom = await guest('Uncle Tom', desktop, [['Wireless headphones', 'us']]);
   await tom.ctx.close();
   await recordGuestFlow(browser, share);
-  const rose = await guest('Grandma Rose', mobile, ['Wool scarf']);
+  const rose = await guest('Grandma Rose', mobile, [['Wool scarf', 'us']]);
   await rose.p.screenshot({ path: `${OUT}/guest-list.png` });
   await rose.ctx.close();
   const dark = await guest('Grandma Rose', { ...mobile, colorScheme: 'dark' }, []);
@@ -152,7 +153,7 @@ async function recordGuestFlow(browser, share) {
   }, target);
   await pause(1000);
   const before = p.url();
-  await tap(item.locator('button'));
+  await tap(item.locator('button[value=guest]'));
   await p.waitForURL((u) => u.href !== before);
   await p.waitForLoadState();
   await pause(1200);

@@ -30,9 +30,9 @@ No more two aunts buying the same toaster.</p>
 Made for the phone first. This is how guests and admins see it:
 
 <p align="center">
-  <img src="docs/screenshots/guest-flow.gif" alt="A guest opens the list link on a phone, types their name, scrolls to a plant and taps “I'll give this one”; it moves to their picks" width="240">
+  <img src="docs/screenshots/guest-flow.gif" alt="A guest opens the list link on a phone, types their name, scrolls to a plant and taps “I'll buy it”; it moves to their picks" width="240">
   &nbsp;
-  <img src="docs/screenshots/guest-list.png" alt="A guest's view of a gift list on a phone: their own pick at the top, available gifts with images, prices and shop links below" width="240">
+  <img src="docs/screenshots/guest-list.png" alt="A guest's view of a gift list on a phone: their own pick at the top (they asked the hosts to buy it), available gifts with images, prices and shop links below" width="240">
   &nbsp;
   <img src="docs/screenshots/guest-mobile-dark.png" alt="The gift list on a phone in dark mode" width="240">
 </p>
@@ -51,7 +51,7 @@ Made for the phone first. This is how guests and admins see it:
 <details>
 <summary><strong>Lists and wishlists</strong></summary>
 <p align="center">
-  <img src="docs/screenshots/admin-list.png" alt="Admin page of a list on a phone: every gift with who reserved it, and add, edit, release and reorder actions" width="240">
+  <img src="docs/screenshots/admin-list.png" alt="Admin page of a list on a phone: every gift with who reserved it and who buys it, mark as bought, and add, edit, release and reorder actions" width="240">
   &nbsp;
   <img src="docs/screenshots/wishlist-own.png" alt="Your own wishlist: items in order of preference, with no hint of what was reserved" width="240">
   &nbsp;
