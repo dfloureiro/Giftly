@@ -37,9 +37,9 @@ test('images: only signed-in admins and guests of a list showing them; never in 
   assert.equal((await stranger.request(`/img/${file}`)).status, 404);
 
   // A private gift's photo in "gifts to give" is never shown to guests.
-  const person = Number(/people\/(\d+)/.exec((await admin.post('/admin/give/people', { name: 'Img person', visibility: 'private' }, { from: '/admin/give/people' })).location)[1]);
-  await admin.post('/admin/give/gifts', { person_id: String(person), occasion: 'birthday:2030', name: 'Secret photo gift', status: 'idea', image_data: PNG }, { from: `/admin/give/people/${person}` });
-  const giftFile = imgIn((await admin.get(`/admin/give/people/${person}`)).text);
+  const person = Number(/people\/(\d+)/.exec((await admin.post('/admin/people', { name: 'Img person', visibility: 'private' }, { from: '/admin/people' })).location)[1]);
+  await admin.post('/admin/gifts', { person_id: String(person), occasion: 'birthday:2030', name: 'Secret photo gift', status: 'planned', image_data: PNG }, { from: `/admin/people/${person}` });
+  const giftFile = imgIn((await admin.get(`/admin/people/${person}`)).text);
   assert.ok(giftFile, "the gift's photo is shown to the admin");
   assert.equal((await admin.request(`/img/${giftFile}`)).status, 200);
   assert.equal((await guest.request(`/img/${giftFile}`)).status, 404);
@@ -56,11 +56,11 @@ test('notifications: local addresses refused unless allowed; checked again when 
       { ntfy_url: 'http://192.168.1.20/giftly' },
       { webhook_url: 'http://169.254.169.254/latest/meta-data' },
     ]) {
-      const r = await a.post('/admin/profile/notifications', form, { from: '/admin/profile' });
+      const r = await a.post('/admin/notifications', form, { from: '/admin/profile' });
       assert.equal(r.status, 400, JSON.stringify(form));
       assert.match(r.text, /Local network addresses/);
     }
-    const ok = await a.post('/admin/profile/notifications', { webhook_url: 'https://hooks.example.com/x' }, { from: '/admin/profile' });
+    const ok = await a.post('/admin/notifications', { webhook_url: 'https://hooks.example.com/x' }, { from: '/admin/profile' });
     assert.equal(ok.status, 303, 'public addresses are fine');
   } finally { await strict.stop(); }
 });

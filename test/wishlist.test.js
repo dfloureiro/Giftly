@@ -4,7 +4,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp } from 'node:fs/promises';
 import {
-  startServer, Client, loginAdmin, inviteAdmin, joinList, pickableIds, webhookReceiver, sleep, formFields,
+  startServer, Client, loginAdmin, inviteAdmin, joinList, pickableIds, webhookReceiver, sleep, formFields, wishlistOf, personId,
 } from './helpers.js';
 
 let server, diogo, maria, bea, mariaWishlist;
@@ -14,7 +14,7 @@ before(async () => {
   maria = await inviteAdmin(server.base, diogo, { username: 'maria', name: 'Maria' });
   bea = await inviteAdmin(server.base, diogo, { username: 'bea', name: 'Bea' });
   await maria.get('/admin/wishlist'); // creates her wishlist
-  mariaWishlist = Number(/\/admin\/wishlists\/(\d+)/.exec((await diogo.get('/admin/wishlists')).text)[1]);
+  mariaWishlist = await wishlistOf(diogo, 'Maria');
 });
 after(async () => { await server?.stop(); });
 
@@ -66,20 +66,20 @@ test('the owner\'s wishlist page is identical whether items are reserved or not'
 test('a list made from someone\'s wishlist is invisible to them everywhere — even when shared', async () => {
   const c = await addWish('Shared list item');
   const list = await listFromWishlist(diogo, [c], { title: 'Shared from Maria', visibility: 'shared' });
-  assert.ok(!(await maria.get('/admin')).text.includes('Shared from Maria'));
+  assert.ok(!(await maria.get('/admin/lists')).text.includes('Shared from Maria'));
   assert.equal((await maria.get(`/admin/lists/${list.id}`)).status, 404);
   assert.equal((await maria.get(`/admin/items/${list.itemIds[0]}`)).status, 404);
-  assert.equal((await maria.post(`/admin/items/${list.itemIds[0]}/reserve`, { name: 'x' }, { from: '/admin' })).status, 404);
+  assert.equal((await maria.post(`/admin/items/${list.itemIds[0]}/reserve`, { name: 'x' }, { from: '/admin/lists' })).status, 404);
   assert.equal((await maria.get(`/admin/previews?ids=${list.itemIds[0]}`)).text, '{}');
-  assert.match((await bea.get('/admin')).text, /Shared from Maria/, 'other admins see a shared one');
+  assert.match((await bea.get('/admin/lists')).text, /Shared from Maria/, 'other admins see a shared one');
   assert.equal((await bea.get(`/admin/lists/${list.id}`)).status, 200);
 });
 
 test('private lists are only visible to their owner', async () => {
-  const r = await diogo.post('/admin/lists', { title: 'Diogo private list', visibility: 'private' }, { from: '/admin' });
+  const r = await diogo.post('/admin/lists', { title: 'Diogo private list', visibility: 'private' }, { from: '/admin/lists' });
   const id = Number(/\/admin\/lists\/(\d+)/.exec(r.location)[1]);
   assert.equal((await bea.get(`/admin/lists/${id}`)).status, 404);
-  assert.ok(!(await bea.get('/admin')).text.includes('Diogo private list'));
+  assert.ok(!(await bea.get('/admin/lists')).text.includes('Diogo private list'));
   assert.equal((await diogo.get(`/admin/lists/${id}`)).status, 200);
 });
 
@@ -87,8 +87,8 @@ test('guest picks on that list never notify the wishlist owner', async () => {
   const hookMaria = await webhookReceiver();
   const hookDiogo = await webhookReceiver();
   try {
-    await maria.post('/admin/profile/notifications', { webhook_url: hookMaria.url, event_pick: '1', event_join: '1' }, { from: '/admin/profile' });
-    await diogo.post('/admin/profile/notifications', { webhook_url: hookDiogo.url, event_pick: '1' }, { from: '/admin/profile' });
+    await maria.post('/admin/notifications', { webhook_url: hookMaria.url, event_pick: '1', event_join: '1' }, { from: '/admin/profile' });
+    await diogo.post('/admin/notifications', { webhook_url: hookDiogo.url, event_pick: '1' }, { from: '/admin/profile' });
     const d = await addWish('Notify item');
     const list = await listFromWishlist(diogo, [d], { visibility: 'shared' });
     const guest = await joinList(server.base, list.token, 'Primo');
@@ -101,15 +101,15 @@ test('guest picks on that list never notify the wishlist owner', async () => {
   } finally {
     await hookMaria.close();
     await hookDiogo.close();
-    await maria.post('/admin/profile/notifications', {}, { from: '/admin/profile' });
-    await diogo.post('/admin/profile/notifications', {}, { from: '/admin/profile' });
+    await maria.post('/admin/notifications', {}, { from: '/admin/profile' });
+    await diogo.post('/admin/notifications', {}, { from: '/admin/profile' });
   }
 });
 
 test('removing a reserved and an unreserved item gives the owner exactly the same answer', async () => {
   const hook = await webhookReceiver();
   try {
-    await diogo.post('/admin/profile/notifications', { webhook_url: hook.url }, { from: '/admin/profile' });
+    await diogo.post('/admin/notifications', { webhook_url: hook.url }, { from: '/admin/profile' });
     const reserved = await addWish('Remove reserved');
     const free = await addWish('Remove free');
     const list = await listFromWishlist(diogo, [reserved, free], { title: 'Removal list' });
@@ -133,7 +133,7 @@ test('removing a reserved and an unreserved item gives the owner exactly the sam
     assert.match((await diogo.get(`/admin/lists/${list.id}`)).text, /already bought it/);
   } finally {
     await hook.close();
-    await diogo.post('/admin/profile/notifications', {}, { from: '/admin/profile' });
+    await diogo.post('/admin/notifications', {}, { from: '/admin/profile' });
   }
 });
 
@@ -159,7 +159,7 @@ test('the same wishlist item in two lists: two simultaneous guest picks, exactly
 test('"I\'ll give it" vs a guest pick at the same time: exactly one wins', async () => {
   const f = await addWish('Race give');
   const list = await listFromWishlist(diogo, [f], { title: 'Race list' });
-  const occ = await bea.post('/admin/give/occasions', { name: 'Race occasion', date: '2099-01-01', visibility: 'shared' }, { from: '/admin/give/occasions' });
+  const occ = await bea.post('/admin/occasions', { name: 'Race occasion', date: '2099-01-01', visibility: 'shared' }, { from: '/admin/occasions' });
   const occId = Number(/occasions\/(\d+)/.exec(occ.location)[1]);
   const guest = await joinList(server.base, list.token, 'Racer');
   const [item] = await pickableIds(guest, list.token);
@@ -173,39 +173,43 @@ test('"I\'ll give it" vs a guest pick at the same time: exactly one wins', async
   assert.equal(Number(guestWon) + Number(beaWon), 1, `guest ${rg.location} / bea ${rb.location}`);
 });
 
-test('"I\'ll give it" gift for an admin is private, never shown to them, and stays private', async () => {
+test('"I\'ll give it" for an admin: shared with the other admins, never shown to her', async () => {
   const g = await addWish('Secret present');
-  const occ = await diogo.post('/admin/give/occasions', { name: 'Maria party', date: '2099-02-02', visibility: 'shared' }, { from: '/admin/give/occasions' });
+  const occ = await diogo.post('/admin/occasions', { name: 'Maria party', date: '2099-02-02', visibility: 'shared' }, { from: '/admin/occasions' });
   const occId = Number(/occasions\/(\d+)/.exec(occ.location)[1]);
-  const r = await diogo.post(`/admin/wishlists/${mariaWishlist}/items/${g}/give`, { occasion: `occasion:${occId}` }, { from: `/admin/wishlists/${mariaWishlist}` });
+  const r = await diogo.post(`/admin/wishlists/${mariaWishlist}/items/${g}/give`, { occasion: `occasion:${occId}` }, { from: '/admin/people' });
   assert.match(r.location, /m=giving/);
-  assert.match((await diogo.get(`/admin/give/occasions/${occId}`)).text, /Secret present/);
-  assert.match((await diogo.get(`/admin/wishlists/${mariaWishlist}`)).text, /You&#39;re giving it/);
+  assert.match((await diogo.get(`/admin/occasions/${occId}`)).text, /Secret present/);
+  const mariaPerson = await personId(diogo, 'Maria');
+  assert.match((await diogo.get(`/admin/people/${mariaPerson}`)).text, /You&#39;re giving it/);
+  assert.match((await bea.get(`/admin/occasions/${occId}`)).text, /Secret present/, 'the other admins see it (5.0)');
 
-  for (const path of ['/admin/give', `/admin/give/occasions/${occId}`, '/admin/give/people']) {
+  // Maria: not the gift, not the occasion that is only about her, not her own record.
+  for (const path of ['/admin/occasions', '/admin/occasions?view=all', `/admin/occasions/${occId}`, '/admin/people', `/admin/people/${mariaPerson}`]) {
     assert.ok(!(await maria.get(path)).text.includes('Secret present'), path);
   }
-  assert.match((await diogo.get('/admin/give/people')).text, /Maria/, 'a "gifts to give" person was created for her');
-  // Trying to share it with everyone doesn't work: gifts for an admin are always private.
-  const gid = Number(/id="gift-(\d+)"/.exec((await diogo.get(`/admin/give/occasions/${occId}`)).text)[1]);
-  await diogo.post(`/admin/give/gifts/${gid}`, { name: 'Secret present', status: 'idea', visibility: 'shared' }, { from: `/admin/give/occasions/${occId}` });
-  assert.ok(!(await maria.get(`/admin/give/occasions/${occId}`)).text.includes('Secret present'));
+  assert.equal((await maria.get(`/admin/occasions/${occId}`)).status, 404, 'an occasion only for her is hidden from her');
+  assert.equal((await maria.get(`/admin/people/${mariaPerson}`)).status, 404);
+  assert.equal(await personId(maria, 'Maria'), null);
 });
 
 test('owners cannot create lists from their own wishlist, nor see claim state on it', async () => {
-  const own = await maria.get(`/admin/wishlists/${mariaWishlist}`);
+  const own = await maria.get(`/admin/wishlists/${mariaWishlist}/new-list`);
   assert.equal(own.location, '/admin/wishlist');
   const r = await postPairs(maria, `/admin/wishlists/${mariaWishlist}/new-list`, [['title', 'Mine']], '/admin/wishlist');
   assert.equal(r.location, '/admin/wishlist');
-  assert.ok(!(await maria.get('/admin')).text.includes('>Mine<'));
+  assert.ok(!(await maria.get('/admin/lists')).text.includes('>Mine<'));
 });
 
 test('a private wishlist is not visible to others', async () => {
   await bea.get('/admin/wishlist');
   await bea.post('/admin/wishlist/visibility', { visibility: 'private' }, { from: '/admin/wishlist' });
-  assert.ok(!(await diogo.get('/admin/wishlists')).text.includes("Bea's wishlist"));
-  await bea.post('/admin/wishlist/visibility', { visibility: 'admins' }, { from: '/admin/wishlist' });
-  assert.match((await diogo.get('/admin/wishlists')).text, /Bea&#39;s wishlist/);
+  const beaPage = async () => (await diogo.get(`/admin/people/${await personId(diogo, 'Bea')}`)).text;
+  assert.match(await beaPage(), /Bea&#39;s wishlist is private/);
+  const ownId = Number(/\/admin\/wishlists\/(\d+)\/new-list/.exec((await bea.get('/admin/wishlist')).text)?.[1]);
+  await bea.post('/admin/wishlist/visibility', { visibility: 'shared' }, { from: '/admin/wishlist' });
+  assert.ok(!(await beaPage()).includes('wishlist is private'));
+  assert.ok(Number.isNaN(ownId), 'her own page offers no "create a list"');
 });
 
 test('linked lists follow the wishlist: edits sync, new items join (or wait for approval)', async () => {
@@ -245,22 +249,22 @@ test('archiving a list marks its reserved wishlist items as received; "given" do
   assert.match(own, /Removed and received[\s\S]*Archive me/);
 
   const m = await addWish('Give then hand over');
-  const occ = await diogo.post('/admin/give/occasions', { name: 'Hand over', date: '2099-03-03', visibility: 'shared' }, { from: '/admin/give/occasions' });
+  const occ = await diogo.post('/admin/occasions', { name: 'Hand over', date: '2099-03-03', visibility: 'shared' }, { from: '/admin/occasions' });
   const occId = Number(/occasions\/(\d+)/.exec(occ.location)[1]);
-  await diogo.post(`/admin/wishlists/${mariaWishlist}/items/${m}/give`, { occasion: `occasion:${occId}` }, { from: `/admin/wishlists/${mariaWishlist}` });
-  const gid = Number(/id="gift-(\d+)"/.exec((await diogo.get(`/admin/give/occasions/${occId}`)).text)[1]);
+  await diogo.post(`/admin/wishlists/${mariaWishlist}/items/${m}/give`, { occasion: `occasion:${occId}` }, { from: '/admin/people' });
+  const gid = Number(/id="gift-(\d+)"/.exec((await diogo.get(`/admin/occasions/${occId}`)).text)[1]);
 
   // Giving it up frees the item for guests again.
   const other = await listFromWishlist(bea, [m], { title: 'Free again' });
   const g2 = await joinList(server.base, other.token, 'Free guest');
   assert.deepEqual(await pickableIds(g2, other.token), [], 'reserved by Diogo');
-  await diogo.post(`/admin/give/gifts/${gid}/delete`, {}, { from: `/admin/give/occasions/${occId}` });
+  await diogo.post(`/admin/gifts/${gid}/delete`, {}, { from: `/admin/occasions/${occId}` });
   assert.equal((await pickableIds(g2, other.token)).length, 1, 'available again');
 
   // Give again and mark as given → received.
-  await diogo.post(`/admin/wishlists/${mariaWishlist}/items/${m}/give`, { occasion: `occasion:${occId}` }, { from: `/admin/wishlists/${mariaWishlist}` });
-  const gid2 = Number(/id="gift-(\d+)"/.exec((await diogo.get(`/admin/give/occasions/${occId}`)).text)[1]);
-  await diogo.post(`/admin/give/gifts/${gid2}/status`, { status: 'given' }, { from: `/admin/give/occasions/${occId}` });
+  await diogo.post(`/admin/wishlists/${mariaWishlist}/items/${m}/give`, { occasion: `occasion:${occId}` }, { from: '/admin/people' });
+  const gid2 = Number(/id="gift-(\d+)"/.exec((await diogo.get(`/admin/occasions/${occId}`)).text)[1]);
+  await diogo.post(`/admin/gifts/${gid2}/status`, { status: 'given' }, { from: `/admin/occasions/${occId}` });
   assert.match((await maria.get('/admin/wishlist')).text, /Removed and received[\s\S]*Give then hand over/);
 });
 

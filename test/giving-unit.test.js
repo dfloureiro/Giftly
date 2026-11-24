@@ -41,7 +41,7 @@ test('link prices update ideas only; a typed price is replaced by a link price; 
   const uid = Number(db.prepare("INSERT INTO users (username, name, password_hash, created_at) VALUES ('u', 'U', 'x', 0)").run().lastInsertRowid);
   const person = g.people.create(uid, { name: 'P', notes: '', visibility: 'shared', gives_christmas: false });
   const base = { person_id: person, occasion_id: null, year: 2026, url: 'https://shop.example/x', notes: '', visibility: 'shared' };
-  const idea = g.gifts.create(uid, { ...base, name: 'Idea', status: 'idea', price_cents: 1000, price_currency: 'EUR' });
+  const idea = g.gifts.create(uid, { ...base, name: 'Idea', status: 'planned', price_cents: 1000, price_currency: 'EUR' });
   const bought = g.gifts.create(uid, { ...base, name: 'Bought', status: 'bought', price_cents: 2000, price_currency: 'EUR' });
 
   g.gifts.setPreview(idea, { link_price_cents: 1500, link_price_currency: 'EUR' });
@@ -60,4 +60,11 @@ test('link prices update ideas only; a typed price is replaced by a link price; 
   const totals = g.spent(g.gifts.forPerson(uid, person));
   assert.deepEqual(totals.sort((a, b) => a.currency.localeCompare(b.currency)), [{ currency: 'EUR', cents: 2000 }, { currency: 'USD', cents: 500 }]);
   assert.ok(usd > 0);
+});
+
+test('Christmas is pinned on top of "Upcoming" from 1 November to Christmas day', () => {
+  assert.equal(g.christmasSeason('2026-10-31'), false);
+  assert.equal(g.christmasSeason('2026-11-01'), true);
+  assert.equal(g.christmasSeason('2026-12-25'), true);
+  assert.equal(g.christmasSeason('2026-12-26'), false);
 });

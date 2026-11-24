@@ -12,7 +12,7 @@ Self-hosted gift lists for families and friends.
 - Gifts with a link show the **shop's product image and price** automatically. Prices are re-checked daily and are never typed by hand.
 - **Several admins**, each with their own account, and optional **notifications** (ntfy, Telegram, Discord/Slack webhook) when someone picks a gift.
 - The admin always shows everything: who picked what and when, and who joined.
-- **Wishlists:** every admin keeps a personal wishlist, and every person in "gifts to give" has one too. Create guest lists from them (linked and kept in sync) or take an item with "I'll give it"; an admin never sees what was reserved for them.
+- **Wishlists:** every admin keeps a personal wishlist, and the admins keep a wishlist of ideas for everyone else (shared, or private to one admin). Create guest lists from them (linked and kept in sync) or take an item with "I'll give it"; an admin never sees what was reserved or planned for them.
 - **Gifts to give:** keep track of the gifts *you* give: people, birthdays, Christmas and other occasions, with a checklist per occasion, what each person got last year, shared or private entries per admin, and **reminders** when a gift is still missing.
 
 <p align="center">
@@ -91,7 +91,7 @@ cat .env                     # keep this password
 docker compose up -d
 ```
 
-Open <http://localhost:3000/admin>, log in with that username and password, and create your first list. They are only used to create the first account; afterwards you can remove them from `.env`.
+Open <http://localhost:3000/login>, log in with that username and password, and create your first list. They are only used to create the first account; afterwards you can remove them from `.env`.
 
 Or with plain Docker:
 
@@ -140,46 +140,64 @@ Each admin has their own account (username and password, no email needed).
 
 **Upgrading from 1.x:** keep `ADMIN_PASSWORD` set for the first start of 2.0 (optionally with `ADMIN_USERNAME`, default `admin`). Giftly creates that account and moves your notification settings to it. You can then remove `ADMIN_PASSWORD` and any `NOTIFY_*` variables.
 
+## The admin
+
+After logging in (at `/login`) you land on **Occasions**. The main menu (a bar at the bottom on a phone) follows how you use it, from the gifts you give to the ones you receive:
+
+**Occasions** · **People** · **Lists** · **My wishlist**
+
+Your **Profile**, **Notifications** (channels and reminders), the **Admins** and *Log out* are in the account menu (your initials, top right).
+
+- **Occasions:** *Upcoming* shows the next 60 days as cards ("Christmas: 6 of 18 missing", "Ana's birthday: no gift yet"); from 1 November that Christmas is pinned on top. *All* lists every occasion by year. *+ New occasion* creates Christmas or any other occasion.
+- **People:** everyone you give gifts to, with search. Each person's page has everything about them: their wishlist, their upcoming occasions, the gift history by year and occasion, and the actions *I'll give it* and *Create a list from this wishlist*.
+- **Lists:** the guest lists, with their secret links (these links never change and never ask for a login).
+- **My wishlist:** only yours.
+
 ## Wishlists
 
-Every admin has a personal wishlist (*Wishlist → Mine*): what they'd like to receive, in order of preference (↑/↓), with link, notes, and the shop's image and price, as for list gifts. Removing an item asks why: *I bought it*, *I don't want it any more*, or *I received it*.
+Every admin has a personal wishlist (*My wishlist*): what they'd like to receive, in order of preference, with link, notes, and the shop's image and price, as for list gifts. Removing an item asks why: *I bought it*, *I don't want it any more*, or *I received it*. The other admins see it on that admin's page in **People** (unless it's private).
 
-Other admins (*Wishlist → Others'*) can:
-- **Create a guest list from it:** choose the items. They stay **linked**, so when the owner edits an item the list follows, and new wishlist items join the list automatically (or wait for approval, per list). You can still add the list's own gifts, add notes, or hide a linked item in just that list.
-- **Take an item with "I'll give it":** it is reserved in every list and becomes a private gift in *Gifts to give* for the chosen occasion. From a checklist, *Pick from their wishlist* does the same.
+For people who aren't admins (children, grandparents…), the admins keep a **wishlist of ideas** on their page: everyone who can see the person can add, edit and reorder ideas. Tick *Only for me* to keep an idea **private**: it goes into your own private ideas for that person, which only you see. An admin's page can also have ideas for them, next to their own wishlist; they never see those.
+
+From any wishlist you can:
+- **Create a guest list from it:** choose the items. They stay **linked**, so when an item changes the list follows, and new wishlist items join the list automatically (or wait for approval, per list). A list can mix an admin's own wishlist with the ideas for them. You can still add the list's own gifts, add notes, or hide a linked item in just that list. A list with private ideas is always private.
+- **Take an item with "I'll give it":** it is reserved in every list and becomes a *planned* gift in that person's history and in the chosen occasion. From a checklist, *Pick from their wishlist* does the same with the occasion already chosen.
+
+**Editing a linked item from a list:** whoever can edit the list can edit its items. An idea is changed in the wishlist itself, so every list with it follows (the form says so). An item from another admin's **own** wishlist is changed **in that list only**: their wishlist never changes and they never see it. The list shows *Edited in this list*; whatever you didn't change keeps following the wishlist; if they later change a field you changed, your version stays and the list shows *The wishlist changed*, with a button to take their version. *Use the wishlist's details again* undoes everything. A new link fetches its own image and price again (a photo you uploaded stays). Editing never touches reservations.
 
 **The surprise is protected:**
 - The owner **never** sees what was reserved: their wishlist page is byte-for-byte the same either way, and removing a reserved item gives exactly the same answer as removing any other.
-- A list made from someone's wishlist is **never visible to them**, even if shared with the other admins, and its notifications never reach them. This rule is enforced by the app and tested, so you can't create a list from your own wishlist.
+- A list made from someone's wishlist (or from the ideas for them) is **never visible to them**, even if shared with the other admins, and its notifications never reach them. This rule is enforced by the app and tested, so you can't create a list from your own wishlist.
 - A wishlist item can only be reserved **once across every list** (and "I'll give it"); simultaneous attempts are safe.
 - If the owner removes an item someone already reserved, that guest keeps it in their picks with a note ("they already bought it — don't buy it"), and the list's organiser (or the admin giving it) is notified.
 - When a list is archived, or a gift from the wishlist is marked *given*, the item leaves the owner's active wishlist (as received).
 
-Lists also have an owner and can be **private** (only you) or **shared** (all admins). Lists from before 3.0 stay shared.
+Lists also have an owner and can be **private** (only you) or **shared** (all admins).
 
 ## Gifts to give
 
-A separate part of the admin (*Gifts to give*) to plan the gifts **you** give, not tied to the public lists.
+The *Occasions* and *People* parts of the admin plan the gifts **you** give, not tied to the public lists.
 
 - **People:** name, birthday (day and month, year optional for ages), notes, and whether you give them a Christmas gift.
+- **Every admin has a record** in People, created when they join, so the others can plan gifts for them. That record, and everything on it (gifts, ideas, its birthday, occasions only about them, totals and reminders), is **never visible to that admin**, even when shared. With two admins that means "each one's own"; with more, the others can share among themselves. An admin's birthday comes from their **Profile**, so nobody has to type it. If someone with the same name already exists in People when an admin joins, Giftly asks the other admins *"Is it the same one?"* (*Link* / *Create a new one*) and never links them on its own. An admin's record can't be unlinked or deleted while the account exists.
 - **Occasions:** birthdays appear on their own every year, from each person's date. *Create Christmas YYYY* creates that year's Christmas with everyone marked for Christmas, and you can add or remove people just for that year. Marking someone for Christmas later also adds them to this year's Christmas if it already exists. Custom occasions (christenings, weddings…) have a name, a date and participants.
 - **Favourites and search:** star the people you give to most (favourites are per admin and come first), and search people (name or notes) and occasions as you type.
 - **Duplicate an occasion** for the next year, with the same people (gifts aren't copied).
-- **A wishlist for everyone:** each person has a wishlist on their page (what they'd like to receive). Every admin who can see the person can edit it, mark what's taken and use **"I'll give it"**. Create guest lists from it (e.g. so the grandparents can pick), linked and kept in sync just like an admin's wishlist: one reservation counts on every list. For a person who is an admin, their page shows two: that admin's own wishlist (read-only) and **ideas for them** that the other admins keep (editable like anyone's). A list can mix items from both, and the admin never sees the ideas nor any list with their items.
-- **Gift history** per person: what you gave, by occasion and birthday (to buy → bought → given).
-- **Checklist per occasion**, made for the phone: "12 of 18 people already have a gift", total spent, each person's gifts (to buy → bought → given), what they actually got the year before, and a filter for people still without a gift.
-- **Upcoming:** the next 60 days, with "has a gift / ideas / no gift yet" for each occasion.
+- **Gift history** per person: what you gave, by year and occasion (planned → bought → given).
+- **Checklist per occasion**, made for the phone: "12 of 18 people already have a gift", total spent, each person's gifts (planned → bought → given), what they actually got the year before, and a filter for people still without a gift. Ideas live in the wishlists; the checklist only holds what you're going to give.
 - **Joint gifts:** a gift can be for several people, for example one Christmas gift for a couple. It counts as a gift for each of them, shows in each one's history, and enters the total spent once. Their birthday gifts stay individual.
-- **Gifts** can have a link, notes, an image (read from the link or uploaded) and a price. The price comes from the shop's page when it shows one, and is kept up to date while the gift is still an idea. It freezes once the gift is bought, so totals reflect what you paid. When the shop shows no price, you type it. `CURRENCY` (default `EUR`) is used for typed prices.
-- **Shared or private:** every person, occasion and gift is *shared* (all admins see it) or *private* (only whoever created it). A private gift for a shared person, for example a surprise for the other admin, stays hidden from them everywhere, including progress and totals. A joint gift is only shown to someone who can see every person it is for. Only the creator can change who sees an entry. Removing an admin deletes their private entries and keeps the shared ones.
+- **Gifts** can have a link, notes, an image (read from the link or uploaded) and a price. The price comes from the shop's page when it shows one, and is kept up to date until the gift is bought. It freezes then, so totals reflect what you paid. When the shop shows no price, you type it. `CURRENCY` (default `EUR`) is used for typed prices.
+- **Shared or private:** every person, occasion and gift is *shared* (all admins see it) or *private* (only whoever created it). A joint gift is only shown to someone who can see every person it is for. Only the creator can change who sees an entry. Removing an admin deletes their private entries and keeps the shared ones.
 
-**Reminders:** once a day (at `REMINDER_HOUR`, default 9:00 in `TZ`) each admin gets a message on their own notification channels for every birthday or occasion that is coming up and still has no gift bought, for example *"In 14 days: Ana's birthday. No gift bought yet (2 ideas noted)."* or *"In 3 days: Christmas 2026. 6 of 18 people still without a gift."*. Each admin chooses how many days before in their **Profile** (default 14 and 3; empty turns reminders off) and can send today's reminders on demand to check. Reminders only include what that admin can see, so shared occasions remind everyone and private ones only their owner. Each reminder is sent once; if the server was off on the exact day, it goes out on the next run.
+**Reminders:** once a day (at `REMINDER_HOUR`, default 9:00 in `TZ`) each admin gets a message on their own notification channels for every birthday or occasion that is coming up and still has no gift bought, for example *"In 14 days: Ana's birthday. No gift bought yet (1 planned)."* or *"In 3 days: Christmas 2026. 6 of 18 people still without a gift."*. Each admin chooses how many days before under **Notifications** (default 14 and 3; empty turns reminders off) and can send today's reminders on demand to check. Reminders only include what that admin can see, so shared occasions remind everyone, private ones only their owner, and nobody is reminded of their own birthday. Each reminder is sent once; if the server was off on the exact day, it goes out on the next run.
+
+**Upgrading to 5.0** reorganises the admin (the old `/admin/give…` addresses are gone; guest links don't change) and moves every gift that was still an "idea" into a wishlist of ideas for its person: shared ideas into the shared one, private ideas (and ideas for an admin) into the giver's private ideas. Gifts taken with "I'll give it" become *planned*. Each admin gets their record in People.
 
 The privacy is enforced by the app; whoever has access to the server or the `/data` volume can read the database.
 
 ## Notifications
 
-Each admin sets up their own notifications under **Profile → Notifications**: which events (someone picks a gift, gives one up, or opens a list for the first time) and one or more channels. **Send test notification** sends only to you.
+Each admin sets up their own notifications under **Notifications** (account menu): which events (someone picks a gift, gives one up, or opens a list for the first time) and one or more channels. **Send test notification** sends only to you.
 
 | Channel | What you need |
 |---|---|
@@ -203,7 +221,7 @@ If your domain is on Cloudflare, you don't need to open any ports, set up a reve
 
 Doing it by hand instead: put `TUNNEL_TOKEN=...` in `cloudflared.env` (Giftly itself never sees it), `BASE_URL=https://gifts.example.com` in `.env`, and run `docker compose --profile tunnel up -d`.
 
-Optionally, protect `/admin` with a Cloudflare Access policy for extra safety.
+**Login page:** admins log in at `/login` (the two-factor step is `/login/2fa`); every other admin page needs a session and sends you to `/login` without one (and back afterwards). So you can put just the login behind a Cloudflare challenge, for example a WAF custom rule *URI Path starts with `/login`* → *Managed Challenge*, without touching the guest links (`/l/…`) or the rest of the admin. For more, protect `/login` and `/admin` with a Cloudflare Access policy.
 
 ## How it works
 

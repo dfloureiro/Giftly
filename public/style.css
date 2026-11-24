@@ -317,3 +317,41 @@ form.give-now { margin: 0; }
 
 .flash-warn { background: #fdf3d8; color: #6b4e00; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .flash-warn { background: #3a2f12; color: #f3d98b; } }
+
+/* ---------- 5.0 navigation: main tabs, account menu, phone bottom bar ---------- */
+.account-menu { position: relative; }
+.account-menu > summary { list-style: none; display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 4px 6px; border-radius: 99px; color: var(--muted); font-size: .92rem; font-weight: 600; }
+.account-menu > summary::-webkit-details-marker { display: none; }
+.account-menu > summary:hover, .account-menu[open] > summary { background: var(--accent-soft); color: var(--accent); }
+.avatar { display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: var(--accent); color: var(--accent-text); font-size: .8rem; font-weight: 700; letter-spacing: .02em; }
+.account-menu .menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; min-width: 200px; display: grid; padding: 6px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 28px rgb(40 20 10 / .16); }
+.account-menu .menu a, .account-menu .menu button.link { display: block; width: 100%; text-align: left; padding: 9px 12px; border-radius: 8px; color: var(--text); text-decoration: none; font-weight: 500; font-size: .95rem; }
+.account-menu .menu a:hover, .account-menu .menu button.link:hover { background: var(--accent-soft); color: var(--accent); }
+.account-menu .menu a[aria-current] { color: var(--accent); }
+.account-menu .menu form { display: block; border-top: 1px solid var(--line); margin-top: 4px; padding-top: 4px; }
+.bottom-nav { display: none; }
+@media (max-width: 640px) {
+  .admin-top .admin-nav { display: none; }
+  .admin-top { justify-content: flex-end; }
+  .who-name { display: none; }
+  .bottom-nav { display: grid; grid-template-columns: repeat(4, 1fr); position: fixed; left: 0; right: 0; bottom: 0; z-index: 15;
+    background: var(--card); border-top: 1px solid var(--line); padding: 4px 4px calc(4px + env(safe-area-inset-bottom)); }
+  .bottom-nav a { display: grid; justify-items: center; gap: 2px; padding: 6px 2px; color: var(--muted); text-decoration: none; font-size: .72rem; font-weight: 600; border-radius: 10px; }
+  .bottom-nav a.active { color: var(--accent); background: var(--accent-soft); }
+  .nav-icon { width: 24px; height: 24px; }
+  body:has(.bottom-nav) { padding-bottom: 76px; }
+  body:has(.bottom-nav) .site-footer { padding-bottom: 8px; }
+}
+
+/* occasions home */
+.page-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.page-head h1 { margin-bottom: .25rem; }
+.upcoming.pinned-list { margin-bottom: .5rem; }
+.upcoming li.pinned a { border: 2px solid var(--gold); padding: 16px 14px; }
+.upcoming li.pinned .what { font-size: 1.1rem; font-weight: 600; }
+.card.pinned { border: 2px solid var(--gold); }
+.upcoming.compact a { padding: 9px 12px; }
+.year-head { margin: 1.4rem 0 .2rem; color: var(--muted); font-size: .95rem; letter-spacing: .04em; }
+#soon, #wishlist { margin-bottom: 1.5rem; }
+.person-actions { gap: 8px; flex-wrap: wrap; }
+.card.prompt { border-color: var(--gold); }

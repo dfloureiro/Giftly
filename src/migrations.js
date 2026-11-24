@@ -284,7 +284,132 @@ export const migrations = [
   UPDATE guests SET token = lower(hex(randomblob(16)));
   CREATE UNIQUE INDEX guests_token ON guests(token);
   `,
+  // v17 (5.0): every admin has a person record (invisible to that admin); a wishlist is either an
+  // admin's own ('own') or ideas kept for a person ('ideas', shared or private to one admin);
+  // gift ideas leave the checklist for those wishlists (gifts are 'planned', 'bought' or 'given');
+  // list items linked to another admin's wishlist can be edited in that list only (overrides).
+  { foreignKeysOff: true, run: migrateTo5 },
 ];
+
+/** Shop-style price text for an idea that had a price (as 3.2 did). */
+function priceText(cents, currency) {
+  if (cents == null) return '';
+  const lang = String(process.env.APP_LANG || 'pt').toLowerCase().startsWith('en') ? 'en-GB' : 'pt-PT';
+  try {
+    return new Intl.NumberFormat(lang, { style: 'currency', currency: currency || process.env.CURRENCY || 'EUR' }).format(cents / 100);
+  } catch {
+    return (cents / 100).toFixed(2);
+  }
+}
+
+function migrateTo5(db) {
+  const t = Date.now();
+  db.exec(`
+  ALTER TABLE users ADD COLUMN birthday_month INTEGER;
+  ALTER TABLE users ADD COLUMN birthday_day INTEGER;
+  ALTER TABLE users ADD COLUMN birth_year INTEGER;
+
+  CREATE TABLE wishlists_new (
+    id INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('own', 'ideas')),
+    -- own: the admin (their person is people.user_id); ideas: NULL = shared, else private to that admin
+    owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    person_id INTEGER REFERENCES people(id) ON DELETE CASCADE,  -- ideas only
+    visibility TEXT NOT NULL DEFAULT 'shared' CHECK (visibility IN ('shared', 'private')),
+    created_at INTEGER NOT NULL,
+    CHECK (kind != 'own' OR (owner_id IS NOT NULL AND person_id IS NULL)),
+    CHECK (kind != 'ideas' OR (person_id IS NOT NULL AND (owner_id IS NOT NULL) = (visibility = 'private')))
+  );
+  INSERT INTO wishlists_new (id, kind, owner_id, person_id, visibility, created_at)
+    SELECT id, 'own', owner_id, NULL, CASE visibility WHEN 'private' THEN 'private' ELSE 'shared' END, created_at
+    FROM wishlists WHERE owner_id IS NOT NULL;
+  INSERT INTO wishlists_new (id, kind, owner_id, person_id, visibility, created_at)
+    SELECT id, 'ideas', NULL, person_id, 'shared', created_at FROM wishlists WHERE person_id IS NOT NULL;
+  DROP TABLE wishlists;
+  ALTER TABLE wishlists_new RENAME TO wishlists;
+  CREATE UNIQUE INDEX wishlists_own ON wishlists(owner_id) WHERE kind = 'own';
+  CREATE UNIQUE INDEX wishlists_ideas ON wishlists(person_id, COALESCE(owner_id, 0)) WHERE kind = 'ideas';
+
+  CREATE TABLE list_item_overrides (
+    item_id INTEGER PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+    -- NULL = follows the wishlist. image = 1: this list keeps its own picture (upload, image link or none).
+    title TEXT, url TEXT, notes TEXT, image INTEGER NOT NULL DEFAULT 0, image_source TEXT,
+    -- What the wishlist had when each field was changed here ("the wishlist changed" when it differs).
+    base_title TEXT, base_url TEXT, base_notes TEXT, base_image TEXT,
+    updated_at INTEGER NOT NULL
+  );
+  `);
+
+  // Every admin gets a shared person (the other admins' record of them), unless an unlinked person
+  // with the same name exists: the app asks whether it is the same one instead of linking it alone.
+  db.prepare(`INSERT INTO people (name, visibility, owner_id, user_id, created_at)
+    SELECT u.name, 'shared', NULL, u.id, ? FROM users u
+    WHERE NOT EXISTS (SELECT 1 FROM people p WHERE p.user_id = u.id)
+      AND NOT EXISTS (SELECT 1 FROM people p WHERE p.user_id IS NULL AND p.name = u.name COLLATE NOCASE)`).run(t);
+
+  // Gift ideas move to the ideas wishlist of their (main) person: the shared one, or the giver's
+  // private one for private ideas. "I'll give it" gifts (from a wishlist) are kept as 'planned'.
+  const ideas = db.prepare("SELECT * FROM gifts WHERE status = 'idea' AND wishlist_item_id IS NULL ORDER BY person_id, id").all();
+  const findList = db.prepare("SELECT id FROM wishlists WHERE kind = 'ideas' AND person_id = ? AND COALESCE(owner_id, 0) = ?");
+  const newList = db.prepare("INSERT INTO wishlists (kind, owner_id, person_id, visibility, created_at) VALUES ('ideas', ?, ?, ?, ?)");
+  const nextPos = db.prepare('SELECT COALESCE(MAX(position), 0) + 1 AS p FROM wishlist_items WHERE wishlist_id = ?');
+  const insertItem = db.prepare(`INSERT INTO wishlist_items (wishlist_id, title, url, notes, position, image_file, image_source,
+      price, price_cents, price_currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  for (const g of ideas) {
+    const owner = g.visibility === 'private' && g.owner_id != null ? g.owner_id : null;
+    let w = findList.get(g.person_id, owner ?? 0)?.id;
+    if (!w) w = Number(newList.run(owner, g.person_id, owner ? 'private' : 'shared', t).lastInsertRowid);
+    const wiId = Number(insertItem.run(w, g.name, g.url, g.notes, nextPos.get(w).p, g.image_file, g.image_source,
+      priceText(g.price_cents, g.price_currency), g.price_cents, g.price_cents != null ? g.price_currency : null, g.created_at, t).lastInsertRowid);
+    if (g.list_item_id) {
+      db.prepare('UPDATE items SET wishlist_item_id = ? WHERE id = ? AND wishlist_item_id IS NULL').run(wiId, g.list_item_id);
+      const it = db.prepare('SELECT reserved_name FROM items WHERE id = ? AND wishlist_item_id = ?').get(g.list_item_id, wiId);
+      if (it?.reserved_name) {
+        db.prepare('INSERT OR IGNORE INTO wishlist_claims (wishlist_item_id, item_id, created_at) VALUES (?, ?, ?)').run(wiId, g.list_item_id, t);
+      }
+    }
+    // Foreign keys are off here: remove what would have cascaded.
+    db.prepare('DELETE FROM gift_people WHERE gift_id = ?').run(g.id);
+    db.prepare('DELETE FROM wishlist_claims WHERE gift_id = ?').run(g.id);
+    db.prepare('DELETE FROM gifts WHERE id = ?').run(g.id);
+  }
+
+  db.exec(`
+  CREATE TABLE gifts_new (
+    id INTEGER PRIMARY KEY,
+    person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    occasion_id INTEGER REFERENCES occasions(id) ON DELETE CASCADE, -- NULL: the person's birthday in \`year\`
+    year INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL DEFAULT '',
+    notes TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'planned' CHECK (status IN ('planned', 'bought', 'given')),
+    price_cents INTEGER,
+    price_currency TEXT,
+    price_source TEXT NOT NULL DEFAULT '',
+    visibility TEXT NOT NULL DEFAULT 'shared' CHECK (visibility IN ('shared', 'private')),
+    owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    image_file TEXT,
+    image_source TEXT NOT NULL DEFAULT '',
+    preview_status TEXT NOT NULL DEFAULT '',
+    price_checked_at INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    wishlist_item_id INTEGER REFERENCES wishlist_items(id) ON DELETE SET NULL,
+    list_item_id INTEGER REFERENCES items(id) ON DELETE SET NULL
+  );
+  INSERT INTO gifts_new (id, person_id, occasion_id, year, name, url, notes, status, price_cents, price_currency, price_source,
+      visibility, owner_id, image_file, image_source, preview_status, price_checked_at, created_at, updated_at, wishlist_item_id, list_item_id)
+    SELECT id, person_id, occasion_id, year, name, url, notes, CASE status WHEN 'idea' THEN 'planned' ELSE status END,
+      price_cents, price_currency, price_source, visibility, owner_id, image_file, image_source, preview_status, price_checked_at,
+      created_at, updated_at, wishlist_item_id, list_item_id FROM gifts;
+  DROP TABLE gifts;
+  ALTER TABLE gifts_new RENAME TO gifts;
+  CREATE INDEX gifts_person ON gifts(person_id, year);
+  CREATE INDEX gifts_occasion ON gifts(occasion_id);
+  DELETE FROM settings WHERE key = 'migrations.ideas_to_wishlists';
+  `);
+}
 
 export const SCHEMA_VERSION = migrations.length;
 
@@ -296,7 +421,8 @@ export function migrate(db) {
     if (m.foreignKeysOff) db.exec('PRAGMA foreign_keys = OFF'); // can't change inside a transaction
     db.exec('BEGIN');
     try {
-      db.exec(m.sql);
+      if (m.run) m.run(db); // a step that needs code (still one transaction)
+      else db.exec(m.sql);
       if (m.foreignKeysOff) {
         const broken = db.prepare('PRAGMA foreign_key_check').all();
         if (broken.length) throw new Error(`migration ${v + 1} broke foreign keys: ${JSON.stringify(broken.slice(0, 3))}`);

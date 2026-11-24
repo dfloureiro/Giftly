@@ -24,6 +24,7 @@ const ITEMS = [
 })().catch((e) => { console.error(e); process.exit(1); });
 
 async function phase1(admin) {
+  await admin.goto(`${B}/admin/lists`);
   await admin.fill('input[name=title]', "Emma's Christmas list");
   await admin.fill('textarea[name=description]', 'Emma is 34, loves reading, plants and good coffee. Clothes size M.');
   await admin.click('form[action="/admin/lists"] button[type=submit]');
@@ -81,7 +82,7 @@ async function phase2(browser, admin) {
   await admin.setViewportSize({ width: 980, height: 1350 });
   await admin.screenshot({ path: `${OUT}/admin-list.png` });
 
-  await admin.goto(`${B}/admin/profile`);
+  await admin.goto(`${B}/admin/notifications`);
   await admin.setViewportSize({ width: 980, height: 900 });
   await admin.fill('input[name=ntfy_url]', 'https://ntfy.example/giftly-demo');
   await admin.locator('#notifications button[type=submit]').first().click();

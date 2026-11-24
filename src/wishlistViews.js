@@ -5,15 +5,7 @@ function hostOf(url) {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
 }
 
-function wishNav(ctx, active) {
-  const tab = (href, key, name) => h`<a href="${href}" class="subtab${active === name ? ' active' : ''}"${active === name ? raw(' aria-current="page"') : ''}>${ctx.t(key)}</a>`;
-  return h`<nav class="subnav">
-    ${tab('/admin/wishlist', 'wish.mine', 'mine')}
-    ${tab('/admin/wishlists', 'wish.others', 'others')}
-  </nav>`;
-}
-
-const page = (ctx, { title, active, body }) => layout(ctx, { title, body: h`${adminHeader(ctx)}${wishNav(ctx, active)}${body}` });
+const page = (ctx, { title, body }) => layout(ctx, { title, body: h`${adminHeader(ctx)}${body}` });
 
 function wishThumb(it) {
   if (it.image_file) return h`<div class="thumb"><img src="/img/${it.image_file}" alt="" loading="lazy"></div>`;
@@ -84,7 +76,6 @@ function removeForm(ctx, it, forPerson = false) {
 export function ownWishlistPage(ctx, { wishlist, active, history, error, form }) {
   return page(ctx, {
     title: ctx.t('wish.mine'),
-    active: 'mine',
     body: h`
 <h1>${ctx.t('wish.mineTitle')}</h1>
 <p class="small muted">${ctx.t('wish.mineIntro')}</p>
@@ -122,7 +113,7 @@ ${active.length ? h`<ul class="items admin-items" data-sortable="/admin/wishlist
     ${csrfField(ctx)}
     <label class="grow">
       <select name="visibility">
-        <option value="admins"${wishlist.visibility === 'admins' ? raw(' selected') : ''}>${ctx.t('wish.vis.admins')}</option>
+        <option value="shared"${wishlist.visibility === 'shared' ? raw(' selected') : ''}>${ctx.t('wish.vis.admins')}</option>
         <option value="private"${wishlist.visibility === 'private' ? raw(' selected') : ''}>${ctx.t('wish.vis.private')}</option>
       </select>
     </label>
@@ -142,20 +133,7 @@ ${history.length ? h`<section>
   });
 }
 
-// ---------- other admins' wishlists ----------
-
-export function othersIndexPage(ctx, { list }) {
-  return page(ctx, {
-    title: ctx.t('wish.others'),
-    active: 'others',
-    body: h`
-<h1>${ctx.t('wish.others')}</h1>
-${list.length ? h`<ul class="lists">
-  ${list.map((w) => h`<li><a href="/admin/wishlists/${w.id}"><strong>${ctx.t('wish.ofName', { name: w.owner_name })}</strong>
-    <span class="small muted">${ctx.t('wish.itemCount', { n: w.item_count })}</span></a></li>`)}
-</ul>` : h`<p class="empty">${ctx.t('wish.noOthers')}</p>`}`,
-  });
-}
+// ---------- other admins' wishlists and ideas (on the person's page) ----------
 
 function giveForm(ctx, w, it, choices, preselect, back = '', pick = null) {
   // Opened from an occasion: one tap, the occasion is already chosen.
@@ -175,7 +153,7 @@ function giveForm(ctx, w, it, choices, preselect, back = '', pick = null) {
         </select>
       </label>
       ${choices.length ? '' : h`<p class="small muted">${ctx.t('wish.noGiveChoices')}</p>`}
-      <p class="small muted">${ctx.t(w.person_id && !w.person_user_id ? 'wish.illGiveHintPerson' : 'wish.illGiveHint', { name: w.owner_name })}</p>
+      <p class="small muted">${ctx.t(w.kind === 'ideas' && w.owner_id ? 'wish.illGiveHintPrivate' : 'wish.illGiveHintPerson', { name: w.owner_name })}</p>
       <button type="submit" class="primary">${ctx.t('wish.illGive')}</button>
     </form>
   </details>`;
@@ -183,9 +161,10 @@ function giveForm(ctx, w, it, choices, preselect, back = '', pick = null) {
 
 /**
  * A wishlist seen by someone who is NOT its recipient: what's taken, "I'll give it", and
- * "create a list". `editable` (a person's wishlist) adds edit/remove/reorder and an add form.
+ * "create a list". `editable` (ideas) adds edit/remove/reorder; `addForm` the "add an idea" form
+ * (with "only me" for the admin's private ideas).
  */
-export function wishSection(ctx, { w, items, choices = [], preselect = '', lists = [], editable = false, personId = null, back = '', history = [], banner = true }) {
+export function wishSection(ctx, { w, items, choices = [], preselect = '', lists = [], editable = false, personId = null, back = '', history = [], banner = true, addForm = false, createList = true }) {
   // Coming from an occasion ("pick from the wishlist"): a banner, one-tap buttons, back to it after.
   const pick = choices.find((c) => c.value === preselect) ?? null;
   const pickBack = pick?.value.startsWith('occasion:') ? `/admin/give/occasions/${pick.value.split(':')[1]}` : back;
@@ -195,11 +174,11 @@ ${pick && banner ? h`<div class="pick-banner">
   <span>🎁 ${ctx.t('wish.pickingFor')} <strong>${pick.label.key ? ctx.t(pick.label.key, pick.label.vars) : pick.label.text}</strong></span>
   ${pickBack !== back ? h`<a class="small" href="${pickBack}">← ${ctx.t('wish.pickBack')}</a>` : ''}
 </div>` : ''}
-<p class="row">
-  <a class="button secondary" href="/admin/wishlists/${w.id}/new-list">＋ ${ctx.t('wish.createList')}</a>
+${createList || lists.length ? h`<p class="row">
+  ${createList ? h`<a class="button secondary" href="/admin/wishlists/${w.id}/new-list">＋ ${ctx.t('wish.createList')}</a>` : ''}
   ${lists.length ? h`<span class="small">${ctx.t('wish.yourLists')}: ${lists.map((l, i) => h`${i ? ', ' : ''}<a href="/admin/lists/${l.id}">${l.title}</a>`)}</span>` : ''}
-</p>
-${items.length ? h`<ul class="items admin-items"${sortable ? h` data-sortable="/admin/wishlist/order" data-sortable-extra="person_id=${personId}"` : ''}>
+</p>` : ''}
+${items.length ? h`<ul class="items admin-items"${sortable ? h` data-sortable="/admin/wishlist/order" data-sortable-extra="wishlist_id=${w.id}"` : ''}>
   ${items.map((it, idx) => h`<li class="item${it.claimed ? ' picked' : ''}" id="wish-${it.id}" data-id="${it.id}">
     ${sortable ? dragHandle(ctx) : ''}
     ${wishThumb(it)}
@@ -218,13 +197,14 @@ ${items.length ? h`<ul class="items admin-items"${sortable ? h` data-sortable="/
         ${removeForm(ctx, it, true)}` : ''}
     </div>
   </li>`)}
-</ul>` : h`<p class="empty">${ctx.t('wish.emptyOther', { name: w.owner_name })}</p>`}
-${editable ? h`<details class="add-gift add-wish">
-  <summary>＋ ${ctx.t('wish.addToWishlist')}</summary>
+</ul>` : h`<p class="empty">${ctx.t(w.kind === 'ideas' ? 'wish.noIdeasYet' : 'wish.emptyOther', { name: w.owner_name })}</p>`}
+${addForm ? h`<details class="add-gift add-wish">
+  <summary>＋ ${ctx.t('wish.addIdea')}</summary>
   <form method="post" action="/admin/wishlist/items" class="stack">
     ${csrfField(ctx)}<input type="hidden" name="person_id" value="${personId}">
     ${itemFields(ctx)}
     ${uploadField(ctx)}
+    <label class="check"><input type="checkbox" name="private" value="1"> 🔒 ${ctx.t('wish.onlyMe')}</label>
     <button type="submit" class="primary">${ctx.t('admin.add')}</button>
   </form>
 </details>` : ''}
@@ -235,24 +215,13 @@ ${editable && history.length ? h`<details>
 </details>` : ''}`;
 }
 
-export function othersWishlistPage(ctx, { wishlist: w, items, choices, preselect, linkedLists }) {
-  return page(ctx, {
-    title: ctx.t('wish.ofName', { name: w.owner_name }),
-    active: 'others',
-    body: h`
-<h1>${ctx.t('wish.ofName', { name: w.owner_name })}</h1>
-<p class="small muted">${ctx.t('wish.othersIntro', { name: w.owner_name })}</p>
-${wishSection(ctx, { w, items, choices, preselect, lists: linkedLists })}`,
-  });
-}
-
-/** "Maria's wishlist" (hers) or "Ideas for Maria" (what others keep on an admin's record). */
-export const wishTitle = (ctx, w) => ctx.t(w.person_user_id ? 'wish.ideasFor' : 'wish.ofName', { name: w.owner_name });
+/** "Maria's wishlist" (hers), "Ideas for Maria" (kept by the admins) or "Your private ideas for Maria". */
+export const wishTitle = (ctx, w) => ctx.t(w.kind === 'own' ? 'wish.ofName' : w.owner_id ? 'wish.myPrivateIdeas' : 'wish.ideasFor', { name: w.owner_name });
 
 export function newListPage(ctx, { wishlist: w, groups, error }) {
+  const onlyPrivate = groups.some((g) => g.w.kind === 'ideas' && g.w.owner_id);
   return page(ctx, {
     title: ctx.t('wish.createList'),
-    active: 'others',
     body: h`
 <h1>${ctx.t('wish.createList')}</h1>
 <section class="card">
@@ -272,12 +241,12 @@ export function newListPage(ctx, { wishlist: w, groups, error }) {
         : h`<p class="small muted">${ctx.t('wish.emptyOther', { name: g.w.owner_name })}</p>`}
     </fieldset>`)}
     <label class="check"><input type="checkbox" name="auto_add_new" value="1" checked> ${ctx.t('wish.autoAdd')}</label>
-    <label>${ctx.t('give.visibility')}
+    ${onlyPrivate ? h`<p class="small muted">🔒 ${ctx.t('wish.privateListOnly')}</p><input type="hidden" name="visibility" value="private">` : h`<label>${ctx.t('give.visibility')}
       <select name="visibility">
         <option value="private" selected>${ctx.t('lists.vis.private')}</option>
         <option value="shared">${ctx.t('wish.vis.sharedExceptOwner', { name: w.owner_name })}</option>
       </select>
-    </label>
+    </label>`}
     <button type="submit" class="primary">${ctx.t('admin.create')}</button>
   </form>
 </section>`,

@@ -12,17 +12,17 @@ const fail = (msg) => { console.error(`data.mjs ${mode}: ${msg}`); process.exit(
 const admin = await loginAdmin(base, { username, password }).catch((e) => fail(e.message));
 
 if (mode === 'seed') {
-  const r = await admin.post('/admin/lists', { title: 'Backup list', visibility: 'shared' }, { from: '/admin' });
+  const r = await admin.post('/admin/lists', { title: 'Backup list', visibility: 'shared' }, { from: '/admin/lists' });
   const listId = Number(/\/admin\/lists\/(\d+)/.exec(r.location)?.[1]);
   await admin.post(`/admin/lists/${listId}/items`, { title: 'Photo gift', image_data: PNG }, { from: `/admin/lists/${listId}` });
   await admin.post('/admin/wishlist/items', { title: 'Wished lamp', image_data: PNG }, { from: '/admin/wishlist' });
-  const p = await admin.post('/admin/give/people', { name: 'Backup Leo', visibility: 'shared' }, { from: '/admin/give/people' });
+  const p = await admin.post('/admin/people', { name: 'Backup Leo', visibility: 'shared' }, { from: '/admin/people' });
   const personId = Number(/people\/(\d+)/.exec(p.location)?.[1]);
-  await admin.post('/admin/give/gifts', { person_id: String(personId), occasion: 'birthday:2030', name: 'Kite', status: 'bought', image_data: PNG }, { from: `/admin/give/people/${personId}` });
+  await admin.post('/admin/gifts', { person_id: String(personId), occasion: 'birthday:2030', name: 'Kite', status: 'bought', image_data: PNG }, { from: `/admin/people/${personId}` });
   const files = [
     ...imgs((await admin.get(`/admin/lists/${listId}`)).text),
     ...imgs((await admin.get('/admin/wishlist')).text),
-    ...imgs((await admin.get(`/admin/give/people/${personId}`)).text),
+    ...imgs((await admin.get(`/admin/people/${personId}`)).text),
   ];
   if (files.length < 3) fail(`expected 3 photos, found ${files.length}`);
   writeFileSync(state, JSON.stringify({ listId, personId, files }));
@@ -31,7 +31,7 @@ if (mode === 'seed') {
   const { listId, personId, files } = JSON.parse(readFileSync(state, 'utf8'));
   if (!(await admin.get(`/admin/lists/${listId}`)).text.includes('Photo gift')) fail('list gift missing');
   if (!(await admin.get('/admin/wishlist')).text.includes('Wished lamp')) fail('wishlist item missing');
-  if (!(await admin.get(`/admin/give/people/${personId}`)).text.includes('Kite')) fail('gift to give missing');
+  if (!(await admin.get(`/admin/people/${personId}`)).text.includes('Kite')) fail('gift to give missing');
   for (const f of files) {
     const res = await admin.request(`/img/${f}`);
     if (res.status !== 200) fail(`photo ${f} not served (${res.status})`);
@@ -39,6 +39,6 @@ if (mode === 'seed') {
   if ((await new Client(base).request(`/img/${files[0]}`)).status !== 404) fail('photos must not be public');
   console.log(`verified: everything back, ${files.length} photos served`);
 } else if (mode === 'absent') {
-  if ((await admin.get('/admin')).text.includes('Backup list')) fail('data still there');
+  if ((await admin.get('/admin/lists')).text.includes('Backup list')) fail('data still there');
   console.log('verified: the data is gone');
 } else fail('unknown mode');

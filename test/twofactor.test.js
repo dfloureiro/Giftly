@@ -31,7 +31,7 @@ async function enable(client) {
 /** Password step; returns the client (with the pending 2FA cookie) and the response. */
 async function passwordStep(base, username, password) {
   const c = new Client(base);
-  const r = await c.request('/admin/login', { method: 'POST', form: { username, password } });
+  const r = await c.request('/login', { method: 'POST', form: { username, password } });
   return { c, r };
 }
 
@@ -69,28 +69,28 @@ test('turning 2FA on: login then needs a code; codes are single-use; recovery co
   assert.equal((await user.get('/admin/profile')).status, 200, 'the device that enabled it stays logged in');
 
   const { c, r } = await passwordStep(server.base, 'twofa-user', 'twofa-password-1');
-  assert.equal(r.location, '/admin/login/2fa');
+  assert.equal(r.location, '/login/2fa');
   assert.equal((await c.get('/admin/profile')).status, 303, 'no session before the code');
-  assert.equal((await c.request('/admin/login/2fa', { method: 'POST', form: { code: '123456' } })).status, 401);
+  assert.equal((await c.request('/login/2fa', { method: 'POST', form: { code: '123456' } })).status, 401);
   const code = nextCode(secret);
-  const ok = await c.request('/admin/login/2fa', { method: 'POST', form: { code } });
+  const ok = await c.request('/login/2fa', { method: 'POST', form: { code } });
   assert.equal(ok.status, 303);
   assert.equal((await c.get('/admin/profile')).status, 200);
 
   const again = await passwordStep(server.base, 'twofa-user', 'twofa-password-1');
-  assert.equal((await again.c.request('/admin/login/2fa', { method: 'POST', form: { code } })).status, 401, 'same code twice');
+  assert.equal((await again.c.request('/login/2fa', { method: 'POST', form: { code } })).status, 401, 'same code twice');
 
-  const viaRecovery = await again.c.request('/admin/login/2fa', { method: 'POST', form: { code: recovery[0] } });
+  const viaRecovery = await again.c.request('/login/2fa', { method: 'POST', form: { code: recovery[0] } });
   assert.match(viaRecovery.location, /recoveryUsed&n=9/);
   const third = await passwordStep(server.base, 'twofa-user', 'twofa-password-1');
-  assert.equal((await third.c.request('/admin/login/2fa', { method: 'POST', form: { code: recovery[0] } })).status, 401, 'recovery code used up');
+  assert.equal((await third.c.request('/login/2fa', { method: 'POST', form: { code: recovery[0] } })).status, 401, 'recovery code used up');
 });
 
 test('a forged or missing pending cookie gives nothing; the password step alone is not a session', async () => {
   const c = new Client(server.base);
-  assert.equal((await c.get('/admin/login/2fa')).status, 303);
+  assert.equal((await c.get('/login/2fa')).status, 303);
   c.jar.set('giftly_2fa', 'eyJ1IjoxfQ.forged');
-  assert.equal((await c.request('/admin/login/2fa', { method: 'POST', form: { code: '000000' } })).location, '/admin');
+  assert.equal((await c.request('/login/2fa', { method: 'POST', form: { code: '000000' } })).location, '/login');
 });
 
 test('a new-password link does not bypass 2FA', async () => {
@@ -103,9 +103,9 @@ test('a new-password link does not bypass 2FA', async () => {
   const token = /\/reset\/([A-Za-z0-9_-]{16,64})/.exec(page.text)[1];
   const c = new Client(server.base);
   const r = await c.request(`/reset/${token}`, { method: 'POST', form: { password: 'new-reset-pw-1', confirm: 'new-reset-pw-1' } });
-  assert.equal(r.location, '/admin/login/2fa', 'asks for the code before logging in');
+  assert.equal(r.location, '/login/2fa', 'asks for the code before logging in');
   assert.equal((await c.get('/admin/profile')).status, 303);
-  await c.request('/admin/login/2fa', { method: 'POST', form: { code: nextCode(secret) } });
+  await c.request('/login/2fa', { method: 'POST', form: { code: nextCode(secret) } });
   assert.equal((await c.get('/admin/profile')).status, 200);
 });
 
@@ -143,7 +143,7 @@ test('REQUIRE_2FA: admins without 2FA can only set it up, and cannot turn it off
   const strict = await startServer({ REQUIRE_2FA: 'true' });
   try {
     const admin = await loginAdmin(strict.base);
-    for (const path of ['/admin', '/admin/profile', '/admin/give', '/admin/users']) {
+    for (const path of ['/admin', '/admin/profile', '/admin/occasions', '/admin/users']) {
       const r = await admin.get(path);
       assert.equal(r.status, 303, path);
       assert.equal(r.location, '/admin/profile/2fa?required=1', path);
@@ -151,7 +151,7 @@ test('REQUIRE_2FA: admins without 2FA can only set it up, and cannot turn it off
     const setup = (await admin.get('/admin/profile/2fa?required=1')).text;
     assert.match(setup, /requires two-factor authentication/);
     const { secret } = await enable(admin);
-    assert.equal((await admin.get('/admin')).status, 200, 'full access once enabled');
+    assert.equal((await admin.get('/admin/lists')).status, 200, 'full access once enabled');
     const off = await admin.post('/admin/profile/2fa/disable', { password: ADMIN_PASSWORD, code: nextCode(secret) }, { from: '/admin/profile/2fa' });
     assert.equal(off.status, 403);
   } finally {

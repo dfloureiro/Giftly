@@ -1,16 +1,15 @@
-// Routes for "Gifts to give" (admin only). Every read/write goes through giving.js,
+// Routes for occasions, people and the gifts to give them (admin only). Every read/write goes through giving.js,
 // which applies the shared/private rule for the logged-in user (ctx.user.id).
 import { config } from './config.js';
 import {
-  people, occasions, gifts, checklist, upcoming, today, nextBirthday, validDate, occasionOptions,
+  people, occasions, gifts, checklist, upcoming, today, nextBirthday, validDate, occasionOptions, personUpcoming, christmasSeason,
   VISIBILITIES, STATUSES,
 } from './giving.js';
 import { saveImageBuffer, removeImage } from './preview.js';
 import { enqueuePreview, clearPreview, releaseImage } from './previewQueue.js';
 import * as gv from './givingViews.js';
-import { users } from './accounts.js';
 import { wishItems, wishlists, listIdsFrom } from './wishlist.js';
-import { db, lists, items } from './db.js';
+import { lists } from './db.js';
 
 /** Price typed by hand: "12,50" / "12.5" / "€ 12" → cents, or null (empty), or NaN (invalid). */
 export function parsePrice(v) {
@@ -33,20 +32,45 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
   /** Where to go after a form: a same-section path from the form, else a default. */
   const back = (ctx, fallback) => {
     const b = String(ctx.body.back || '');
-    return b.startsWith('/admin/give') && !b.startsWith('//') ? b : fallback;
+    return (b.startsWith('/admin/people') || b.startsWith('/admin/occasions')) && !b.startsWith('//') ? b : fallback;
   };
 
-  // ----- overview -----
+  // ----- occasions: the home page -----
 
-  route('GET', '/admin/give', (ctx) => {
+  function renderOccasions(ctx, extra = {}, status = 200) {
     const uid = uidOf(ctx);
+    const view = ctx.url.searchParams.get('view') === 'all' ? 'all' : 'upcoming';
     const year = christmasYear();
-    html(ctx.res, gv.overviewPage(ctx, {
-      entries: upcoming(uid, 60),
+    const q = String(ctx.url.searchParams.get('q') || '').slice(0, 80);
+    const season = christmasSeason();
+    const christmas = occasions.christmasOf(uid, year);
+    let entries = upcoming(uid, 60);
+    let pinned = null;
+    if (season && christmas) {
+      pinned = entries.find((e) => e.kind === 'occasion' && e.occasion.id === christmas.id) ?? null;
+      entries = entries.filter((e) => e !== pinned);
+    }
+    html(ctx.res, gv.occasionsPage(ctx, {
+      view,
+      q,
+      entries,
+      pinned,
+      season,
       christmasYear: year,
-      christmas: occasions.christmasOf(uid, year),
+      christmas,
       hasPeople: people.list(uid).length > 0,
-    }));
+      all: view === 'all' ? occasions.list(uid, { q }).map((o) => {
+        const c = checklist(uid, o);
+        return { ...o, total: c.total, done: c.done };
+      }) : [],
+      ...extra,
+    }), status);
+  }
+
+  route('GET', '/admin/occasions', (ctx) => renderOccasions(ctx), A);
+
+  route('GET', '/admin/occasions/new', (ctx) => {
+    html(ctx.res, gv.newOccasionPage(ctx, { people: people.list(uidOf(ctx)), christmasYear: christmasYear(), christmas: occasions.christmasOf(uidOf(ctx), christmasYear()) }));
   }, A);
 
   // ----- people -----
@@ -64,8 +88,6 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
       notes: cleanMultiline(body.notes, 1000),
       gives_christmas: body.gives_christmas === '1',
       visibility: VISIBILITIES.includes(body.visibility) ? body.visibility : 'shared',
-      // Linked admin account (for wishlists): only if the field was in the form.
-      user_id: body.user_id === undefined ? undefined : (users.get(Number(body.user_id))?.id ?? null),
     };
     let error;
     if (!f.name) error = 'give.nameRequired';
@@ -75,24 +97,38 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
     return { f, error };
   }
 
-  route('GET', '/admin/give/people', (ctx) => {
+  function renderPeople(ctx, extra = {}, status = 200) {
+    const uid = uidOf(ctx);
     const q = String(ctx.url.searchParams.get('q') || '').slice(0, 80);
-    html(ctx.res, gv.peoplePage(ctx, { list: withNextBirthday(people.list(uidOf(ctx), { q })), q }));
+    html(ctx.res, gv.peoplePage(ctx, { list: withNextBirthday(people.list(uid, { q })), q, matches: people.adminMatches(uid), ...extra }), status);
+  }
+
+  route('GET', '/admin/people', (ctx) => renderPeople(ctx), A);
+
+  // An admin joined and a person with their name already exists: never linked alone, asked here.
+  route('POST', '/admin/people/admins/:uid/link', (ctx) => {
+    if (!people.linkAdmin(uidOf(ctx), Number(ctx.body.person_id), Number(ctx.params.uid))) return notFound(ctx);
+    redirect(ctx.res, '/admin/people?m=saved');
+  }, A);
+
+  route('POST', '/admin/people/admins/:uid/new', (ctx) => {
+    if (!people.createForAdmin(uidOf(ctx), Number(ctx.params.uid))) return notFound(ctx);
+    redirect(ctx.res, '/admin/people?m=created');
   }, A);
 
   // Favourites are per admin (they only change your own order).
-  route('POST', '/admin/give/people/:id/favorite', (ctx) => {
+  route('POST', '/admin/people/:id/favorite', (ctx) => {
     const id = Number(ctx.params.id);
     if (!people.setFavorite(uidOf(ctx), id, ctx.body.on === '1')) return notFound(ctx);
-    redirect(ctx.res, back(ctx, '/admin/give/people'));
+    redirect(ctx.res, back(ctx, '/admin/people'));
   }, A);
 
-  route('POST', '/admin/give/people', (ctx) => {
+  route('POST', '/admin/people', (ctx) => {
     const { f, error } = personForm(ctx.body);
-    if (error) return html(ctx.res, gv.peoplePage(ctx, { list: withNextBirthday(people.list(uidOf(ctx))), form: f, error: ctx.t(error) }), 400);
+    if (error) return renderPeople(ctx, { form: f, error: ctx.t(error) }, 400);
     const id = people.create(uidOf(ctx), f);
     if (f.gives_christmas) joinCurrentChristmas(uidOf(ctx), id);
-    redirect(ctx.res, `/admin/give/people/${id}?m=created`);
+    redirect(ctx.res, `/admin/people/${id}?m=created`);
   }, A);
 
   function renderPerson(ctx, person, extra = {}, status = 200) {
@@ -105,19 +141,20 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
       choices: occasionChoices(uid, person, next),
       others: people.list(uid).filter((p) => p.id !== person.id),
       wish: wishFor(uid, person),
+      soon: personUpcoming(uid, person),
       giveChoices: occasionOptions(uid, person),
       preselect: String(ctx.url.searchParams.get('occasion') || ''),
       ...extra,
     }), status);
   }
 
-  route('GET', '/admin/give/people/:id', (ctx) => {
+  route('GET', '/admin/people/:id', (ctx) => {
     const person = people.get(uidOf(ctx), Number(ctx.params.id));
     if (!person) return notFound(ctx);
     renderPerson(ctx, person);
   }, A);
 
-  route('POST', '/admin/give/people/:id', (ctx) => {
+  route('POST', '/admin/people/:id', (ctx) => {
     const uid = uidOf(ctx);
     const person = people.get(uid, Number(ctx.params.id));
     if (!person) return notFound(ctx);
@@ -125,12 +162,12 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
     if (error) return renderPerson(ctx, person, { personForm: f, personError: ctx.t(error) }, 400);
     people.update(uid, person.id, f);
     if (f.gives_christmas && !person.gives_christmas) joinCurrentChristmas(uid, person.id);
-    redirect(ctx.res, `/admin/give/people/${person.id}?m=saved`);
+    redirect(ctx.res, `/admin/people/${person.id}?m=saved`);
   }, A);
 
-  route('POST', '/admin/give/people/:id/delete', (ctx) => {
+  route('POST', '/admin/people/:id/delete', (ctx) => {
     if (!people.delete(uidOf(ctx), Number(ctx.params.id))) return notFound(ctx);
-    redirect(ctx.res, '/admin/give/people?m=deleted');
+    redirect(ctx.res, '/admin/people?m=deleted');
   }, A);
 
   // ----- occasions -----
@@ -140,23 +177,8 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
     return from > `${y}-12-25` ? y + 1 : y;
   }
 
-  route('GET', '/admin/give/occasions', (ctx) => {
-    const uid = uidOf(ctx);
-    const q = String(ctx.url.searchParams.get('q') || '').slice(0, 80);
-    const list = occasions.list(uid, { q }).map((o) => {
-      const c = checklist(uid, o);
-      return { ...o, total: c.total, done: c.done };
-    });
-    html(ctx.res, gv.occasionsPage(ctx, {
-      list,
-      q,
-      people: people.list(uid),
-      christmasYear: christmasYear(),
-    }));
-  }, A);
-
   // Duplicate an occasion one year later, with the same people (the ones this admin can see).
-  route('POST', '/admin/give/occasions/:id/duplicate', (ctx) => {
+  route('POST', '/admin/occasions/:id/duplicate', (ctx) => {
     const uid = uidOf(ctx);
     const o = occasions.get(uid, Number(ctx.params.id));
     if (!o) return notFound(ctx);
@@ -164,25 +186,25 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
     const date = `${year + 1}${o.date.slice(4)}`.replace(/-02-29$/, '-02-28');
     if (o.type === 'christmas') {
       const existing = occasions.christmasOf(uid, year + 1);
-      if (existing) return redirect(ctx.res, `/admin/give/occasions/${existing.id}`);
+      if (existing) return redirect(ctx.res, `/admin/occasions/${existing.id}`);
     }
     const name = o.name.includes(String(year)) ? o.name.replaceAll(String(year), String(year + 1)) : o.name;
     const id = occasions.create(uid, { type: o.type, name, date, visibility: o.visibility },
       occasions.participants(uid, o.id).map((p) => p.id));
-    redirect(ctx.res, `/admin/give/occasions/${id}?m=created`);
+    redirect(ctx.res, `/admin/occasions/${id}?m=created`);
   }, A);
 
   // "New Christmas": Christmas of a year, pre-filled with everyone marked "gives Christmas".
-  route('POST', '/admin/give/occasions/christmas', (ctx) => {
+  route('POST', '/admin/occasions/christmas', (ctx) => {
     const uid = uidOf(ctx);
     const year = Number(ctx.body.year) || christmasYear();
     if (year < 2000 || year > 2200) return notFound(ctx);
     const existing = occasions.christmasOf(uid, year);
-    if (existing) return redirect(ctx.res, `/admin/give/occasions/${existing.id}`);
+    if (existing) return redirect(ctx.res, `/admin/occasions/${existing.id}`);
     const visibility = VISIBILITIES.includes(ctx.body.visibility) ? ctx.body.visibility : 'shared';
     const ids = people.list(uid).filter((p) => p.gives_christmas).map((p) => p.id);
     const id = occasions.create(uid, { type: 'christmas', name: ctx.t('give.christmasName', { year }), date: `${year}-12-25`, visibility }, ids);
-    redirect(ctx.res, `/admin/give/occasions/${id}?m=created`);
+    redirect(ctx.res, `/admin/occasions/${id}?m=created`);
   }, A);
 
   function occasionForm(ctx) {
@@ -197,17 +219,17 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
     return { f, error };
   }
 
-  route('POST', '/admin/give/occasions', (ctx) => {
+  route('POST', '/admin/occasions', (ctx) => {
     const uid = uidOf(ctx);
     const { f, error } = occasionForm(ctx);
     if (error) {
-      return html(ctx.res, gv.occasionsPage(ctx, {
-        list: occasions.list(uid), people: people.list(uid), christmasYear: christmasYear(), form: f, error: ctx.t(error),
+      return html(ctx.res, gv.newOccasionPage(ctx, {
+        people: people.list(uid), christmasYear: christmasYear(), christmas: occasions.christmasOf(uid, christmasYear()), form: f, error: ctx.t(error),
       }), 400);
     }
     const ids = [].concat(ctx.body.people ?? []).map(Number);
     const id = occasions.create(uid, { type: 'custom', ...f }, ids);
-    redirect(ctx.res, `/admin/give/occasions/${id}?m=created`);
+    redirect(ctx.res, `/admin/occasions/${id}?m=created`);
   }, A);
 
   function renderChecklist(ctx, occasion, extra = {}, status = 200) {
@@ -223,37 +245,37 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
     }), status);
   }
 
-  route('GET', '/admin/give/occasions/:id', (ctx) => {
+  route('GET', '/admin/occasions/:id', (ctx) => {
     const occasion = occasions.get(uidOf(ctx), Number(ctx.params.id));
     if (!occasion) return notFound(ctx);
     renderChecklist(ctx, occasion);
   }, A);
 
-  route('POST', '/admin/give/occasions/:id', (ctx) => {
+  route('POST', '/admin/occasions/:id', (ctx) => {
     const uid = uidOf(ctx);
     const occasion = occasions.get(uid, Number(ctx.params.id));
     if (!occasion) return notFound(ctx);
     const { f, error } = occasionForm(ctx);
     if (error) return renderChecklist(ctx, occasion, { occasionForm: f, occasionError: ctx.t(error) }, 400);
     occasions.update(uid, occasion.id, f);
-    redirect(ctx.res, `/admin/give/occasions/${occasion.id}?m=saved`);
+    redirect(ctx.res, `/admin/occasions/${occasion.id}?m=saved`);
   }, A);
 
-  route('POST', '/admin/give/occasions/:id/delete', (ctx) => {
+  route('POST', '/admin/occasions/:id/delete', (ctx) => {
     if (!occasions.delete(uidOf(ctx), Number(ctx.params.id))) return notFound(ctx);
-    redirect(ctx.res, '/admin/give/occasions?m=deleted');
+    redirect(ctx.res, '/admin/occasions?view=all&m=deleted');
   }, A);
 
-  route('POST', '/admin/give/occasions/:id/participants', (ctx) => {
+  route('POST', '/admin/occasions/:id/participants', (ctx) => {
     const id = Number(ctx.params.id);
     if (!occasions.addParticipant(uidOf(ctx), id, Number(ctx.body.person_id))) return notFound(ctx);
-    redirect(ctx.res, `/admin/give/occasions/${id}`);
+    redirect(ctx.res, `/admin/occasions/${id}`);
   }, A);
 
-  route('POST', '/admin/give/occasions/:id/participants/:pid/remove', (ctx) => {
+  route('POST', '/admin/occasions/:id/participants/:pid/remove', (ctx) => {
     const id = Number(ctx.params.id);
     if (!occasions.removeParticipant(uidOf(ctx), id, Number(ctx.params.pid))) return notFound(ctx);
-    redirect(ctx.res, `/admin/give/occasions/${id}`);
+    redirect(ctx.res, `/admin/occasions/${id}`);
   }, A);
 
   // ----- gifts -----
@@ -278,7 +300,7 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
       name: clean(ctx.body.name, 200),
       url: url ?? String(ctx.body.url ?? ''),
       notes: cleanMultiline(ctx.body.notes, 1000),
-      status: STATUSES.includes(ctx.body.status) ? ctx.body.status : 'idea',
+      status: STATUSES.includes(ctx.body.status) ? ctx.body.status : 'planned',
       visibility: VISIBILITIES.includes(ctx.body.visibility) ? ctx.body.visibility : 'shared',
       image_source: imageSource ?? String(ctx.body.image_source ?? ''),
       price_cents: Number.isNaN(cents) ? null : cents,
@@ -318,11 +340,11 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
     if (xmas && xmas.date >= today()) occasions.addParticipant(uid, xmas.id, personId);
   }
 
-  route('POST', '/admin/give/gifts', (ctx) => {
+  route('POST', '/admin/gifts', (ctx) => {
     const uid = uidOf(ctx);
     const person = people.get(uid, Number(ctx.body.person_id));
     if (!person) return notFound(ctx);
-    const to = back(ctx, `/admin/give/people/${person.id}`);
+    const to = back(ctx, `/admin/people/${person.id}`);
     const { f, error } = giftForm(ctx);
     if (error) return giftError(ctx, error, to);
 
@@ -349,11 +371,11 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
     redirect(ctx.res, withMsg(to, 'giftAdded', `gift-${id}`));
   }, A);
 
-  route('POST', '/admin/give/gifts/:id', (ctx) => {
+  route('POST', '/admin/gifts/:id', (ctx) => {
     const uid = uidOf(ctx);
     const gift = gifts.get(uid, Number(ctx.params.id));
     if (!gift) return notFound(ctx);
-    const to = back(ctx, `/admin/give/people/${gift.person_id}`);
+    const to = back(ctx, `/admin/people/${gift.person_id}`);
     const { f, error } = giftForm(ctx);
     if (error) return giftError(ctx, error, to);
     if (ctx.body.remove_image === '1') f.image_source = '';
@@ -371,57 +393,60 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
     redirect(ctx.res, withMsg(to, 'saved', `gift-${gift.id}`));
   }, A);
 
-  route('POST', '/admin/give/gifts/:id/status', (ctx) => {
+  route('POST', '/admin/gifts/:id/status', (ctx) => {
     const uid = uidOf(ctx);
     const gift = gifts.get(uid, Number(ctx.params.id));
     if (!gift || !STATUSES.includes(ctx.body.status)) return notFound(ctx);
     gifts.setStatus(uid, gift.id, ctx.body.status);
     // A wishlist gift handed over leaves the recipient's active wishlist.
     if (ctx.body.status === 'given' && gift.wishlist_item_id) wishItems.markReceived(gift.wishlist_item_id);
-    redirect(ctx.res, withMsg(back(ctx, `/admin/give/people/${gift.person_id}`), '', `gift-${gift.id}`));
+    redirect(ctx.res, withMsg(back(ctx, `/admin/people/${gift.person_id}`), '', `gift-${gift.id}`));
   }, A);
 
-  // ----- a person's wishlist on their page -----
+  // ----- a person's wishlists on their page -----
 
   /**
-   * What the person page shows as "wishlist": for an admin's person, that admin's own wishlist
-   * (read-only, with what's taken); for yourself, just a link to your claim-blind page; for
-   * anyone else, their own wishlist, editable by whoever can see the person.
+   * What the person page shows: for an admin's record, that admin's own wishlist (read-only, with
+   * what's taken, if they share it); for everyone, the shared ideas kept for them and this admin's
+   * private ideas. Their own record is never shown to an admin (people.get → 404).
    */
   function wishFor(uid, person) {
-    if (person.user_id === uid) return { kind: 'self' };
     const linked = (w) => lists.all(uid).filter((l) => listIdsFrom(w.id).has(l.id));
-    const gw = wishlists.ofPerson(person.id); // "ideas for them" — editable by everyone who sees the person
-    const general = { w: gw, items: wishItems.othersView(gw.id, uid), history: wishItems.ownerView(gw.id).history, lists: linked(gw) };
-    if (!person.user_id) return { kind: 'person', ...general };
-    // An admin: their own wishlist (read-only, if they share it) + the ideas others keep for them.
-    const own = wishlists.byOwner(person.user_id);
-    const ow = own && own.visibility === 'admins' ? wishlists.get(own.id) : null;
-    return { kind: 'admin', own: ow && { w: ow, items: wishItems.othersView(ow.id, uid), lists: linked(ow) }, ...general };
+    const section = (w) => w && { w, items: wishItems.othersView(w.id, uid), history: wishItems.ownerView(w.id).history, lists: linked(w) };
+    const own = person.user_id ? wishlists.ofUser(person.user_id) : null; // (created empty, shared, on first use)
+    return {
+      own: own && wishlists.viewableByOther(uid, own) ? section(own) : null,
+      ownPrivate: !!person.user_id && !(own && wishlists.viewableByOther(uid, own)),
+      // Ideas wishlists are created with their first idea (an empty one is shown until then).
+      ideas: section(wishlists.ideas(person.id, null, { create: false })) ?? { w: emptyIdeas(person), items: [], history: [], lists: [] },
+      mine: section(wishlists.ideas(person.id, uid, { create: false })),
+    };
   }
 
+  const emptyIdeas = (person) => ({ id: 0, kind: 'ideas', owner_id: null, person_id: person.id, owner_name: person.name });
 
-  // 3.1 "create a list from ideas" now means: from the person's wishlist.
-  route('GET', '/admin/give/people/:id/new-list', (ctx) => {
-    const person = people.get(uidOf(ctx), Number(ctx.params.id));
+  // "Create a list from this wishlist": the admin's own if they share it, else the ideas for them.
+  route('GET', '/admin/people/:id/new-list', (ctx) => {
+    const uid = uidOf(ctx);
+    const person = people.get(uid, Number(ctx.params.id));
     if (!person) return notFound(ctx);
-    const w = person.user_id ? wishlists.byOwner(person.user_id) : wishlists.ofPerson(person.id);
-    if (!w) return notFound(ctx);
+    const own = person.user_id ? wishlists.byOwner(person.user_id) : null;
+    const w = own && wishlists.viewableByOther(uid, own) ? own : wishlists.ideas(person.id);
     redirect(ctx.res, `/admin/wishlists/${w.id}/new-list`);
   }, A);
 
-  route('POST', '/admin/give/gifts/:id/preview', (ctx) => {
+  route('POST', '/admin/gifts/:id/preview', (ctx) => {
     const gift = gifts.get(uidOf(ctx), Number(ctx.params.id));
     if (!gift) return notFound(ctx);
     enqueuePreview(gift.id, { force: true, kind: 'gift' });
-    redirect(ctx.res, withMsg(back(ctx, `/admin/give/people/${gift.person_id}`), '', `gift-${gift.id}`));
+    redirect(ctx.res, withMsg(back(ctx, `/admin/people/${gift.person_id}`), '', `gift-${gift.id}`));
   }, A);
 
-  route('POST', '/admin/give/gifts/:id/delete', (ctx) => {
+  route('POST', '/admin/gifts/:id/delete', (ctx) => {
     const gift = gifts.delete(uidOf(ctx), Number(ctx.params.id));
     if (!gift) return notFound(ctx);
     releaseImage(gift.image_file);
-    redirect(ctx.res, withMsg(back(ctx, `/admin/give/people/${gift.person_id}`), 'deleted'));
+    redirect(ctx.res, withMsg(back(ctx, `/admin/people/${gift.person_id}`), 'deleted'));
   }, A);
 }
 

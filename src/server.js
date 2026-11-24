@@ -13,10 +13,10 @@ import * as views from './views.js';
 import { IMAGE_DIR, IMAGE_FILE_RE, IMAGE_TYPES, removeImage, saveImageBuffer, sweepImages } from './preview.js';
 import { trustedProxyPeer, normalizeAddress } from './net.js';
 import { enqueuePreview, clearPreview, startPreviewQueue, allImageFiles, releaseImage } from './previewQueue.js';
-import { deleteUserData, gifts as givingGifts } from './giving.js';
+import { deleteUserData, gifts as givingGifts, ensureAdminPeople, syncBirthday } from './giving.js';
 import { registerGivingRoutes } from './givingRoutes.js';
 import { registerWishlistRoutes } from './wishlistRoutes.js';
-import { wishlists, wishItems, convertLegacyIdeas } from './wishlist.js';
+import { wishlists, wishItems, overrides } from './wishlist.js';
 import { startReminders, parseReminderDays, remindUser } from './reminders.js';
 import { userChannels } from './notify.js';
 import { notify, notifyStatus, saveNotifySettings } from './notify.js';
@@ -276,8 +276,7 @@ function canSeeImage(cookies, file) {
       if (givingGifts.get(uid, id)) return true;
     }
     for (const { wishlist_id: id } of db.prepare('SELECT DISTINCT wishlist_id FROM wishlist_items WHERE image_file = ?').all(file)) {
-      const w = wishlists.get(id);
-      if (w && (w.owner_id === uid || wishlists.viewableByOther(uid, w))) return true;
+      if (wishlists.canView(uid, wishlists.get(id))) return true;
     }
   }
   for (const [t, listId, e] of guestEntries({ cookies })) {
@@ -359,27 +358,49 @@ route('POST', '/l/:token/unpick/:id', (ctx) => {
 
 // ----- admin -----
 
+// The home page after login is Occasions (upcoming).
 route('GET', '/admin', (ctx) => {
-  if (!ctx.user) return html(ctx.res, views.adminLoginPage(ctx, { noAccounts: users.count() === 0 }));
-  html(ctx.res, views.adminDashboard(ctx, { all: lists.all(ctx.user.id), form: {} }));
+  if (!ctx.user) return redirect(ctx.res, '/login');
+  redirect(ctx.res, `/admin/occasions${ctx.url.search}`);
 });
 
-route('POST', '/admin/login', async (ctx) => {
+/**
+ * Where to go after logging in: an admin page the visitor asked for (`next`), else the home page.
+ * Only local /admin paths, never another site (//host, /\host).
+ */
+function afterLogin(next) {
+  const n = String(next || '');
+  return n.startsWith('/admin') && !n.includes('//') && !n.includes('\\') && n.length <= 500 ? n : '/admin';
+}
+
+// Admins log in at /login (and /login/2fa): one public path to put behind a challenge (e.g. a
+// Cloudflare WAF rule), while the rest of /admin is only reachable with a session.
+route('GET', '/login', (ctx) => {
+  if (ctx.user) return redirect(ctx.res, afterLogin(ctx.url.searchParams.get('next')));
+  html(ctx.res, views.adminLoginPage(ctx, { noAccounts: users.count() === 0, next: afterLogin(ctx.url.searchParams.get('next')) }));
+});
+
+route('GET', '/admin/lists', (ctx) => {
+  html(ctx.res, views.adminDashboard(ctx, { all: lists.all(ctx.user.id), form: {} }));
+}, { auth: 'admin' });
+
+route('POST', '/login', async (ctx) => {
   const username = clean(ctx.body.username, 64).toLowerCase();
   const ipKey = `login:${clientIp(ctx.req)}`;
   const userKey = `login-user:${username}`;
-  const fail = (error, status) => html(ctx.res, views.adminLoginPage(ctx, { username, error }), status);
+  const next = afterLogin(ctx.body.next);
+  const fail = (error, status) => html(ctx.res, views.adminLoginPage(ctx, { username, error, next }), status);
   if (!rateLimit(ipKey, 8, 15 * 60_000) || !rateLimit(userKey, 10, 15 * 60_000)) return fail(ctx.t('login.tooMany'), 429);
   const user = await checkLogin(username, String(ctx.body.password ?? ''));
   if (!user) return fail(ctx.t('account.badLogin'), 401);
   resetRateLimit(ipKey);
   resetRateLimit(userKey);
-  startSession(ctx, user.id, '/admin');
+  startSession(ctx, user.id, next);
 });
 
 route('POST', '/admin/logout', (ctx) => {
   sessions.delete(ctx.cookies[SESSION_COOKIE]);
-  redirect(ctx.res, '/admin', [cookie(ctx.req, SESSION_COOKIE, '', 0)]);
+  redirect(ctx.res, '/login', [cookie(ctx.req, SESSION_COOKIE, '', 0)]);
 }, { auth: 'admin' });
 
 /**
@@ -390,7 +411,7 @@ function startSession(ctx, userId, to, { secondFactorDone = false } = {}) {
   const user = users.get(userId);
   if (user?.totp_secret && !secondFactorDone) {
     const pending = tokens.signTwoFactor({ u: userId, to, exp: Date.now() + 5 * 60_000 });
-    return redirect(ctx.res, '/admin/login/2fa', [cookie(ctx.req, TWO_FACTOR_COOKIE, pending, 5 * 60_000)]);
+    return redirect(ctx.res, '/login/2fa', [cookie(ctx.req, TWO_FACTOR_COOKIE, pending, 5 * 60_000)]);
   }
   const token = sessions.create(userId);
   redirect(ctx.res, to, [
@@ -407,20 +428,20 @@ const pendingTwoFactor = (ctx) => {
   return user?.totp_secret ? { user, to: String(p.to || '/admin') } : null;
 };
 
-route('GET', '/admin/login/2fa', (ctx) => {
-  if (!pendingTwoFactor(ctx)) return redirect(ctx.res, '/admin');
+route('GET', '/login/2fa', (ctx) => {
+  if (!pendingTwoFactor(ctx)) return redirect(ctx.res, '/login');
   html(ctx.res, views.twoFactorLoginPage(ctx));
 });
 
-route('POST', '/admin/login/2fa', (ctx) => {
+route('POST', '/login/2fa', (ctx) => {
   const pending = pendingTwoFactor(ctx);
-  if (!pending) return redirect(ctx.res, '/admin');
+  if (!pending) return redirect(ctx.res, '/login');
   const key = `2fa:${pending.user.id}`;
   if (!rateLimit(key, 6, 15 * 60_000)) return html(ctx.res, views.twoFactorLoginPage(ctx, { error: ctx.t('login.tooMany') }), 429);
   const how = checkSecondFactor(pending.user, ctx.body.code);
   if (!how) return html(ctx.res, views.twoFactorLoginPage(ctx, { error: ctx.t('tf.badCode') }), 401);
   resetRateLimit(key);
-  const to = !pending.to.startsWith('/admin') ? '/admin' : how === 'recovery'
+  const to = afterLogin(pending.to) !== pending.to ? '/admin' : how === 'recovery'
     ? `/admin/profile/2fa?m=recoveryUsed&n=${users.recoveryHashes(pending.user.id).length}`
     : pending.to;
   startSession(ctx, pending.user.id, to, { secondFactorDone: true });
@@ -479,16 +500,35 @@ route('POST', '/admin/users/:id/2fa/disable', (ctx) => {
 // ----- profile -----
 
 function renderProfile(ctx, extra = {}, status = 200) {
-  html(ctx.res, views.profilePage(ctx, { user: ctx.user, notify: notifyStatus(ctx.user.id), ...extra }), status);
+  html(ctx.res, views.profilePage(ctx, { user: ctx.user, ...extra }), status);
+}
+
+function renderNotifications(ctx, extra = {}, status = 200) {
+  html(ctx.res, views.notificationsPage(ctx, { user: ctx.user, notify: notifyStatus(ctx.user.id), ...extra }), status);
+}
+
+/** Day + month (and an optional year) from a form; { error } when only half of it is there. */
+function birthdayForm(body) {
+  const num = (v, min, max) => {
+    const n = Number(String(v ?? '').trim());
+    return String(v ?? '').trim() && Number.isInteger(n) && n >= min && n <= max ? n : null;
+  };
+  const f = { birthday_day: num(body.birthday_day, 1, 31), birthday_month: num(body.birthday_month, 1, 12), birth_year: num(body.birth_year, 1900, 2200) };
+  if (!f.birthday_day !== !f.birthday_month) return { f, error: 'give.badBirthday' };
+  if (f.birthday_day && f.birthday_day > [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][f.birthday_month - 1]) return { f, error: 'give.badBirthday' };
+  return { f };
 }
 
 route('GET', '/admin/profile', (ctx) => renderProfile(ctx), { auth: 'admin' });
 
 route('POST', '/admin/profile', (ctx) => {
   const form = { username: clean(ctx.body.username, 64), name: clean(ctx.body.name, 80) };
-  const error = validateAccount(form, { exceptUserId: ctx.user.id, requirePassword: false });
-  if (error) return renderProfile(ctx, { profileForm: form, profileError: ctx.t(error) }, 400);
+  const { f: birthday, error: birthdayError } = birthdayForm(ctx.body);
+  const error = validateAccount(form, { exceptUserId: ctx.user.id, requirePassword: false }) || birthdayError;
+  if (error) return renderProfile(ctx, { profileForm: { ...form, ...birthday }, profileError: ctx.t(error) }, 400);
   users.updateProfile(ctx.user.id, form);
+  users.setBirthday(ctx.user.id, birthday);
+  syncBirthday(ctx.user.id); // the other admins' record of you (reminders without typing it twice)
   redirect(ctx.res, '/admin/profile?m=saved');
 }, { auth: 'admin' });
 
@@ -504,35 +544,39 @@ route('POST', '/admin/profile/password', async (ctx) => {
   redirect(ctx.res, '/admin/profile?m=passwordChanged');
 }, { auth: 'admin' });
 
-route('POST', '/admin/profile/notifications', (ctx) => {
+// ----- notifications and reminders (account menu) -----
+
+route('GET', '/admin/notifications', (ctx) => renderNotifications(ctx), { auth: 'admin' });
+
+route('POST', '/admin/notifications', (ctx) => {
   const { errors, values } = saveNotifySettings(ctx.user.id, ctx.body);
   if (errors.length) {
     const status = notifyStatus(ctx.user.id);
     status.values = { ...status.values, ...values, events: values.events.split(',').filter(Boolean) };
-    return renderProfile(ctx, { notify: status, notifyErrors: errors }, 400);
+    return renderNotifications(ctx, { notify: status, notifyErrors: errors }, 400);
   }
-  redirect(ctx.res, '/admin/profile?m=notifySaved#notifications');
+  redirect(ctx.res, '/admin/notifications?m=notifySaved#notifications');
 }, { auth: 'admin' });
 
-route('POST', '/admin/profile/reminders', (ctx) => {
+route('POST', '/admin/notifications/reminders', (ctx) => {
   const raw = clean(ctx.body.reminder_days, 60);
   const days = parseReminderDays(raw);
-  if (raw && !days.length) return renderProfile(ctx, { remindersError: ctx.t('remind.badDays') }, 400);
+  if (raw && !days.length) return renderNotifications(ctx, { remindersError: ctx.t('remind.badDays') }, 400);
   users.setReminderDays(ctx.user.id, days.slice().reverse().join(','));
-  redirect(ctx.res, '/admin/profile?m=saved#reminders');
+  redirect(ctx.res, '/admin/notifications?m=saved#reminders');
 }, { auth: 'admin' });
 
 // Sends whatever is due today again (ignoring what was already sent), only to this user.
-route('POST', '/admin/profile/reminders/test', async (ctx) => {
-  if (!userChannels(ctx.user.id).length) return redirect(ctx.res, '/admin/profile?m=remindersNoChannel#reminders');
+route('POST', '/admin/notifications/reminders/test', async (ctx) => {
+  if (!userChannels(ctx.user.id).length) return redirect(ctx.res, '/admin/notifications?m=remindersNoChannel#reminders');
   const n = await remindUser(ctx.user, { ignoreLog: true });
-  redirect(ctx.res, `/admin/profile?m=${n ? 'remindersSent' : 'remindersNone'}&n=${n}#reminders`);
+  redirect(ctx.res, `/admin/notifications?m=${n ? 'remindersSent' : 'remindersNone'}&n=${n}#reminders`);
 }, { auth: 'admin' });
 
-route('POST', '/admin/profile/notify-test', async (ctx) => {
+route('POST', '/admin/notifications/test', async (ctx) => {
   const results = await notify('test', {}, { onlyUserId: ctx.user.id });
   const ok = results.length && results.every((r) => r.ok);
-  redirect(ctx.res, `/admin/profile?m=${ok ? 'notifyOk' : 'notifyFail'}#notifications`);
+  redirect(ctx.res, `/admin/notifications?m=${ok ? 'notifyOk' : 'notifyFail'}#notifications`);
 }, { auth: 'admin' });
 
 // ----- users, invites and password resets -----
@@ -570,7 +614,8 @@ route('POST', '/admin/users/:id/delete', (ctx) => {
   if (!target) return notFound(ctx);
   if (target.id === ctx.user.id) return renderUsers(ctx, { error: ctx.t('account.cantDeleteSelf') }, 400);
   deleteUserData(target.id); // their private people/occasions/gifts; shared ones stay
-  users.delete(target.id); // cascades to sessions, channels and pending reset links
+  users.delete(target.id); // cascades to sessions, channels, pending reset links and their private ideas
+  ensureAdminPeople(); // a record that was private to them is recreated for whoever it was
   sweepImages(allImageFiles());
   redirect(ctx.res, '/admin/users?m=deleted');
 }, { auth: 'admin' });
@@ -596,6 +641,7 @@ route('POST', '/invite/:token', async (ctx) => {
   const passwordHash = await hashPassword(ctx.body.password);
   if (!links.consume(link.id)) return html(ctx.res, views.errorPage(ctx, ctx.t('account.badLink')), 404);
   const id = users.create({ ...form, passwordHash });
+  ensureAdminPeople(); // the other admins' record of them (or a "same person?" question)
   startSession(ctx, id, '/admin/profile?m=welcome');
 });
 
@@ -645,6 +691,9 @@ function renderAdminList(ctx, list, extra = {}, status = 200) {
     baseUrl: baseUrl(ctx.req),
     adminNames: adminNames(),
     sourceOwner: list.source_wishlist_id ? (wishlists.get(list.source_wishlist_id)?.owner_name ?? '') : '',
+    // Items this list changed for itself whose wishlist version changed since ("the wishlist changed").
+    changedIds: new Set(db.prepare('SELECT i.id, i.wishlist_item_id FROM items i JOIN list_item_overrides ov ON ov.item_id = i.id WHERE i.list_id = ?')
+      .all(list.id).filter((r) => overrides.changed(overrides.get(r.id), wishItems.get(r.wishlist_item_id)).length).map((r) => r.id)),
     ...extra,
   }), status);
 }
@@ -690,7 +739,7 @@ route('POST', '/admin/lists/:id/delete', (ctx) => {
   if (!list) return;
   lists.delete(list.id);
   sweepImages(allImageFiles());
-  redirect(ctx.res, '/admin?m=deleted');
+  redirect(ctx.res, '/admin/lists?m=deleted');
 }, { auth: 'admin' });
 
 function validateItem(ctx, body) {
@@ -761,11 +810,30 @@ function loadItem(ctx) {
   return item;
 }
 
-const itemPageData = (item) => ({ item, list: lists.get(item.list_id), allGuests: guests.forList(item.list_id), adminNames: adminNames() });
+/**
+ * What editing a list item from a wishlist changes: ideas the admin may edit → that wishlist item
+ * (every linked list follows); someone's own wishlist → this list only (an override); else nothing.
+ */
+function linkedEditTarget(uid, item) {
+  if (!item.wishlist_item_id) return null;
+  const wi = wishItems.get(item.wishlist_item_id);
+  const w = wi && wishlists.get(wi.wishlist_id);
+  if (!w) return null;
+  if (w.kind === 'ideas' && wishlists.canEdit(uid, w)) return { mode: 'wishlist', wi, w };
+  return { mode: 'list', wi, w, ov: overrides.get(item.id) };
+}
+
+const itemPageData = (ctx, item) => {
+  const target = linkedEditTarget(ctx.user.id, item);
+  return {
+    item, list: lists.get(item.list_id), allGuests: guests.forList(item.list_id), adminNames: adminNames(),
+    target, changed: target?.mode === 'list' ? overrides.changed(target.ov, target.wi) : [],
+  };
+};
 
 route('GET', '/admin/items/:id', (ctx) => {
   const item = loadItem(ctx);
-  if (item) html(ctx.res, views.adminItemPage(ctx, itemPageData(item)));
+  if (item) html(ctx.res, views.adminItemPage(ctx, itemPageData(ctx, item)));
 }, { auth: 'admin' });
 
 route('POST', '/admin/items/:id', (ctx) => {
@@ -773,13 +841,10 @@ route('POST', '/admin/items/:id', (ctx) => {
   if (!item) return;
   // Saving never touches the reservation: the form may be older than a guest's pick or a release.
   // Reserve, reassign and release are their own actions (below).
-  // Linked to a wishlist: name/link/image come from the wishlist; only this list's notes change here.
-  if (item.wishlist_item_id) {
-    items.setListNotes(item.id, cleanMultiline(ctx.body.notes, 1000));
-    return redirect(ctx.res, `/admin/lists/${item.list_id}?m=saved#item-${item.id}`);
-  }
   const { form, error } = validateItem(ctx, ctx.body);
-  if (error) return html(ctx.res, views.adminItemPage(ctx, { ...itemPageData(item), form, error }), 400);
+  if (error) return html(ctx.res, views.adminItemPage(ctx, { ...itemPageData(ctx, item), form, error }), 400);
+  // Linked to a wishlist: ideas → the wishlist item itself; someone's own wishlist → this list only.
+  if (item.wishlist_item_id) return saveLinkedItem(ctx, item, form);
   if (form.remove_image) form.image_source = '';
   items.update(item.id, form);
   const uploaded = applyUpload(item.id, ctx.body.image_data);
@@ -790,6 +855,64 @@ route('POST', '/admin/items/:id', (ctx) => {
     enqueuePreview(item.id); // new link: new price (and image, unless one was uploaded)
   }
   redirect(ctx.res, `/admin/lists/${item.list_id}?m=saved`);
+}, { auth: 'admin' });
+
+function saveLinkedItem(ctx, item, form) {
+  const target = linkedEditTarget(ctx.user.id, item);
+  if (!target) return notFound(ctx);
+  items.setListNotes(item.id, cleanMultiline(ctx.body.list_notes, 1000)); // this list's own note for guests
+  const done = () => redirect(ctx.res, `/admin/lists/${item.list_id}?m=saved#item-${item.id}`);
+  const upload = parseUpload(ctx.body.image_data);
+  const { wi } = target;
+  if (target.mode === 'wishlist') {
+    if (form.remove_image) form.image_source = '';
+    wishItems.update(wi.id, form);
+    if (upload) {
+      const old = wishItems.get(wi.id).image_file;
+      wishItems.setPreview(wi.id, { image_file: upload, preview_status: 'uploaded' });
+      releaseImage(old);
+    } else if (form.remove_image) clearPreview(wi.id, 'removed', 'wish');
+    if (!upload && form.image_source && form.image_source !== wi.image_source) enqueuePreview(wi.id, { force: true, kind: 'wish' });
+    else if (form.url !== wi.url) enqueuePreview(wi.id, { kind: 'wish' });
+    return done();
+  }
+  // Someone's own wishlist: what differs from it is kept for this list only.
+  const sourceChanged = form.image_source && form.image_source !== (target.ov?.image_source ?? '');
+  const picture = upload ? 'upload' : form.remove_image ? 'remove' : sourceChanged ? 'source' : null;
+  const before = items.get(item.id).image_file;
+  const { urlChanged } = overrides.save(item, wi, { title: form.title, url: form.url, notes: form.notes, image_source: form.image_source }, picture);
+  if (upload) items.setPreview(item.id, { image_file: upload, preview_status: 'uploaded' });
+  else if (picture === 'remove') items.setPreview(item.id, { image_file: null, preview_status: 'removed' });
+  if (upload || picture === 'remove') releaseImage(before);
+  if (picture === 'source') enqueuePreview(item.id, { force: true });
+  else if (urlChanged) enqueuePreview(item.id); // its own link: its own price (and picture, unless one was set here)
+  return done();
+}
+
+/** An uploaded image (data: URL) saved to disk: its file name, or null. */
+function parseUpload(dataUrl) {
+  const m = /^data:image\/(jpeg|png|webp|gif|avif);base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl || ''));
+  if (!m) return null;
+  try { return saveImageBuffer(Buffer.from(m[2], 'base64')); } catch { return null; }
+}
+
+// A list's own version of an item from someone's own wishlist: take the wishlist's changes / all of it again.
+route('POST', '/admin/items/:id/override/accept', (ctx) => {
+  const item = loadItem(ctx);
+  if (!item) return;
+  const before = item.image_file;
+  overrides.acceptChanged(item.id);
+  releaseImage(before);
+  redirect(ctx.res, `/admin/items/${item.id}?m=saved`);
+}, { auth: 'admin' });
+
+route('POST', '/admin/items/:id/override/reset', (ctx) => {
+  const item = loadItem(ctx);
+  if (!item) return;
+  const before = item.image_file;
+  overrides.reset(item.id);
+  releaseImage(before);
+  redirect(ctx.res, `/admin/items/${item.id}?m=saved`);
 }, { auth: 'admin' });
 
 // Linked items: hide in this list only / approve or ignore items new in the wishlist.
@@ -832,8 +955,7 @@ route('GET', '/admin/previews', (ctx) => {
     let it;
     if (kind === 'wish') {
       it = wishItems.get(id);
-      const w = it && wishlists.get(it.wishlist_id);
-      if (!w || (w.owner_id !== ctx.user.id && !wishlists.viewableByOther(ctx.user.id, w))) continue;
+      if (!it || !wishlists.canView(ctx.user.id, wishlists.get(it.wishlist_id))) continue;
     } else {
       it = isGift ? givingGifts.get(ctx.user.id, id) : items.get(id);
       if (it && !isGift && !lists.canSee(ctx.user.id, it.list_id)) continue;
@@ -990,7 +1112,10 @@ async function handle(req, res) {
   if (r.auth === 'admin' || path.startsWith('/admin')) sessionCookie = ctx.cookies[SESSION_COOKIE] || '';
   else sessionCookie = ctx.cookies[GUEST_COOKIE] || '';
 
-  if (r.auth === 'admin' && !ctx.isAdmin) return redirect(res, '/admin');
+  // No (or an expired) session: to the login page, coming back here afterwards for a page view.
+  if (r.auth === 'admin' && !ctx.isAdmin) {
+    return redirect(res, method === 'GET' ? `/login?next=${encodeURIComponent(path + url.search)}` : '/login');
+  }
   // REQUIRE_2FA: logged-in admins without two-factor can only set it up (or log out).
   if (config.require2fa && ctx.user && !ctx.user.totp_secret && path.startsWith('/admin')
       && !path.startsWith('/admin/profile/2fa') && path !== '/admin/logout') {
@@ -1019,7 +1144,7 @@ registerGivingRoutes({ route, html, redirect, notFound, clean, cleanMultiline, c
 registerWishlistRoutes({ route, html, redirect, notFound, clean, cleanMultiline, cleanUrl });
 
 await bootstrapAccounts();
-convertLegacyIdeas();
+ensureAdminPeople();
 
 const server = http.createServer((req, res) => {
   handle(req, res).catch((err) => {

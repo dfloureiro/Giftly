@@ -1,4 +1,4 @@
-// "Gifts to give": mock people, two Christmases, gifts (one joint) and mobile screenshots.
+// Occasions and People: mock people, two Christmases, gifts (one joint) and mobile screenshots.
 const { chromium } = require('playwright');
 const { B, OUT, desktop, mobile, art, login, inDays } = require('./common.js');
 
@@ -22,8 +22,9 @@ const PEOPLE = [
 
   const ids = {};
   for (const x of PEOPLE) {
-    await p.goto(`${B}/admin/give/people`);
-    const f = p.locator('form[action="/admin/give/people"]');
+    await p.goto(`${B}/admin/people`);
+    await p.locator('details:has(form[action="/admin/people"]) > summary').click();
+    const f = p.locator('form[action="/admin/people"]');
     await f.locator('input[name=name]').fill(x.name);
     await f.locator('input[name=birthday_day]').fill(String(Number(x.bd.slice(8))));
     await f.locator('select[name=birthday_month]').selectOption(String(Number(x.bd.slice(5, 7))));
@@ -36,28 +37,28 @@ const PEOPLE = [
   }
 
   for (const y of [YEAR - 1, YEAR]) {
-    await p.goto(`${B}/admin/give/occasions`);
+    await p.goto(`${B}/admin/occasions/new`);
     await p.evaluate((y) => {
-      const f = document.querySelector('form[action="/admin/give/occasions/christmas"]');
+      const f = document.querySelector('form[action="/admin/occasions/christmas"]');
       if (f) { f.querySelector('[name=year]').value = y; f.submit(); }
     }, String(y));
     await p.waitForLoadState();
   }
   const xmas = {};
-  await p.goto(`${B}/admin/give/occasions`);
+  await p.goto(`${B}/admin/occasions?view=all`);
   for (const a of await p.locator('ul.lists a').all()) {
     const t = await a.innerText();
     const id = Number(/occasions\/(\d+)/.exec(await a.getAttribute('href'))[1]);
     if (t.includes(String(YEAR - 1))) xmas.last = id; else if (t.includes(String(YEAR))) xmas.cur = id;
   }
 
-  async function gift(person, occasion, { name, status = 'idea', price = '', notes = '', emoji, bg, url = '', also = '' }) {
+  async function gift(person, occasion, { name, status = 'planned', price = '', notes = '', emoji, bg, url = '', also = '' }) {
     let d;
     if (occasion.startsWith('occasion:')) {
-      await p.goto(`${B}/admin/give/occasions/${occasion.split(':')[1]}`);
+      await p.goto(`${B}/admin/occasions/${occasion.split(':')[1]}`);
       d = p.locator('ul.checklist > li').filter({ has: p.locator('.who-row strong', { hasText: person }) }).locator('details.add-gift');
     } else {
-      await p.goto(`${B}/admin/give/people/${ids[person]}`);
+      await p.goto(`${B}/admin/people/${ids[person]}`);
       d = p.locator('details.add-gift:not(.add-wish)').first();
     }
     if (!(await d.evaluate((el) => el.open))) await d.locator(':scope > summary').click();
@@ -83,12 +84,12 @@ const PEOPLE = [
   await gift('Grandma Rose', cur, { name: 'Crossword book', status: 'bought', price: '14,90', emoji: '🧩', bg: ['#ede9fe', '#ddd6fe'], url: 'https://books.example/crosswords' });
   await gift('Leo', cur, { name: 'Space LEGO set', status: 'bought', price: '49,99', emoji: '🚀', bg: ['#dbeafe', '#bfdbfe'], url: 'https://toys.example/space-set' });
   await gift('Uncle Tom', cur, { name: 'Wine tasting for two', status: 'bought', price: '65', also: 'Aunt Clara', emoji: '🍷', bg: ['#fce7f3', '#fbcfe8'] });
-  await gift('Sofia', cur, { name: 'Coffee beans', status: 'idea', notes: 'From the market', emoji: '☕', bg: ['#e7e5e4', '#d6d3d1'] });
+  await gift('Sofia', cur, { name: 'Coffee beans', status: 'planned', notes: 'From the market', emoji: '☕', bg: ['#e7e5e4', '#d6d3d1'] });
   await gift('Leo', `birthday:${inDays(23).slice(0, 4)}`, { name: 'Glow-in-the-dark stars', status: 'bought', price: '12', emoji: '⭐', bg: ['#e0e7ff', '#c7d2fe'] });
 
   // Leo's wishlist (on his page): one item will be taken through a list made from it.
   async function wish(person, { title, url = '', notes = '', emoji, bg }) {
-    await p.goto(`${B}/admin/give/people/${ids[person]}`);
+    await p.goto(`${B}/admin/people/${ids[person]}`);
     const d = p.locator('details.add-wish');
     await d.locator(':scope > summary').click();
     const f = d.locator('form');
@@ -106,11 +107,11 @@ const PEOPLE = [
   const m = await browser.newContext(mobile);
   await m.addCookies(await ctx.cookies());
   const mp = await m.newPage();
-  await mp.goto(`${B}/admin/give`);
+  await mp.goto(`${B}/admin/occasions`);
   await mp.screenshot({ path: `${OUT}/give-upcoming.png`, fullPage: true });
-  await mp.goto(`${B}/admin/give/occasions/${xmas.cur}`);
+  await mp.goto(`${B}/admin/occasions/${xmas.cur}`);
   await mp.screenshot({ path: `${OUT}/give-checklist.png`, fullPage: true });
-  await mp.goto(`${B}/admin/give/people/${ids.Leo}`);
+  await mp.goto(`${B}/admin/people/${ids.Leo}`);
   await mp.screenshot({ path: `${OUT}/give-person.png`, fullPage: true });
   await browser.close();
 })().catch((e) => { console.error(e); process.exit(1); });

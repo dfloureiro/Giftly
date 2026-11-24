@@ -19,7 +19,7 @@ before(async () => { server = await startServer(); });
 after(async () => { await server?.stop(); });
 
 const loginStatus = async (base, username, password) =>
-  (await new Client(base).request('/admin/login', { method: 'POST', form: { username, password } })).status;
+  (await new Client(base).request('/login', { method: 'POST', form: { username, password } })).status;
 
 /** The id of a user, from the admin users page. */
 const userIdOf = (page, username) => Number(new RegExp(
@@ -33,8 +33,8 @@ test('the first account is created from ADMIN_USERNAME/ADMIN_PASSWORD', async ()
 });
 
 test('wrong password and unknown user fail the same way', async () => {
-  const wrong = await new Client(server.base).request('/admin/login', { method: 'POST', form: { username: 'admin', password: 'nope-nope' } });
-  const unknown = await new Client(server.base).request('/admin/login', { method: 'POST', form: { username: 'ghost', password: 'nope-nope' } });
+  const wrong = await new Client(server.base).request('/login', { method: 'POST', form: { username: 'admin', password: 'nope-nope' } });
+  const unknown = await new Client(server.base).request('/login', { method: 'POST', form: { username: 'ghost', password: 'nope-nope' } });
   assert.equal(wrong.status, 401);
   assert.equal(unknown.status, 401);
   assert.match(wrong.text, /Wrong username or password/);
@@ -48,7 +48,7 @@ test('a forged session cookie is not accepted; logout ends the session on the se
 
   const admin = await loginAdmin(server.base);
   const stolen = admin.jar.get('giftly_session');
-  await admin.post('/admin/logout', {}, { from: '/admin' });
+  await admin.post('/admin/logout', {}, { from: '/admin/lists' });
   const replay = new Client(server.base);
   replay.jar.set('giftly_session', stolen);
   assert.equal((await replay.get('/admin/profile')).status, 303, 'old cookie no longer works');
@@ -146,8 +146,8 @@ test('each admin gets notifications on their own channels, for the events they c
   try {
     const admin = await loginAdmin(server.base);
     const bea = await inviteAdmin(server.base, admin, { username: 'bea' });
-    await admin.post('/admin/profile/notifications', { webhook_url: hookA.url, event_pick: '1' }, { from: '/admin/profile' });
-    await bea.post('/admin/profile/notifications', { webhook_url: hookB.url, event_pick: '1', event_unpick: '1' }, { from: '/admin/profile' });
+    await admin.post('/admin/notifications', { webhook_url: hookA.url, event_pick: '1' }, { from: '/admin/profile' });
+    await bea.post('/admin/notifications', { webhook_url: hookB.url, event_pick: '1', event_unpick: '1' }, { from: '/admin/profile' });
 
     const { token } = await createList(admin, { title: 'Shared list', gifts: ['Robot vacuum'] });
     const guest = await joinList(server.base, token, 'Ana');
@@ -165,7 +165,7 @@ test('each admin gets notifications on their own channels, for the events they c
     assert.equal(hookA.calls.length, 1, 'admin did not');
 
     // The test button only notifies whoever pressed it.
-    await bea.post('/admin/profile/notify-test', {}, { from: '/admin/profile' });
+    await bea.post('/admin/notifications/test', {}, { from: '/admin/profile' });
     await waitFor(() => hookB.calls.length > 2);
     assert.equal(hookB.calls.at(-1).event, 'test');
     assert.equal(hookA.calls.length, 1);
@@ -173,7 +173,7 @@ test('each admin gets notifications on their own channels, for the events they c
     await hookA.close();
     await hookB.close();
     const admin = await loginAdmin(server.base);
-    await admin.post('/admin/profile/notifications', { event_pick: '1' }, { from: '/admin/profile' });
+    await admin.post('/admin/notifications', { event_pick: '1' }, { from: '/admin/profile' });
   }
 });
 
@@ -197,7 +197,7 @@ test('after accounts exist, ADMIN_PASSWORD is ignored; old notification settings
   const v1 = await startServer({ ADMIN_USERNAME: 'diogo', NOTIFY_WEBHOOK_URL: hook.url, NOTIFY_EVENTS: 'pick' });
   try {
     const admin = await loginAdmin(v1.base, { username: 'diogo' });
-    assert.match((await admin.get('/admin/profile')).text, /Active: webhook/);
+    assert.match((await admin.get('/admin/notifications')).text, /Active: webhook/);
     await v1.stop({ keepData: true });
 
     // Restart with a different ADMIN_PASSWORD: the account keeps its own password.
@@ -217,7 +217,7 @@ test('after accounts exist, ADMIN_PASSWORD is ignored; old notification settings
 test('without accounts or ADMIN_PASSWORD the login page explains how to start', async () => {
   const empty = await startServer({ ADMIN_PASSWORD: '' });
   try {
-    const page = (await new Client(empty.base).get('/admin')).text;
+    const page = (await new Client(empty.base).get('/login')).text;
     assert.match(page, /no accounts yet/i);
     assert.match(empty.logs(), /No accounts yet/);
   } finally {

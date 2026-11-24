@@ -42,7 +42,7 @@ function script(name, args, { data, input, output, env = {} } = {}) {
 /** A Giftly with a list whose gift has a photo; returns what to check later. */
 async function seeded(server) {
   const admin = await loginAdmin(server.base);
-  const r = await admin.post('/admin/lists', { title: 'Release list', visibility: 'shared' }, { from: '/admin' });
+  const r = await admin.post('/admin/lists', { title: 'Release list', visibility: 'shared' }, { from: '/admin/lists' });
   const listId = Number(/\/admin\/lists\/(\d+)/.exec(r.location)?.[1]);
   await admin.post(`/admin/lists/${listId}/items`, { title: 'Photo gift', image_data: PNG }, { from: `/admin/lists/${listId}` });
   const page = (await admin.get(`/admin/lists/${listId}`)).text;
@@ -132,7 +132,7 @@ test('one-time migration from 3.x: data copied into a release, the flat files le
   try {
     await servesSeed(s.base, seed);
     // The session made before still works: the secret came along.
-    assert.equal((await moved(seed.admin, s.base).get('/admin')).status, 200);
+    assert.equal((await moved(seed.admin, s.base).get('/admin/lists')).status, 200);
     const name = currentName(flat);
     assert.equal(readManifest(flat, name).origin, 'initial');
   } finally {
@@ -169,7 +169,7 @@ async function olderRelease({ broken = false } = {}) {
     const all = broken ? migrations.length : migrations.length - 1;
     for (let v = 0; v < all; v++) {
       const m = typeof migrations[v] === 'string' ? { sql: migrations[v] } : migrations[v];
-      db.exec(m.sql);
+      if (m.run) m.run(db); else db.exec(m.sql);
     }
     // broken: the full schema labelled one version older, so the last migration fails.
     db.exec(`PRAGMA user_version = ${migrations.length - 1}`);
@@ -269,7 +269,7 @@ test('backup → restore into a new release → switch → the restored data is 
   const s2 = await startServer({}, { dataDir: s.dataDir });
   try {
     await servesSeed(s2.base, seed);
-    assert.equal((await moved(seed.admin, s2.base).get('/admin')).status, 200, 'same secret: still signed in');
+    assert.equal((await moved(seed.admin, s2.base).get('/admin/lists')).status, 200, 'same secret: still signed in');
     const ok = script('served.js', ['--expect', name], { data: s.dataDir, env: { PORT: new URL(s2.base).port } });
     assert.equal(ok.status, 0, ok.err);
   } finally {

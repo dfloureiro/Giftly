@@ -127,8 +127,8 @@ test('the other admins are notified, not the one who reserved', async () => {
   const theirs = await webhookReceiver();
   try {
     const bea = await inviteAdmin(server.base, admin, { username: 'bea-reserve' });
-    await admin.post('/admin/profile/notifications', { webhook_url: mine.url, event_pick: '1' }, { from: '/admin/profile' });
-    await bea.post('/admin/profile/notifications', { webhook_url: theirs.url, event_pick: '1' }, { from: '/admin/profile' });
+    await admin.post('/admin/notifications', { webhook_url: mine.url, event_pick: '1' }, { from: '/admin/profile' });
+    await bea.post('/admin/notifications', { webhook_url: theirs.url, event_pick: '1' }, { from: '/admin/profile' });
     const { id } = await createList(admin, { title: 'Notify list', gifts: ['Book'] });
     const [book] = await itemIds(id);
     await admin.post(`/admin/items/${book}/reserve`, { name: 'Primo João' }, { from: `/admin/lists/${id}` });
@@ -140,7 +140,7 @@ test('the other admins are notified, not the one who reserved', async () => {
   } finally {
     await mine.close();
     await theirs.close();
-    await admin.post('/admin/profile/notifications', {}, { from: '/admin/profile' });
+    await admin.post('/admin/notifications', {}, { from: '/admin/profile' });
   }
 });
 
@@ -148,7 +148,7 @@ test('a guest’s first real visit after an admin reserved for them still counts
   const hook = await webhookReceiver();
   try {
     const bea = await loginAdmin(server.base, { username: 'bea-reserve', password: 'second-password-1' });
-    await bea.post('/admin/profile/notifications', { webhook_url: hook.url, event_join: '1' }, { from: '/admin/profile' });
+    await bea.post('/admin/notifications', { webhook_url: hook.url, event_join: '1' }, { from: '/admin/profile' });
     const { id, token } = await createList(admin, { title: 'Join list', gifts: ['Pen'] });
     const [pen] = await itemIds(id);
     await admin.post(`/admin/items/${pen}/reserve`, { name: 'Tio Zé' }, { from: `/admin/lists/${id}` });

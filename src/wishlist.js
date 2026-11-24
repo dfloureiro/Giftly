@@ -1,71 +1,83 @@
-// Personal wishlists (one per admin) and lists created from them.
+// Wishlists: an admin's own ('own'), and the ideas admins keep for a person ('ideas': shared with
+// everyone who sees the person, or private to one admin). Lists can be created from both.
 //
 // SURPRISE RULE: nothing in this module ever tells a wishlist's OWNER whether an item was
 // reserved. Owner-facing functions (`ownerView`, `remove`, …) don't read claims at all and
 // behave identically either way. Claim state is only exposed to *other* admins
 // (`othersView`), and lists made from a wishlist are hidden from its owner by LIST_VISIBLE.
-import { db, tx, lists, settings, LIST_VISIBLE } from './db.js';
-import { users } from './accounts.js';
+// Ideas kept for an admin are never visible to that admin (their person is invisible to them).
+//
+// WISHLIST ACCESS RULE (the only place it lives): `wishlists.canView` / `viewableByOther` / `canEdit`.
+import { db, tx, lists } from './db.js';
 import { people } from './giving.js';
-import { config } from './config.js';
 
 const now = () => Date.now();
-export const WISHLIST_VISIBILITIES = ['admins', 'private'];
+export const WISHLIST_VISIBILITIES = ['shared', 'private'];
 export const REMOVE_REASONS = ['bought', 'unwanted', 'received'];
 
 // ---------- wishlists ----------
 
+const GET = `SELECT w.*, COALESCE(u.name, p.name) AS owner_name,
+    CASE w.kind WHEN 'own' THEN w.owner_id ELSE p.user_id END AS recipient_user_id
+  FROM wishlists w LEFT JOIN users u ON u.id = w.owner_id AND w.kind = 'own' LEFT JOIN people p ON p.id = w.person_id`;
+
 export const wishlists = {
   /** The admin's own wishlist (created on first use). */
   ofUser(uid) {
-    let w = db.prepare('SELECT * FROM wishlists WHERE owner_id = ?').get(uid);
+    let w = db.prepare("SELECT * FROM wishlists WHERE kind = 'own' AND owner_id = ?").get(uid);
     if (!w) {
-      db.prepare('INSERT INTO wishlists (owner_id, created_at) VALUES (?, ?)').run(uid, now());
-      w = db.prepare('SELECT * FROM wishlists WHERE owner_id = ?').get(uid);
+      db.prepare("INSERT INTO wishlists (kind, owner_id, visibility, created_at) VALUES ('own', ?, 'shared', ?)").run(uid, now());
+      w = db.prepare("SELECT * FROM wishlists WHERE kind = 'own' AND owner_id = ?").get(uid);
     }
-    return w;
+    return wishlists.get(w.id);
   },
-  /** owner_name is the admin's name, or the person's name for a person's wishlist. */
-  get: (id) => db.prepare(`SELECT w.*, COALESCE(u.name, p.name) AS owner_name, p.user_id AS person_user_id FROM wishlists w
-    LEFT JOIN users u ON u.id = w.owner_id LEFT JOIN people p ON p.id = w.person_id WHERE w.id = ?`).get(id) ?? null,
-  /** The wishlist of a person in "gifts to give" (created on first use). Admins use their own. */
-  ofPerson(personId) {
-    let w = db.prepare('SELECT * FROM wishlists WHERE person_id = ?').get(personId);
+  /**
+   * owner_name: the admin (own) or the person (ideas). recipient_user_id: the admin it is for, if
+   * any. For ideas, owner_id is the admin they are private to (NULL = shared).
+   */
+  get: (id) => db.prepare(`${GET} WHERE w.id = ?`).get(id) ?? null,
+  byOwner: (uid) => {
+    const w = db.prepare("SELECT id FROM wishlists WHERE kind = 'own' AND owner_id = ?").get(uid);
+    return w ? wishlists.get(w.id) : null;
+  },
+  /**
+   * The ideas wishlist for a person: the shared one (`ownerId` null) or the one private to
+   * `ownerId`. Created on first use when `create` is set; null otherwise.
+   */
+  ideas(personId, ownerId = null, { create = true } = {}) {
+    const find = () => db.prepare("SELECT id FROM wishlists WHERE kind = 'ideas' AND person_id = ? AND COALESCE(owner_id, 0) = ?")
+      .get(personId, ownerId ?? 0);
+    let w = find();
+    if (!w && !create) return null;
     if (!w) {
-      db.prepare('INSERT INTO wishlists (person_id, created_at) VALUES (?, ?)').run(personId, now());
-      w = db.prepare('SELECT * FROM wishlists WHERE person_id = ?').get(personId);
+      db.prepare("INSERT INTO wishlists (kind, owner_id, person_id, visibility, created_at) VALUES ('ideas', ?, ?, ?, ?)")
+        .run(ownerId, personId, ownerId ? 'private' : 'shared', now());
+      w = find();
     }
     return wishlists.get(w.id);
   },
   setVisibility(uid, visibility) {
-    db.prepare('UPDATE wishlists SET visibility = ? WHERE owner_id = ?').run(visibility, uid);
+    db.prepare("UPDATE wishlists SET visibility = ? WHERE kind = 'own' AND owner_id = ?").run(visibility, uid);
   },
   /**
-   * Can `uid` look at this wishlist as a giver (with what's reserved)? Never its owner.
-   * A person's wishlist: whoever can see that person (unless the person is `uid` themselves).
+   * Can `uid` look at this wishlist as a giver (with what's reserved)? Never its recipient.
+   * Own: another admin, if the owner shares it. Ideas: whoever can see the person (never the
+   * person themselves), and for private ideas only the admin they belong to.
    */
   viewableByOther(uid, w) {
     if (!w) return false;
-    if (w.person_id) {
-      const p = people.get(uid, w.person_id);
-      return !!p && p.user_id !== uid;
-    }
-    return w.owner_id !== uid && w.visibility === 'admins';
+    if (w.kind === 'own') return w.owner_id !== uid && w.visibility === 'shared';
+    if (w.owner_id != null && w.owner_id !== uid) return false;
+    return !!people.get(uid, w.person_id);
   },
-  /** Who may add, edit, reorder and remove items: the owner, or anyone who sees the person. */
+  /** Any view at all: the owner's own (claim-blind) page, or as a giver. */
+  canView: (uid, w) => !!w && ((w.kind === 'own' && w.owner_id === uid) || wishlists.viewableByOther(uid, w)),
+  /** Who may add, edit, reorder and remove items: the owner of an own wishlist; for ideas, whoever may view them. */
   canEdit(uid, w) {
     if (!w) return false;
-    if (w.person_id) return wishlists.viewableByOther(uid, w);
-    return w.owner_id === uid;
+    if (w.kind === 'own') return w.owner_id === uid;
+    return wishlists.viewableByOther(uid, w);
   },
-  /** Other admins' wishlists `uid` can look at. */
-  others(uid) {
-    return db.prepare(`SELECT w.*, u.name AS owner_name,
-        (SELECT COUNT(*) FROM wishlist_items wi WHERE wi.wishlist_id = w.id AND wi.status = 'active') AS item_count
-      FROM wishlists w JOIN users u ON u.id = w.owner_id
-      WHERE w.owner_id IS NOT NULL AND w.owner_id != ? AND w.visibility = 'admins' ORDER BY u.name COLLATE NOCASE`).all(uid);
-  },
-  byOwner: (uid) => db.prepare('SELECT * FROM wishlists WHERE owner_id = ?').get(uid) ?? null,
 };
 
 // ---------- wishlist items ----------
@@ -194,14 +206,113 @@ function claimWatchers(wishItemId) {
 
 // ---------- links between wishlist items and list items ----------
 
-/** Copy a wishlist item's shown data onto every list item linked to it. */
+/**
+ * Copy a wishlist item's shown data onto every list item linked to it. Fields a list changed for
+ * itself (list_item_overrides) keep that list's version: a new link there brings its own price and
+ * picture, and a picture set there stays. The wishlist itself is never changed by this.
+ */
 export function syncLinked(wishItemId) {
   const wi = wishItems.get(wishItemId);
   if (!wi) return;
-  db.prepare(`UPDATE items SET title = ?, url = ?, wish_notes = ?, price = ?, image_file = ?, preview_status = '',
-      price_checked_at = ? WHERE wishlist_item_id = ?`)
-    .run(wi.title, wi.url, wi.notes, wi.price, wi.image_file, wi.price_checked_at, wishItemId);
+  const plain = db.prepare(`UPDATE items SET title = ?, url = ?, wish_notes = ?, price = ?, image_file = ?, preview_status = '',
+      price_checked_at = ? WHERE wishlist_item_id = ? AND id NOT IN (SELECT item_id FROM list_item_overrides)`);
+  plain.run(wi.title, wi.url, wi.notes, wi.price, wi.image_file, wi.price_checked_at, wishItemId);
+  for (const ov of db.prepare(`SELECT ov.* FROM list_item_overrides ov JOIN items i ON i.id = ov.item_id
+      WHERE i.wishlist_item_id = ?`).all(wishItemId)) {
+    const ownLink = ov.url != null;
+    const ownPicture = ownLink || !!ov.image;
+    db.prepare(`UPDATE items SET title = ?, url = ?, wish_notes = ?,
+        price = CASE WHEN ? THEN price ELSE ? END, price_checked_at = CASE WHEN ? THEN price_checked_at ELSE ? END,
+        image_file = CASE WHEN ? THEN image_file ELSE ? END, preview_status = CASE WHEN ? THEN preview_status ELSE '' END
+      WHERE id = ?`).run(ov.title ?? wi.title, ov.url ?? wi.url, ov.notes ?? wi.notes,
+      ownLink ? 1 : 0, wi.price, ownLink ? 1 : 0, wi.price_checked_at,
+      ownPicture ? 1 : 0, wi.image_file, ownPicture ? 1 : 0, ov.item_id);
+  }
 }
+
+// ---------- a list's own version of an item from another admin's wishlist ----------
+
+const OVERRIDABLE = ['title', 'url', 'notes'];
+
+/**
+ * When a list edits an item that comes from someone's OWN wishlist, the change is stored for that
+ * list only (the wishlist and its owner never see it). Fields equal to the wishlist follow it again.
+ * `base_*` remembers the wishlist's value when the field was changed here, to tell "the wishlist
+ * changed since" (shown with an option to take its version).
+ */
+export const overrides = {
+  get: (itemId) => db.prepare('SELECT * FROM list_item_overrides WHERE item_id = ?').get(itemId) ?? null,
+  /**
+   * `f`: { title, url, notes } as submitted; `picture`: 'upload' | 'remove' | 'source' | null.
+   * Returns what changed: { urlChanged, pictureChanged }.
+   */
+  save(item, wi, f, picture = null) {
+    return tx(() => {
+      const cur = overrides.get(item.id) ?? {};
+      const row = { image: cur.image ?? 0, image_source: cur.image_source ?? null, base_image: cur.base_image ?? null };
+      for (const k of OVERRIDABLE) {
+        const shown = cur[k] ?? wi[k];
+        if (f[k] === wi[k]) { row[k] = null; row[`base_${k}`] = null; }
+        else if (f[k] === shown && cur[k] != null) { row[k] = cur[k]; row[`base_${k}`] = cur[`base_${k}`]; } // untouched: keep its base
+        else { row[k] = f[k]; row[`base_${k}`] = wi[k]; }
+      }
+      if (picture) {
+        row.image = 1;
+        row.base_image = wi.image_file;
+        row.image_source = picture === 'source' ? f.image_source : null;
+      }
+      const urlChanged = (row.url ?? wi.url) !== item.url;
+      if (!OVERRIDABLE.some((k) => row[k] != null) && !row.image) {
+        db.prepare('DELETE FROM list_item_overrides WHERE item_id = ?').run(item.id);
+      } else {
+        db.prepare(`INSERT INTO list_item_overrides (item_id, title, url, notes, image, image_source, base_title, base_url, base_notes, base_image, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(item_id) DO UPDATE SET title = excluded.title, url = excluded.url,
+          notes = excluded.notes, image = excluded.image, image_source = excluded.image_source, base_title = excluded.base_title,
+          base_url = excluded.base_url, base_notes = excluded.base_notes, base_image = excluded.base_image, updated_at = excluded.updated_at`)
+          .run(item.id, row.title, row.url, row.notes, row.image, row.image_source, row.base_title, row.base_url, row.base_notes, row.base_image, now());
+      }
+      db.prepare('UPDATE items SET image_source = ? WHERE id = ?').run(row.image ? row.image_source ?? '' : '', item.id);
+      if (urlChanged) db.prepare("UPDATE items SET price = '', price_checked_at = NULL WHERE id = ?").run(item.id);
+      syncLinked(wi.id);
+      return { urlChanged, pictureChanged: !!picture };
+    });
+  },
+  /** Fields changed in this list whose wishlist version changed since (['title', 'image', …]). */
+  changed(ov, wi) {
+    if (!ov || !wi) return [];
+    const out = OVERRIDABLE.filter((k) => ov[k] != null && ov[`base_${k}`] !== wi[k]);
+    if (ov.image && ov.base_image !== wi.image_file) out.push('image');
+    return out;
+  },
+  /** Take the wishlist's version of what changed there (the rest stays as this list has it). */
+  acceptChanged(itemId) {
+    return tx(() => {
+      const ov = overrides.get(itemId);
+      const item = ov && db.prepare('SELECT * FROM items WHERE id = ?').get(itemId);
+      const wi = item && wishItems.get(item.wishlist_item_id);
+      if (!wi) return false;
+      const fields = overrides.changed(ov, wi);
+      for (const k of fields) {
+        if (k === 'image') db.prepare('UPDATE list_item_overrides SET image = 0, image_source = NULL, base_image = NULL WHERE item_id = ?').run(itemId);
+        else db.prepare(`UPDATE list_item_overrides SET ${k} = NULL, base_${k} = NULL WHERE item_id = ?`).run(itemId);
+      }
+      db.prepare(`DELETE FROM list_item_overrides WHERE item_id = ? AND title IS NULL AND url IS NULL AND notes IS NULL AND image = 0`).run(itemId);
+      syncLinked(wi.id);
+      return true;
+    });
+  },
+  /** "Use the wishlist's details again": this list follows the wishlist in everything. */
+  reset(itemId) {
+    return tx(() => {
+      const item = db.prepare('SELECT * FROM items WHERE id = ?').get(itemId);
+      if (!item?.wishlist_item_id) return false;
+      db.prepare('DELETE FROM list_item_overrides WHERE item_id = ?').run(itemId);
+      db.prepare("UPDATE items SET image_source = '' WHERE id = ?").run(itemId);
+      syncLinked(item.wishlist_item_id);
+      return true;
+    });
+  },
+};
 
 function insertLinked(listId, wi, { pending = false } = {}) {
   const { p } = db.prepare('SELECT COALESCE(MAX(position), 0) + 1 AS p FROM items WHERE list_id = ?').get(listId);
@@ -220,18 +331,24 @@ function addToLinkedLists(wishItemId) {
 }
 
 /**
- * The wishlists that belong to the same recipient as `w`, as `uid` may use them: an admin's
- * own wishlist and the ideas others keep on that admin's record in "gifts to give". The first
- * is `w` itself. Only wishlists `uid` may view as a giver.
+ * The wishlists that belong to the same recipient as `w`, as `uid` may use them: an admin's own
+ * wishlist, the shared ideas kept for that person and `uid`'s private ideas for them. The first is
+ * `w` itself. Only wishlists `uid` may view as a giver.
  */
 export function siblingWishlists(uid, w) {
   const out = [w];
-  if (w.owner_id) {
-    const person = people.list(uid).find((p) => p.user_id === w.owner_id);
-    if (person) out.push(wishlists.ofPerson(person.id));
-  } else if (w.person_user_id) {
-    const own = wishlists.byOwner(w.person_user_id);
-    if (own) out.push(wishlists.get(own.id));
+  const personIds = w.kind === 'own'
+    ? people.list(uid).filter((p) => p.user_id === w.owner_id).map((p) => p.id)
+    : [w.person_id];
+  const userId = w.kind === 'own' ? w.owner_id : w.recipient_user_id;
+  if (w.kind !== 'own' && userId) {
+    const own = wishlists.byOwner(userId);
+    if (own) out.push(own);
+  }
+  for (const pid of personIds) {
+    for (const x of [wishlists.ideas(pid, null, { create: false }), wishlists.ideas(pid, uid, { create: false })]) {
+      if (x && !out.some((y) => y.id === x.id)) out.push(x);
+    }
   }
   return out.filter((x) => wishlists.viewableByOther(uid, x));
 }
@@ -248,6 +365,8 @@ export function createListFromWishlist(uid, wishlistId, { title, description = '
   const w = wishlists.get(wishlistId);
   if (!wishlists.viewableByOther(uid, w)) return null; // never from your own wishlist (you could never see it)
   const sources = siblingWishlists(uid, w);
+  // Private ideas only ever go into a private list (LIST_VISIBLE also hides it from everyone else).
+  if (sources.some((x) => x.kind === 'ideas' && x.owner_id != null)) visibility = 'private';
   return tx(() => {
     const id = lists.create({ title, description, owner_id: uid, visibility, source_wishlist_id: w.id, auto_add_new });
     const chosen = itemIds ? new Set(itemIds.map(Number)) : null;
@@ -266,46 +385,3 @@ export function claimForGift(wishItemId, giftId) {
   return db.prepare('INSERT OR IGNORE INTO wishlist_claims (wishlist_item_id, gift_id, created_at) VALUES (?, ?, ?)')
     .run(wishItemId, giftId, now()).changes === 1;
 }
-
-/** A user's display name (for notifications). */
-export const ownerName = (w) => wishlists.get(w.id)?.owner_name ?? '';
-
-/**
- * 3.2, once: shared gift ideas for people who aren't admins become items of that person's
- * wishlist (with their link, notes, image and price). Private ideas, and ideas for admins,
- * stay as gifts "to buy" — moving them would show them to others. If an idea had been copied
- * to a guest list, that list item becomes linked to the new wishlist item.
- */
-export function convertLegacyIdeas() {
-  if (settings.all('migrations.').ideas_to_wishlists) return 0;
-  let n = 0;
-  tx(() => {
-    const ideas = db.prepare(`SELECT g.* FROM gifts g JOIN people p ON p.id = g.person_id
-      WHERE g.status = 'idea' AND g.wishlist_item_id IS NULL AND g.visibility = 'shared' AND p.user_id IS NULL
-        AND NOT EXISTS (SELECT 1 FROM gift_people gp JOIN people pa ON pa.id = gp.person_id
-                        WHERE gp.gift_id = g.id AND pa.user_id IS NOT NULL)
-      ORDER BY g.person_id, g.id`).all();
-    for (const g of ideas) {
-      const w = wishlists.ofPerson(g.person_id);
-      const { p } = db.prepare('SELECT COALESCE(MAX(position), 0) + 1 AS p FROM wishlist_items WHERE wishlist_id = ?').get(w.id);
-      const price = g.price_cents != null
-        ? new Intl.NumberFormat(config.lang === 'en' ? 'en-GB' : 'pt-PT', { style: 'currency', currency: g.price_currency || config.currency }).format(g.price_cents / 100)
-        : '';
-      const wiId = Number(db.prepare(`INSERT INTO wishlist_items (wishlist_id, title, url, notes, position, image_file, image_source,
-          price, price_cents, price_currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(w.id, g.name, g.url, g.notes, p, g.image_file, g.image_source, price, g.price_cents, g.price_currency, g.created_at, now()).lastInsertRowid);
-      if (g.list_item_id) {
-        db.prepare('UPDATE items SET wishlist_item_id = ? WHERE id = ?').run(wiId, g.list_item_id);
-        const it = db.prepare('SELECT reserved_name FROM items WHERE id = ?').get(g.list_item_id);
-        if (it?.reserved_name) db.prepare('INSERT OR IGNORE INTO wishlist_claims (wishlist_item_id, item_id, created_at) VALUES (?, ?, ?)').run(wiId, g.list_item_id, now());
-      }
-      db.prepare('DELETE FROM gifts WHERE id = ?').run(g.id);
-      n++;
-    }
-    settings.setMany({ 'migrations.ideas_to_wishlists': '1' });
-  });
-  if (n) console.log(`3.2: moved ${n} shared gift idea(s) into people's wishlists.`);
-  return n;
-}
-
-export { LIST_VISIBLE };

@@ -19,7 +19,7 @@ const art = (page, emoji, bg, size = 480) => page.evaluate(([e, bg, size]) => {
 }, [emoji, bg, size]);
 
 async function login(page, username, password) {
-  await page.goto(`${B}/admin`);
+  await page.goto(`${B}/login`);
   await page.fill('input[name=username]', username);
   await page.fill('input[name=password]', password);
   await page.click('button[type=submit]');

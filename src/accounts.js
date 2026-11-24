@@ -66,6 +66,11 @@ export const users = {
   updateProfile(id, { username, name }) {
     db.prepare('UPDATE users SET username = ?, name = ? WHERE id = ?').run(normalizeUsername(username), name, id);
   },
+  /** Optional birthday (day + month, year optional); the other admins' record of this admin follows it. */
+  setBirthday(id, { birthday_day = null, birthday_month = null, birth_year = null }) {
+    db.prepare('UPDATE users SET birthday_day = ?, birthday_month = ?, birth_year = ? WHERE id = ?')
+      .run(birthday_day, birthday_month, birthday_day ? birth_year : null, id);
+  },
   setPassword(id, passwordHash) {
     db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, id);
   },

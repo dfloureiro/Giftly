@@ -97,7 +97,7 @@ export class Client {
 
 export async function loginAdmin(base, { username = ADMIN_USERNAME, password = ADMIN_PASSWORD } = {}) {
   const admin = new Client(base);
-  const r = await admin.request('/admin/login', { method: 'POST', form: { username, password } });
+  const r = await admin.request('/login', { method: 'POST', form: { username, password } });
   if (r.status !== 303) throw new Error(`admin login failed for ${username}: ${r.status}`);
   return admin;
 }
@@ -115,7 +115,7 @@ export async function inviteAdmin(base, inviter, { username, name = username, pa
 
 /** Create a list (and optional gifts) through the admin; returns { id, token }. */
 export async function createList(admin, { title = 'Test list', gifts = [] } = {}) {
-  const r = await admin.post('/admin/lists', { title }, { from: '/admin' });
+  const r = await admin.post('/admin/lists', { title }, { from: '/admin/lists' });
   const id = Number(/\/admin\/lists\/(\d+)/.exec(r.location)?.[1]);
   if (gifts.length) {
     await admin.post(`/admin/lists/${id}/items/bulk`, { lines: gifts.join('\n') }, { from: `/admin/lists/${id}` });
@@ -173,4 +173,19 @@ export function formFields(html, action) {
     fields[name] = unescape(/\bvalue="([^"]*)"/.exec(tag)?.[1] ?? '');
   }
   return fields;
+}
+
+/** Id of the person called `name` in `admin`'s People page (null if they can't see one). */
+export async function personId(admin, name) {
+  const { text } = await admin.get('/admin/people');
+  const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const m = new RegExp(`href="/admin/people/(\\d+)">\\s*<strong>${esc}[ <]`).exec(text);
+  return m ? Number(m[1]) : null;
+}
+
+/** The wishlist a person's page offers to create lists from (an admin's own, if shared; else the ideas). */
+export async function wishlistOf(admin, name) {
+  const id = await personId(admin, name);
+  if (!id) return null;
+  return Number(/\/admin\/wishlists\/(\d+)\/new-list/.exec((await admin.get(`/admin/people/${id}/new-list`)).location)?.[1]) || null;
 }

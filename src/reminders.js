@@ -49,7 +49,7 @@ export function dueReminders(user, on = today()) {
     if (threshold == null) continue;
     const list = gifts.forBirthday(uid, p.id, year);
     if (list.some((g) => HAS_GIFT.includes(g.status))) continue; // already has a gift
-    out.push({ key: `birthday:${p.id}:${year}`, threshold, kind: 'birthday', left, date, person: p, ideas: list.length });
+    out.push({ key: `birthday:${p.id}:${year}`, threshold, kind: 'birthday', left, date, person: p, planned: list.length });
   }
 
   for (const o of occasions.list(uid)) {
@@ -78,8 +78,8 @@ function message(r) {
     return {
       event: 'reminder',
       title: t('remind.birthdayTitle', { when, name: r.person.name }),
-      message: r.ideas ? t('remind.birthdayIdeas', { n: r.ideas }) : t('remind.birthdayNoGift'),
-      click: base ? `${base}/admin/give/people/${r.person.id}` : undefined,
+      message: r.planned ? t('remind.birthdayPlanned', { n: r.planned }) : t('remind.birthdayNoGift'),
+      click: base ? `${base}/admin/people/${r.person.id}` : undefined,
       data: { person: r.person.name, date: r.date, days_left: r.left },
     };
   }
@@ -87,7 +87,7 @@ function message(r) {
     event: 'reminder',
     title: t('remind.occasionTitle', { when, name: r.occasion.name }),
     message: t('remind.occasionMissing', { missing: r.missing, total: r.total }),
-    click: base ? `${base}/admin/give/occasions/${r.occasion.id}` : undefined,
+    click: base ? `${base}/admin/occasions/${r.occasion.id}` : undefined,
     data: { occasion: r.occasion.name, date: r.date, days_left: r.left, missing: r.missing },
   };
 }

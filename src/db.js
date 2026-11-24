@@ -49,14 +49,26 @@ export const settings = {
 // ---------- lists ----------
 
 /**
+ * PERSON PRIVACY RULE (the only place it lives): person row `alias` is visible to admin $uid when
+ * it is shared or theirs, AND it isn't $uid's own record (a person linked to that admin): what the
+ * others plan for an admin never reaches them, shared or not. Gifts, occasions, checklists, totals
+ * and reminders are all built on it (giving.js).
+ */
+export const PERSON_VISIBLE = (alias) => `((${alias}.visibility = 'shared' OR ${alias}.owner_id = $uid)
+  AND (${alias}.user_id IS NULL OR ${alias}.user_id != $uid))`;
+
+/**
  * LIST PRIVACY RULE (the only place it lives): an admin ($uid) sees a list when it is shared
  * or theirs, AND it isn't a list made *for* them (from gift ideas for them), AND it contains
- * nothing from their own wishlist — such lists would reveal what was reserved for them.
+ * nothing from their own wishlist or the ideas kept for them — such lists would reveal what was
+ * reserved for them — AND nothing from another admin's private ideas.
  */
 export const LIST_VISIBLE = `((l.visibility = 'shared' OR l.owner_id = $uid)
   AND (l.recipient_user_id IS NULL OR l.recipient_user_id != $uid)
-  AND NOT EXISTS (SELECT 1 FROM wishlists w WHERE (w.owner_id = $uid
-        OR w.person_id IN (SELECT pp.id FROM people pp WHERE pp.user_id = $uid)) AND (
+  AND NOT EXISTS (SELECT 1 FROM wishlists w WHERE (
+        (w.kind = 'own' AND w.owner_id = $uid)
+     OR (w.kind = 'ideas' AND w.person_id IN (SELECT pp.id FROM people pp WHERE pp.user_id = $uid))
+     OR (w.kind = 'ideas' AND w.owner_id IS NOT NULL AND w.owner_id != $uid)) AND (
         w.id = l.source_wishlist_id
      OR EXISTS (SELECT 1 FROM list_sources ls WHERE ls.list_id = l.id AND ls.wishlist_id = w.id)
      OR EXISTS (SELECT 1 FROM items li JOIN wishlist_items lwi ON lwi.id = li.wishlist_item_id
@@ -188,8 +200,9 @@ export const guests = {
 // reserved anywhere (in any list, or as an admin's "I'll give it").
 const ITEM_JOIN = `LEFT JOIN wishlist_items wi ON wi.id = i.wishlist_item_id
   LEFT JOIN wishlist_claims wc ON wc.wishlist_item_id = i.wishlist_item_id`;
-const ITEM_COLS = `i.*, wi.status AS wish_status, wi.removed_reason AS wish_removed_reason,
-  (wc.wishlist_item_id IS NOT NULL AND (wc.item_id IS NULL OR wc.item_id != i.id)) AS claimed_elsewhere`;
+const ITEM_COLS = `i.*, wi.status AS wish_status, wi.removed_reason AS wish_removed_reason, wi.wishlist_id AS wish_list_id,
+  (wc.wishlist_item_id IS NOT NULL AND (wc.item_id IS NULL OR wc.item_id != i.id)) AS claimed_elsewhere,
+  EXISTS (SELECT 1 FROM list_item_overrides ov WHERE ov.item_id = i.id) AS overridden`;
 const GUEST_OFFERABLE = `i.hidden = 0 AND i.pending = 0
   AND (i.wishlist_item_id IS NULL OR (wi.status = 'active' AND wc.wishlist_item_id IS NULL))`;
 

@@ -38,9 +38,9 @@ function rawRequest(base, path, { method = 'GET', headers = {}, client, form } =
 }
 
 test("images: another admin can't fetch a private gift's photo; guests only their list's; revalidated", async () => {
-  const person = Number(/people\/(\d+)/.exec((await diogo.post('/admin/give/people', { name: 'Private img', visibility: 'private' }, { from: '/admin/give/people' })).location)[1]);
-  await diogo.post('/admin/give/gifts', { person_id: String(person), occasion: 'birthday:2031', name: 'Hidden photo', status: 'idea', image_data: PNG }, { from: `/admin/give/people/${person}` });
-  const file = imgIn((await diogo.get(`/admin/give/people/${person}`)).text);
+  const person = Number(/people\/(\d+)/.exec((await diogo.post('/admin/people', { name: 'Private img', visibility: 'private' }, { from: '/admin/people' })).location)[1]);
+  await diogo.post('/admin/gifts', { person_id: String(person), occasion: 'birthday:2031', name: 'Hidden photo', status: 'planned', image_data: PNG }, { from: `/admin/people/${person}` });
+  const file = imgIn((await diogo.get(`/admin/people/${person}`)).text);
   assert.ok(file);
   const mine = await diogo.request(`/img/${file}`);
   assert.equal(mine.status, 200);
@@ -50,7 +50,7 @@ test("images: another admin can't fetch a private gift's photo; guests only thei
   assert.equal((await maria.request(`/img/${file}`)).status, 404, "Maria can't see that gift, so not its photo");
 
   // A private list's photo: not for Maria; for its guests until the link is regenerated.
-  const priv = Number(/\/admin\/lists\/(\d+)/.exec((await diogo.post('/admin/lists', { title: 'Private pics', visibility: 'private' }, { from: '/admin' })).location)[1]);
+  const priv = Number(/\/admin\/lists\/(\d+)/.exec((await diogo.post('/admin/lists', { title: 'Private pics', visibility: 'private' }, { from: '/admin/lists' })).location)[1]);
   await diogo.post(`/admin/lists/${priv}/items`, { title: 'Pic', image_data: PNG }, { from: `/admin/lists/${priv}` });
   const listPage = (await diogo.get(`/admin/lists/${priv}`)).text;
   const listFile = imgIn(listPage);
@@ -168,10 +168,10 @@ test('joining with a name already used: "is it you?"; new names go straight in',
 });
 
 test("another admin can't delete or re-link a list they can't see", async () => {
-  const priv = Number(/\/admin\/lists\/(\d+)/.exec((await diogo.post('/admin/lists', { title: 'Mine only', visibility: 'private' }, { from: '/admin' })).location)[1]);
+  const priv = Number(/\/admin\/lists\/(\d+)/.exec((await diogo.post('/admin/lists', { title: 'Mine only', visibility: 'private' }, { from: '/admin/lists' })).location)[1]);
   const token = /\/l\/([A-Za-z0-9_-]{22})/.exec((await diogo.get(`/admin/lists/${priv}`)).text)[1];
-  assert.equal((await maria.post(`/admin/lists/${priv}/new-link`, {}, { from: '/admin' })).status, 404);
-  assert.equal((await maria.post(`/admin/lists/${priv}/delete`, {}, { from: '/admin' })).status, 404);
+  assert.equal((await maria.post(`/admin/lists/${priv}/new-link`, {}, { from: '/admin/lists' })).status, 404);
+  assert.equal((await maria.post(`/admin/lists/${priv}/delete`, {}, { from: '/admin/lists' })).status, 404);
   const page = (await diogo.get(`/admin/lists/${priv}`)).text;
   assert.ok(page.includes(token), 'still there, same link');
 });

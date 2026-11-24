@@ -2,26 +2,34 @@
 //
 // PRIVACY RULE (the only place it lives): a row is visible to user U when
 //   visibility = 'shared'  OR  owner_id = U
-// and a gift is only visible when ALL its people (joint gifts can have several) and its
-// occasion, if any, are visible too.
-// Every read in this module goes through `visible()` / `GIFT_VISIBLE`, including counts
-// and totals, so private entries never leak into another admin's views.
-import { db, tx, LIST_VISIBLE } from './db.js';
+// and, for people, when it isn't U's own record (PERSON_VISIBLE, db.js: a person linked to an
+// admin is never visible to that admin). An occasion is hidden from U when everyone in it is U
+// (a party for them). A gift is only visible when ALL its people (joint gifts can have several)
+// and its occasion, if any, are visible too.
+// Every read in this module goes through `visible()` / `personVisible()` / `OCCASION_VISIBLE` /
+// `GIFT_VISIBLE`, including counts and totals, so nothing leaks into another admin's views.
+import { db, tx, LIST_VISIBLE, PERSON_VISIBLE } from './db.js';
 import { config } from './config.js';
 
 const now = () => Date.now();
 
 /** SQL condition: row `alias` is visible to the user bound as $uid. */
 const visible = (alias) => `(${alias}.visibility = 'shared' OR ${alias}.owner_id = $uid)`;
-const GIFT_VISIBLE = `${visible('g')} AND ${visible('p')} AND (g.occasion_id IS NULL OR ${visible('o')})
+const personVisible = PERSON_VISIBLE;
+/** An occasion whose people are all $uid (at least one) is about them: hidden from them. */
+const OCCASION_VISIBLE = (alias) => `(${visible(alias)} AND NOT (
+    EXISTS (SELECT 1 FROM occasion_people opx WHERE opx.occasion_id = ${alias}.id)
+    AND NOT EXISTS (SELECT 1 FROM occasion_people opy JOIN people py ON py.id = opy.person_id
+                    WHERE opy.occasion_id = ${alias}.id AND (py.user_id IS NULL OR py.user_id != $uid))))`;
+const GIFT_VISIBLE = `${visible('g')} AND ${personVisible('p')} AND (g.occasion_id IS NULL OR ${OCCASION_VISIBLE('o')})
   AND NOT EXISTS (SELECT 1 FROM gift_people gpv JOIN people pv ON pv.id = gpv.person_id
-                  WHERE gpv.gift_id = g.id AND NOT ${visible('pv')})`;
+                  WHERE gpv.gift_id = g.id AND NOT ${personVisible('pv')})`;
 /** SQL condition: the gift is (also) for person $pid. */
 const FOR_PERSON = 'EXISTS (SELECT 1 FROM gift_people gpf WHERE gpf.gift_id = g.id AND gpf.person_id = $pid)';
 const GIFT_FROM = `FROM gifts g JOIN people p ON p.id = g.person_id LEFT JOIN occasions o ON o.id = g.occasion_id`;
 
 export const VISIBILITIES = ['shared', 'private'];
-export const STATUSES = ['idea', 'bought', 'given'];
+export const STATUSES = ['planned', 'bought', 'given']; // ideas live in wishlists
 export const HAS_GIFT = ['bought', 'given']; // "already has a gift"
 
 // ---------- dates ----------
@@ -47,6 +55,9 @@ export function nextBirthday(month, day, from = today()) {
   return thisYear >= from ? { date: thisYear, year: y } : { date: birthdayIn(y + 1, month, day), year: y + 1 };
 }
 
+/** From 1 November to Christmas day, that Christmas is pinned on top of "Upcoming". */
+export const christmasSeason = (from = today()) => from.slice(5) >= '11-01' && from.slice(5) <= '12-25';
+
 export function daysBetween(from, to) {
   return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
 }
@@ -64,7 +75,7 @@ export const people = {
   list(uid, { q = '' } = {}) {
     return db.prepare(`SELECT p.*,
         EXISTS (SELECT 1 FROM person_favorites f WHERE f.user_id = $uid AND f.person_id = p.id) AS favorite
-      FROM people p WHERE ${visible('p')} AND (${matches('p.name')} OR ${matches('p.notes')})
+      FROM people p WHERE ${personVisible('p')} AND (${matches('p.name')} OR ${matches('p.notes')})
       ORDER BY favorite DESC, p.name COLLATE NOCASE`).all({ uid, q: String(q).trim() });
   },
   /** Favourites are per admin. */
@@ -75,30 +86,38 @@ export const people = {
     return true;
   },
   get(uid, id) {
-    return db.prepare(`SELECT p.* FROM people p WHERE p.id = $id AND ${visible('p')}`).get({ uid, id }) ?? null;
+    return db.prepare(`SELECT p.* FROM people p WHERE p.id = $id AND ${personVisible('p')}`).get({ uid, id }) ?? null;
   },
+  /** `f.user_id` is only set by the admin-record helpers below (never from a form). */
   create(uid, f) {
-    return Number(db.prepare(`INSERT INTO people
+    const id = Number(db.prepare(`INSERT INTO people
       (name, birthday_month, birthday_day, birth_year, notes, gives_christmas, visibility, owner_id, user_id, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       f.name, f.birthday_month ?? null, f.birthday_day ?? null, f.birth_year ?? null, f.notes ?? '', f.gives_christmas ? 1 : 0,
       f.visibility ?? 'shared', uid, f.user_id ?? null, now(),
     ).lastInsertRowid);
+    if (f.user_id) syncBirthday(f.user_id);
+    return id;
   },
-  /** Only the owner may change visibility (otherwise it is left as is). */
+  /**
+   * Only the owner may change visibility (otherwise it is left as is). The link to an admin never
+   * changes here, and an admin's birthday comes from their profile when they filled it in.
+   */
   update(uid, id, f) {
     const p = people.get(uid, id);
     if (!p) return false;
     const visibility = p.owner_id === uid ? f.visibility : p.visibility;
     db.prepare(`UPDATE people SET name = ?, birthday_month = ?, birthday_day = ?, birth_year = ?, notes = ?,
-      gives_christmas = ?, visibility = ?, user_id = ? WHERE id = ?`).run(
-      f.name, f.birthday_month ?? null, f.birthday_day ?? null, f.birth_year ?? null, f.notes ?? '', f.gives_christmas ? 1 : 0, visibility,
-      f.user_id === undefined ? p.user_id : f.user_id, id,
+      gives_christmas = ?, visibility = ? WHERE id = ?`).run(
+      f.name, f.birthday_month ?? null, f.birthday_day ?? null, f.birth_year ?? null, f.notes ?? '', f.gives_christmas ? 1 : 0, visibility, id,
     );
+    if (p.user_id) syncBirthday(p.user_id);
     return true;
   },
+  /** A person linked to an admin can't be deleted while that admin exists. */
   delete(uid, id) {
-    if (!people.get(uid, id)) return false;
+    const p = people.get(uid, id);
+    if (!p || p.user_id) return false;
     tx(() => {
       // Joint gifts whose main person this is move to another of their people (not deleted).
       for (const { gift_id } of db.prepare('SELECT gift_id FROM gift_people WHERE person_id = ?').all(id)) {
@@ -109,17 +128,77 @@ export const people = {
     });
     return true;
   },
+
+  // ----- the record of each admin (what the other admins see of them) -----
+
+  /** Admins (other than `uid`) without a record yet, each with the unlinked people of the same name `uid` can see. */
+  adminMatches(uid) {
+    const out = [];
+    for (const u of db.prepare('SELECT id, name FROM users WHERE id != ? AND NOT EXISTS (SELECT 1 FROM people p WHERE p.user_id = users.id) ORDER BY name').all(uid)) {
+      const candidates = db.prepare(`SELECT p.* FROM people p WHERE p.user_id IS NULL AND p.name = $name COLLATE NOCASE
+        AND ${personVisible('p')} ORDER BY p.id`).all({ uid, name: u.name });
+      if (candidates.length) out.push({ user: u, candidates });
+    }
+    return out;
+  },
+  /** "It's the same person": link an existing, unlinked person to admin `userId`. */
+  linkAdmin(uid, personId, userId) {
+    return tx(() => {
+      const p = people.get(uid, personId);
+      const u = db.prepare('SELECT id FROM users WHERE id = ?').get(userId);
+      if (!p || p.user_id || !u || u.id === uid || db.prepare('SELECT 1 FROM people WHERE user_id = ?').get(userId)) return false;
+      db.prepare('UPDATE people SET user_id = ? WHERE id = ?').run(userId, p.id);
+      syncBirthday(userId);
+      return true;
+    });
+  },
+  /** "Create a new one": a shared record for admin `userId` (only while they have none). */
+  createForAdmin(uid, userId) {
+    return tx(() => {
+      const u = db.prepare('SELECT id, name FROM users WHERE id = ?').get(userId);
+      if (!u || u.id === uid || db.prepare('SELECT 1 FROM people WHERE user_id = ?').get(userId)) return null;
+      return insertAdminPerson(u);
+    });
+  },
 };
+
+function insertAdminPerson(u) {
+  const id = Number(db.prepare(`INSERT INTO people (name, visibility, owner_id, user_id, created_at)
+    VALUES (?, 'shared', NULL, ?, ?)`).run(u.name, u.id, now()).lastInsertRowid);
+  syncBirthday(u.id);
+  return id;
+}
+
+/**
+ * Every admin without a record gets a shared one, unless an unlinked person with the same name
+ * exists: then the other admins are asked (people.adminMatches) and nothing is linked alone.
+ */
+export function ensureAdminPeople() {
+  tx(() => {
+    for (const u of db.prepare(`SELECT id, name FROM users u WHERE NOT EXISTS (SELECT 1 FROM people p WHERE p.user_id = u.id)
+        AND NOT EXISTS (SELECT 1 FROM people p WHERE p.user_id IS NULL AND p.name = u.name COLLATE NOCASE)`).all()) {
+      insertAdminPerson(u);
+    }
+  });
+}
+
+/** An admin's birthday (profile) wins over whatever was typed on their record. */
+export function syncBirthday(userId) {
+  const u = db.prepare('SELECT birthday_month, birthday_day, birth_year FROM users WHERE id = ?').get(userId);
+  if (!u?.birthday_month || !u.birthday_day) return;
+  db.prepare('UPDATE people SET birthday_month = ?, birthday_day = ?, birth_year = ? WHERE user_id = ?')
+    .run(u.birthday_month, u.birthday_day, u.birth_year ?? null, userId);
+}
 
 // ---------- occasions (Christmas / custom; birthdays are derived from people) ----------
 
 export const occasions = {
   list(uid, { q = '' } = {}) {
-    return db.prepare(`SELECT o.* FROM occasions o WHERE ${visible('o')} AND ${matches('o.name')}
+    return db.prepare(`SELECT o.* FROM occasions o WHERE ${OCCASION_VISIBLE('o')} AND ${matches('o.name')}
       ORDER BY o.date DESC, o.id DESC`).all({ uid, q: String(q).trim() });
   },
   get(uid, id) {
-    return db.prepare(`SELECT o.* FROM occasions o WHERE o.id = $id AND ${visible('o')}`).get({ uid, id }) ?? null;
+    return db.prepare(`SELECT o.* FROM occasions o WHERE o.id = $id AND ${OCCASION_VISIBLE('o')}`).get({ uid, id }) ?? null;
   },
   create(uid, { type, name, date, visibility }, personIds = []) {
     return tx(() => {
@@ -144,7 +223,7 @@ export const occasions = {
   /** Participants this user can see. */
   participants(uid, id) {
     return db.prepare(`SELECT p.* FROM occasion_people op JOIN people p ON p.id = op.person_id
-      WHERE op.occasion_id = $id AND ${visible('p')} ORDER BY p.name COLLATE NOCASE`).all({ uid, id });
+      WHERE op.occasion_id = $id AND ${personVisible('p')} ORDER BY p.name COLLATE NOCASE`).all({ uid, id });
   },
   /**
    * Replace the participants *this user can see* with `personIds` (only visible people are
@@ -155,7 +234,7 @@ export const occasions = {
     const wanted = [...new Set(personIds.map(Number))].filter((pid) => allowed.has(pid));
     tx(() => {
       db.prepare(`DELETE FROM occasion_people WHERE occasion_id = $id
-        AND person_id IN (SELECT p.id FROM people p WHERE ${visible('p')})`).run({ uid, id });
+        AND person_id IN (SELECT p.id FROM people p WHERE ${personVisible('p')})`).run({ uid, id });
       const ins = db.prepare('INSERT OR IGNORE INTO occasion_people (occasion_id, person_id) VALUES (?, ?)');
       for (const pid of wanted) ins.run(id, pid);
     });
@@ -172,19 +251,12 @@ export const occasions = {
   },
   /** The Christmas occasion of a year, if this user can see one. */
   christmasOf(uid, year) {
-    return db.prepare(`SELECT o.* FROM occasions o WHERE o.type = 'christmas' AND substr(o.date, 1, 4) = $y AND ${visible('o')}
+    return db.prepare(`SELECT o.* FROM occasions o WHERE o.type = 'christmas' AND substr(o.date, 1, 4) = $y AND ${OCCASION_VISIBLE('o')}
       ORDER BY o.id LIMIT 1`).get({ uid, y: String(year) }) ?? null;
   },
 };
 
 // ---------- gifts ----------
-
-/** A gift for someone who is an admin (person linked to a user) is always private to its giver. */
-function forAnAdmin(personIds) {
-  const ids = personIds.map(Number).filter(Boolean);
-  if (!ids.length) return false;
-  return !!db.prepare(`SELECT 1 FROM people WHERE user_id IS NOT NULL AND id IN (${ids.map(() => '?').join(',')})`).get(...ids);
-}
 
 const GIFT_COLS = `g.*, p.name AS person_name, o.name AS occasion_name, o.type AS occasion_type, o.date AS occasion_date,
   (SELECT group_concat(gpn.person_id) FROM gift_people gpn WHERE gpn.gift_id = g.id) AS people_ids_csv,
@@ -238,13 +310,12 @@ export const gifts = {
   /** `f.person_ids` (optional) adds co-recipients for a joint gift; `f.person_id` is the main one. */
   create(uid, f) {
     const t = now();
-    if (forAnAdmin([f.person_id, ...(f.person_ids ?? [])])) f = { ...f, visibility: 'private' };
     return tx(() => {
       const id = Number(db.prepare(`INSERT INTO gifts
       (person_id, occasion_id, year, name, url, notes, status, price_cents, price_currency, price_source,
        visibility, owner_id, image_source, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-      f.person_id, f.occasion_id ?? null, f.year, f.name, f.url ?? '', f.notes ?? '', f.status ?? 'idea',
+      f.person_id, f.occasion_id ?? null, f.year, f.name, f.url ?? '', f.notes ?? '', f.status ?? 'planned',
       f.price_cents ?? null, f.price_cents != null ? f.price_currency : null, f.price_cents != null ? 'manual' : '',
       f.visibility ?? 'shared', uid, f.image_source ?? '', t, t,
     ).lastInsertRowid);
@@ -278,7 +349,7 @@ export const gifts = {
       if (f.price_cents != null) { cents = f.price_cents; cur = f.price_currency; source = 'manual'; }
       else if (f.clear_price) { cents = null; cur = null; source = ''; }
     }
-    const visibility = forAnAdmin(g.people.map((x) => x.id)) ? 'private' : (g.owner_id === uid ? f.visibility : g.visibility);
+    const visibility = g.owner_id === uid ? f.visibility : g.visibility;
     db.prepare(`UPDATE gifts SET name = ?, url = ?, notes = ?, status = ?, visibility = ?, image_source = ?,
       price_cents = ?, price_currency = ?, price_source = ?,
       price_checked_at = CASE WHEN ? THEN NULL ELSE price_checked_at END, updated_at = ? WHERE id = ?`).run(
@@ -290,11 +361,6 @@ export const gifts = {
   /** Remember the guest-list item an idea was copied to. */
   setListItem(id, itemId) {
     db.prepare('UPDATE gifts SET list_item_id = ? WHERE id = ?').run(itemId, id);
-  },
-  /** The admin this gift is for, if any of its people is linked to an admin account. */
-  recipientUser(id) {
-    return db.prepare(`SELECT p.user_id FROM gift_people gp JOIN people p ON p.id = gp.person_id
-      WHERE gp.gift_id = ? AND p.user_id IS NOT NULL LIMIT 1`).get(id)?.user_id ?? null;
   },
   setStatus(uid, id, status) {
     if (!gifts.get(uid, id)) return false;
@@ -316,14 +382,14 @@ export const gifts = {
     }
     if (fields.link_price_cents != null) {
       db.prepare(`UPDATE gifts SET price_cents = ?, price_currency = ?, price_source = 'link'
-        WHERE id = ? AND status = 'idea'`).run(fields.link_price_cents, fields.link_price_currency ?? null, id);
+        WHERE id = ? AND status = 'planned'`).run(fields.link_price_cents, fields.link_price_currency ?? null, id);
     }
   },
   pendingPreviews: () => db.prepare("SELECT id FROM gifts WHERE preview_status = 'pending'").all().map((r) => r.id),
   allImageFiles: () => db.prepare('SELECT image_file FROM gifts WHERE image_file IS NOT NULL').all().map((r) => r.image_file),
-  /** Ideas with a link whose price is older than `olderThan` (prices of bought gifts are frozen). */
+  /** Planned gifts with a link whose price is older than `olderThan` (prices of bought gifts are frozen). */
   stalePrices(olderThan, limit) {
-    return db.prepare(`SELECT id FROM gifts WHERE url != '' AND status = 'idea' AND preview_status != 'pending'
+    return db.prepare(`SELECT id FROM gifts WHERE url != '' AND status = 'planned' AND preview_status != 'pending'
       AND COALESCE(price_checked_at, 0) < ? ORDER BY COALESCE(price_checked_at, 0) LIMIT ?`).all(olderThan, limit).map((r) => r.id);
   },
 };
@@ -399,15 +465,31 @@ export function upcoming(uid, days = 60, from = today()) {
       age: p.birth_year ? year - p.birth_year : null,
       gifts: list,
       done: list.some((g) => HAS_GIFT.includes(g.status)),
-      ideas: list.length,
+      planned: list.length,
     });
   }
   const until = new Date(Date.parse(`${from}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
-  const occ = db.prepare(`SELECT o.* FROM occasions o WHERE o.date >= $from AND o.date <= $until AND ${visible('o')}`)
+  const occ = db.prepare(`SELECT o.* FROM occasions o WHERE o.date >= $from AND o.date <= $until AND ${OCCASION_VISIBLE('o')}`)
     .all({ uid, from, until });
   for (const o of occ) {
     const c = checklist(uid, o);
     out.push({ kind: 'occasion', date: o.date, inDays: daysBetween(from, o.date), occasion: o, total: c.total, doneCount: c.done, done: c.total > 0 && c.done === c.total });
+  }
+  return out.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/** A person's next birthday and the upcoming occasions they are in (as `uid` sees them), soonest first. */
+export function personUpcoming(uid, person, from = today()) {
+  const out = [];
+  if (person.birthday_month && person.birthday_day) {
+    const { date, year } = nextBirthday(person.birthday_month, person.birthday_day, from);
+    const list = gifts.forBirthday(uid, person.id, year);
+    out.push({ kind: 'birthday', date, year, inDays: daysBetween(from, date), done: list.some((g) => HAS_GIFT.includes(g.status)), planned: list.length });
+  }
+  for (const o of db.prepare(`SELECT o.* FROM occasions o JOIN occasion_people op ON op.occasion_id = o.id AND op.person_id = $pid
+      WHERE o.date >= $from AND ${OCCASION_VISIBLE('o')} ORDER BY o.date`).all({ uid, pid: person.id, from })) {
+    const list = gifts.forOccasion(uid, o.id).filter((g) => g.people.some((x) => x.id === person.id));
+    out.push({ kind: 'occasion', date: o.date, occasion: o, inDays: daysBetween(from, o.date), done: list.some((g) => HAS_GIFT.includes(g.status)), planned: list.length });
   }
   return out.sort((a, b) => a.date.localeCompare(b.date));
 }

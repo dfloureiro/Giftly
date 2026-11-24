@@ -41,8 +41,24 @@ test('admin pages require login, wrong password is refused', async () => {
   const c = new Client(server.base);
   const r = await c.get('/admin/lists/1');
   assert.equal(r.status, 303);
-  assert.equal(r.location, '/admin');
-  const bad = await c.request('/admin/login', { method: 'POST', form: { username: 'admin', password: 'nope' } });
+  assert.equal(r.location, '/login?next=%2Fadmin%2Flists%2F1', 'to the login page, and back here afterwards');
+  assert.equal((await c.get('/admin')).location, '/login');
+  const login = await c.get('/login?next=%2Fadmin%2Flists%2F1');
+  assert.match(login.text, /action="\/login"/);
+  assert.match(login.text, /name="next" value="\/admin\/lists\/1"/);
+  // `next` only ever leads to this site's admin pages.
+  for (const evil of ['//evil.example/admin', 'https://evil.example', '/admin//evil.example', '/\\evil.example']) {
+    const page = await c.get(`/login?next=${encodeURIComponent(evil)}`);
+    assert.ok(!page.text.includes('evil.example'), evil);
+    const r2 = await c.request('/login', { method: 'POST', form: { username: 'admin', password: 'test-password-123', next: evil } });
+    assert.equal(r2.location, '/admin', evil);
+  }
+  const back = new Client(server.base);
+  const ok = await back.request('/login', { method: 'POST', form: { username: 'admin', password: 'test-password-123', next: '/admin/people?q=a' } });
+  assert.equal(ok.location, '/admin/people?q=a');
+  assert.equal((await back.get('/login')).location, '/admin', 'already logged in');
+  assert.equal((await back.post('/admin/logout', {}, { from: '/admin/lists' })).location, '/login');
+  const bad = await c.request('/login', { method: 'POST', form: { username: 'admin', password: 'nope' } });
   assert.equal(bad.status, 401);
 });
 
@@ -190,20 +206,20 @@ test('language follows the browser and can be switched', async () => {
 
 test('notification settings: invalid topic is refused, secrets are never shown', async () => {
   const admin = await loginAdmin(server.base);
-  const bad = await admin.post('/admin/profile/notifications', { ntfy_url: 'bad*topic&' }, { from: '/admin/profile' });
+  const bad = await admin.post('/admin/notifications', { ntfy_url: 'bad*topic&' }, { from: '/admin/profile' });
   assert.equal(bad.status, 400);
-  await admin.post('/admin/profile/notifications', { ntfy_url: 'giftly-test_topic', ntfy_token: 'super-secret-token' }, { from: '/admin/profile' });
-  const page = (await admin.get('/admin/profile')).text;
+  await admin.post('/admin/notifications', { ntfy_url: 'giftly-test_topic', ntfy_token: 'super-secret-token' }, { from: '/admin/profile' });
+  const page = (await admin.get('/admin/notifications')).text;
   assert.match(page, /Active: ntfy/);
   assert.ok(!page.includes('super-secret-token'));
-  await admin.post('/admin/profile/notifications', { ntfy_url: '', clear_ntfy_token: '1' }, { from: '/admin/profile' });
-  assert.ok(!(await admin.get('/admin/profile')).text.includes('Active:'));
+  await admin.post('/admin/notifications', { ntfy_url: '', clear_ntfy_token: '1' }, { from: '/admin/profile' });
+  assert.ok(!(await admin.get('/admin/notifications')).text.includes('Active:'));
 });
 
 // Keep last: it exhausts the admin login attempts for 127.0.0.1.
 test('admin login is rate limited', async () => {
   const c = new Client(server.base);
   let last;
-  for (let i = 0; i < 9; i++) last = await c.request('/admin/login', { method: 'POST', form: { username: 'admin', password: 'wrong' } });
+  for (let i = 0; i < 9; i++) last = await c.request('/login', { method: 'POST', form: { username: 'admin', password: 'wrong' } });
   assert.equal(last.status, 429);
 });

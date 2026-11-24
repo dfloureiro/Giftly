@@ -104,7 +104,7 @@ function layout(ctx, { title, body, bodyClass = '' }) {
 <link rel="manifest" href="/site.webmanifest">
 <meta name="theme-color" content="#C8553D">
 <meta name="apple-mobile-web-app-title" content="${site}">
-<link rel="stylesheet" href="/static/style.css?v=23">
+<link rel="stylesheet" href="/static/style.css?v=24">
 <script src="/static/app.js?v=6" defer></script>
 </head>
 <body class="${bodyClass}">
@@ -248,7 +248,7 @@ ${mine.length ? h`
 
 // ---------- admin pages ----------
 
-export function adminLoginPage(ctx, { error, username = '', noAccounts = false } = {}) {
+export function adminLoginPage(ctx, { error, username = '', noAccounts = false, next = '/admin' } = {}) {
   return layout(ctx, {
     title: ctx.t('admin.title'),
     bodyClass: 'center',
@@ -258,7 +258,8 @@ export function adminLoginPage(ctx, { error, username = '', noAccounts = false }
   <h1>${ctx.t('admin.login')}</h1>
   ${noAccounts ? h`<div class="flash flash-error" role="alert">${ctx.t('account.noAccounts')}</div>` : ''}
   ${error ? h`<div class="flash flash-error" role="alert">${error}</div>` : ''}
-  <form method="post" action="/admin/login" class="stack">
+  <form method="post" action="/login" class="stack">
+    ${next !== '/admin' ? h`<input type="hidden" name="next" value="${next}">` : ''}
     <label>${ctx.t('account.username')}
       <input name="username" required autocomplete="username" autocapitalize="none" spellcheck="false" value="${username}" autofocus>
     </label>
@@ -272,24 +273,52 @@ export function adminLoginPage(ctx, { error, username = '', noAccounts = false }
   });
 }
 
+// Main navigation: Occasions · People · Lists · My wishlist (the giving side first, then the
+// receiving side). Settings and administration live in the account menu.
+const ICONS = {
+  occasions: '<path d="M7 3v3M17 3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/>',
+  people: '<circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17" cy="9" r="2.4"/><path d="M16 14.2c2.8.3 5 2.6 5 5.8"/>',
+  lists: '<path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/>',
+  wishlist: '<path d="M4 11h16v9H4zM3 7h18v4H3zM12 7v13"/><path d="M12 7c-1.5-3-5-3.5-5-1.2C7 7.3 10 7 12 7zM12 7c1.5-3 5-3.5 5-1.2C17 7.3 14 7 12 7z"/>',
+};
+const icon = (name) => raw(`<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`);
+
+const NAV = [
+  { href: '/admin/occasions', key: 'nav.occasions', icon: 'occasions', on: (p) => p.startsWith('/admin/occasions') },
+  { href: '/admin/people', key: 'nav.people', icon: 'people', on: (p) => p.startsWith('/admin/people') || p.startsWith('/admin/wishlists/') },
+  { href: '/admin/lists', key: 'nav.lists', icon: 'lists', on: (p) => p.startsWith('/admin/lists') || p.startsWith('/admin/items') },
+  { href: '/admin/wishlist', key: 'nav.myWishlist', short: 'nav.wishlistShort', icon: 'wishlist', on: (p) => p === '/admin/wishlist' || p.startsWith('/admin/wishlist/') },
+];
+
+/** "Maria Ana Silva" → "MS". */
+const initials = (name) => {
+  const w = String(name || '?').trim().split(/\s+/);
+  return (w[0][0] + (w.length > 1 ? w[w.length - 1][0] : '')).toUpperCase();
+};
+
 function adminHeader(ctx, backHref, backLabel) {
   const path = ctx.url.pathname;
-  const tab = (href, label, active) => active
-    ? h`<a href="${href}" class="tab active" aria-current="page">${label}</a>`
-    : h`<a href="${href}" class="tab">${label}</a>`;
+  const current = (on) => (on ? raw(' aria-current="page"') : '');
+  const menu = [
+    ['/admin/profile', 'account.profile'],
+    ['/admin/notifications', 'nav.notifications'],
+    ['/admin/users', 'account.admins'],
+  ];
   return h`<header class="admin-top">
   <nav class="admin-nav" aria-label="${ctx.t('admin.title')}">
-    ${tab('/admin', ctx.t('admin.lists'), path === '/admin' || path.startsWith('/admin/lists') || path.startsWith('/admin/items'))}
-    ${tab('/admin/give', ctx.t('give.tab'), path.startsWith('/admin/give'))}
-    ${tab('/admin/wishlist', ctx.t('wish.tab'), path.startsWith('/admin/wishlist'))}
-    ${tab('/admin/profile', ctx.t('account.profile'), path.startsWith('/admin/profile'))}
-    ${tab('/admin/users', ctx.t('account.admins'), path.startsWith('/admin/users'))}
+    ${NAV.map((n) => h`<a href="${n.href}" class="tab${n.on(path) ? ' active' : ''}"${current(n.on(path))}>${ctx.t(n.key)}</a>`)}
   </nav>
-  <div class="who">
-    <span class="small">${ctx.user?.name}</span>
-    ${postButton(ctx, '/admin/logout', ctx.t('admin.logout'), { cls: 'link' })}
-  </div>
+  <details class="account-menu">
+    <summary aria-label="${ctx.t('nav.account')}"><span class="avatar" aria-hidden="true">${initials(ctx.user?.name)}</span><span class="who-name">${ctx.user?.name}</span></summary>
+    <div class="menu">
+      ${menu.map(([href, key]) => h`<a href="${href}"${current(path.startsWith(href))}>${ctx.t(key)}</a>`)}
+      ${postButton(ctx, '/admin/logout', ctx.t('admin.logout'), { cls: 'link' })}
+    </div>
+  </details>
 </header>
+<nav class="bottom-nav" aria-label="${ctx.t('admin.title')}">
+  ${NAV.map((n) => h`<a href="${n.href}" class="${n.on(path) ? 'active' : ''}"${current(n.on(path))}>${icon(n.icon)}<span>${ctx.t(n.short || n.key)}</span></a>`)}
+</nav>
 ${backHref ? h`<p class="backline"><a href="${backHref}" class="back">${backLabel}</a></p>` : ''}`;
 }
 
@@ -352,7 +381,7 @@ function notifySection(ctx, { values: v, channels, problems }, errors) {
   <h2>${ctx.t('notify.heading')}</h2>
   ${[...new Set([...errors, ...problems])].map((k) => h`<div class="flash flash-error" role="alert">${ctx.t(k)}</div>`)}
   <p class="small muted">${channels.length ? ctx.t('notify.active', { channels: channels.join(', ') }) : ctx.t('notify.none')}</p>
-  <form method="post" action="/admin/profile/notifications" class="stack">
+  <form method="post" action="/admin/notifications" class="stack">
     ${csrfField(ctx)}
     <fieldset class="group">
       <legend>${ctx.t('notify.when')}</legend>
@@ -384,7 +413,7 @@ function notifySection(ctx, { values: v, channels, problems }, errors) {
     </fieldset>
     <button type="submit" class="primary">${ctx.t('admin.save')}</button>
   </form>
-  ${channels.length ? postButton(ctx, '/admin/profile/notify-test', ctx.t('notify.testButton'), { cls: 'secondary' }) : ''}
+  ${channels.length ? postButton(ctx, '/admin/notifications/test', ctx.t('notify.testButton'), { cls: 'secondary' }) : ''}
 </section>`;
 }
 
@@ -413,7 +442,7 @@ function uploadField(ctx) {
   </div>`;
 }
 
-export function adminListPage(ctx, { list, allItems: everything, allGuests, baseUrl, listForm, listError, itemError, adminNames = {}, sourceOwner = '' }) {
+export function adminListPage(ctx, { list, allItems: everything, allGuests, baseUrl, listForm, listError, itemError, adminNames = {}, sourceOwner = '', changedIds = new Set() }) {
   const lf = { ...list, ...(listForm || {}) };
   const allItems = everything.filter((i) => !i.pending);
   const pending = everything.filter((i) => i.pending);
@@ -444,7 +473,7 @@ ${list.source_wishlist_id ? h`<p class="small muted">🎀 ${ctx.t('wish.listFrom
       <div class="body">
         ${itemBody(ctx, it)}
         ${previewStatus(ctx, it)}
-        ${it.wishlist_item_id ? h`<p class="small muted">🎀 ${ctx.t('wish.fromWishlist')}${it.hidden ? h` · <strong>${ctx.t('wish.hiddenHere')}</strong>` : ''}${it.wish_status && it.wish_status !== 'active' ? h` · <strong class="warn">${ctx.t(`wish.removedFlag.${it.wish_removed_reason}`)}</strong>` : ''}</p>` : ''}
+        ${it.wishlist_item_id ? h`<p class="small muted">🎀 ${ctx.t('wish.fromWishlist')}${it.hidden ? h` · <strong>${ctx.t('wish.hiddenHere')}</strong>` : ''}${it.wish_status && it.wish_status !== 'active' ? h` · <strong class="warn">${ctx.t(`wish.removedFlag.${it.wish_removed_reason}`)}</strong>` : ''}${it.overridden ? h` · ✎ ${ctx.t('wish.editedHere')}` : ''}${changedIds.has(it.id) ? h` · <a class="warn" href="/admin/items/${it.id}">${ctx.t('wish.wishlistChangedShort')}</a>` : ''}</p>` : ''}
         <p class="status">${reservationStatus(ctx, it, adminNames)}</p>
       </div>
       <div class="actions">
@@ -518,7 +547,7 @@ ${pending.length ? h`<section class="card">
   });
 }
 
-export function adminItemPage(ctx, { item, list, form, error, allGuests = [], adminNames = {} }) {
+export function adminItemPage(ctx, { item, list, form, error, allGuests = [], adminNames = {}, target = null, changed = [] }) {
   const v = form || item;
   // Shown outside the edit form: saving the form never changes who is bringing the gift.
   const reservation = h`<section class="card" id="reservation">
@@ -527,22 +556,57 @@ export function adminItemPage(ctx, { item, list, form, error, allGuests = [], ad
   <div class="actions">${reservationActions(ctx, item, `guests-${list.id}`)}</div>
   <datalist id="guests-${list.id}">${allGuests.map((g) => h`<option value="${g.name}"></option>`)}</datalist>
 </section>`;
-  // Linked to a wishlist: its name/link/image follow the wishlist; only this list's notes and the reservation here.
+  // Linked to a wishlist: ideas are edited in the wishlist (every linked list follows); someone's
+  // own wishlist only in this list (they never see it). The reservation is never part of the form.
   if (item.wishlist_item_id) {
+    const ov = target?.ov ?? null;
+    const shown = form || { ...item, notes: item.wish_notes };
+    const fromWish = (k) => (ov && ov[k] != null ? h`<span class="small muted">${ctx.t('wish.inWishlist', { value: target.wi[k] || '—' })}</span>` : '');
     return layout(ctx, {
       title: ctx.t('admin.editItem'),
       body: h`
 ${adminHeader(ctx, `/admin/lists/${list.id}`, ctx.t('admin.backToList'))}
 <section class="card">
-  <h1>${item.title}</h1>
-  <p class="small muted">🎀 ${ctx.t('wish.linkedEditHint')}</p>
-  <form method="post" action="/admin/items/${item.id}" class="stack">
+  <h1>${ctx.t('admin.editItem')}</h1>
+  <p class="muted small">${list.title}</p>
+  ${!target ? h`<p class="small muted">🎀 ${ctx.t('wish.linkedEditHint')}</p>`
+    : target.mode === 'wishlist' ? h`<p class="flash flash-warn" role="note">🎀 ${ctx.t('wish.editAppliesEverywhere')}</p>`
+    : h`<p class="small muted">🎀 ${ctx.t('wish.editThisListOnly', { name: target.w.owner_name })}</p>
+      ${item.overridden ? h`<p class="small"><span class="badge">✎ ${ctx.t('wish.editedHere')}</span></p>` : ''}
+      ${changed.length ? h`<div class="flash flash-warn" role="alert">${ctx.t('wish.wishlistChanged', { fields: changed.map((k) => ctx.t(`wish.field.${k}`)).join(', ') })}
+        ${postButton(ctx, `/admin/items/${item.id}/override/accept`, ctx.t('wish.acceptTheirs'), { cls: 'secondary' })}</div>` : ''}`}
+  ${error ? h`<div class="flash flash-error" role="alert">${error}</div>` : ''}
+  ${target ? h`<form method="post" action="/admin/items/${item.id}" class="stack">
     ${csrfField(ctx)}
+    <label>${ctx.t('admin.itemTitle')}
+      <input name="title" required maxlength="200" value="${shown.title || ''}">${fromWish('title')}
+    </label>
+    <label>${ctx.t('admin.itemUrl')}
+      <input name="url" type="url" maxlength="2000" value="${shown.url || ''}" placeholder="https://">${fromWish('url')}
+      <span class="small muted">${ctx.t('wish.newLinkHint')}</span>
+    </label>
+    <label>${ctx.t('admin.itemNotes')}
+      <input name="notes" maxlength="1000" value="${shown.notes || ''}">${fromWish('notes')}
+    </label>
+    <fieldset class="image-field">
+      <legend>${ctx.t('preview.image')}</legend>
+      <div class="image-row">
+        ${thumb(ctx, item, { admin: true })}
+        <div class="grow">
+          <label>${ctx.t('preview.imageSource')}
+            <input name="image_source" type="url" maxlength="2000" value="${target.mode === 'wishlist' ? target.wi.image_source || '' : ov?.image_source || ''}" placeholder="https://…/foto.jpg">
+          </label>
+          ${uploadField(ctx)}
+          ${item.image_file ? h`<label class="check"><input type="checkbox" name="remove_image" value="1"> ${ctx.t('preview.remove')}</label>` : ''}
+        </div>
+      </div>
+    </fieldset>
     <label>${ctx.t('wish.listNotes')}
-      <input name="notes" maxlength="1000" value="${item.notes || ''}">
+      <input name="list_notes" maxlength="1000" value="${item.notes || ''}">
     </label>
     <button type="submit" class="primary">${ctx.t('admin.save')}</button>
   </form>
+  ${item.overridden ? h`<hr>${postButton(ctx, `/admin/items/${item.id}/override/reset`, ctx.t('wish.resetToWishlist'), { cls: 'secondary', confirm: ctx.t('wish.resetConfirm') })}` : ''}` : ''}
 </section>
 ${reservation}`,
     });
@@ -608,7 +672,28 @@ function accountFields(ctx, v) {
     </label>`;
 }
 
-export function profilePage(ctx, { user, notify, notifyErrors = [], profileForm, profileError, passwordError, remindersError }) {
+/** Birthday fields (day, month, optional year), as on a person's record. */
+export function birthdayFields(ctx, v = {}) {
+  const months = Array.from({ length: 12 }, (_, i) =>
+    new Intl.DateTimeFormat(ctx.lang === 'en' ? 'en-GB' : 'pt-PT', { month: 'long', timeZone: 'UTC' }).format(new Date(Date.UTC(2000, i, 1))));
+  return h`<div class="row">
+        <label>${ctx.t('give.day')}
+          <input name="birthday_day" inputmode="numeric" type="number" min="1" max="31" value="${v.birthday_day || ''}" size="3">
+        </label>
+        <label class="grow">${ctx.t('give.month')}
+          <select name="birthday_month">
+            <option value="">—</option>
+            ${months.map((m, i) => h`<option value="${i + 1}"${Number(v.birthday_month) === i + 1 ? raw(' selected') : ''}>${m}</option>`)}
+          </select>
+        </label>
+        <label>${ctx.t('give.yearOptional')}
+          <input name="birth_year" inputmode="numeric" type="number" min="1900" max="2200" value="${v.birth_year || ''}" size="5">
+        </label>
+      </div>`;
+}
+
+export function profilePage(ctx, { user, profileForm, profileError, passwordError }) {
+  const v = profileForm || user;
   return layout(ctx, {
     title: ctx.t('account.profile'),
     body: h`
@@ -620,7 +705,12 @@ ${adminHeader(ctx)}
   ${profileError ? h`<div class="flash flash-error" role="alert">${profileError}</div>` : ''}
   <form method="post" action="/admin/profile" class="stack">
     ${csrfField(ctx)}
-    ${accountFields(ctx, profileForm || user)}
+    ${accountFields(ctx, v)}
+    <fieldset class="group">
+      <legend>🎂 ${ctx.t('account.birthday')}</legend>
+      ${birthdayFields(ctx, v)}
+      <span class="small muted">${ctx.t('account.birthdayHint')}</span>
+    </fieldset>
     <button type="submit" class="primary">${ctx.t('admin.save')}</button>
   </form>
 </section>
@@ -636,21 +726,30 @@ ${adminHeader(ctx)}
   </form>
 </section>
 
-${notifySection(ctx, notify, notifyErrors)}
-
 <section class="card" id="two-factor">
   <h2>${ctx.t('tf.heading')}</h2>
   <p>${user.totp_secret ? h`<span class="pill ok">✓ ${ctx.t('tf.on')}</span>` : h`<span class="pill">${ctx.t('tf.off')}</span>`}
     ${config.require2fa ? h` <span class="small muted">${ctx.t('tf.requiredNote')}</span>` : ''}</p>
   <p class="small muted">${ctx.t('tf.intro')}</p>
   <a class="button secondary" href="/admin/profile/2fa">${user.totp_secret ? ctx.t('tf.manage') : ctx.t('tf.enable')}</a>
-</section>
+</section>`,
+  });
+}
+
+export function notificationsPage(ctx, { user, notify, notifyErrors = [], remindersError }) {
+  return layout(ctx, {
+    title: ctx.t('nav.notifications'),
+    body: h`
+${adminHeader(ctx)}
+<h1>${ctx.t('nav.notifications')}</h1>
+
+${notifySection(ctx, notify, notifyErrors)}
 
 <section class="card" id="reminders">
   <h2>${ctx.t('remind.heading')}</h2>
   <p class="small muted">${ctx.t('remind.intro', { hour: String(config.reminderHour).padStart(2, '0') })}</p>
   ${remindersError ? h`<div class="flash flash-error" role="alert">${remindersError}</div>` : ''}
-  <form method="post" action="/admin/profile/reminders" class="stack">
+  <form method="post" action="/admin/notifications/reminders" class="stack">
     ${csrfField(ctx)}
     <label>${ctx.t('remind.days')}
       <input name="reminder_days" value="${user.reminder_days.split(',').filter(Boolean).join(', ')}" placeholder="14, 3" inputmode="numeric" autocomplete="off">
@@ -658,7 +757,7 @@ ${notifySection(ctx, notify, notifyErrors)}
     </label>
     <button type="submit" class="primary">${ctx.t('admin.save')}</button>
   </form>
-  ${postButton(ctx, '/admin/profile/reminders/test', ctx.t('remind.testButton'), { cls: 'secondary' })}
+  ${postButton(ctx, '/admin/notifications/reminders/test', ctx.t('remind.testButton'), { cls: 'secondary' })}
 </section>`,
   });
 }
@@ -766,7 +865,7 @@ export function twoFactorLoginPage(ctx, { error } = {}) {
   <h1>${ctx.t('tf.loginTitle')}</h1>
   <p class="muted">${ctx.t('tf.loginIntro')}</p>
   ${error ? h`<div class="flash flash-error" role="alert">${error}</div>` : ''}
-  <form method="post" action="/admin/login/2fa" class="stack">
+  <form method="post" action="/login/2fa" class="stack">
     ${codeInput(ctx, { recovery: true })}
     <button type="submit" class="primary">${ctx.t('login.submit')}</button>
   </form>
@@ -862,4 +961,4 @@ export function errorPage(ctx, message) {
 }
 
 // Shared building blocks for other view modules (givingViews.js).
-export { layout, csrfField, postButton, adminHeader, uploadField };
+export { layout, csrfField, postButton, adminHeader, uploadField, initials };
