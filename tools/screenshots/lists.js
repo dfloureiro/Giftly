@@ -108,7 +108,7 @@ async function phase2(browser, admin) {
  * Recorded as video (converted to GIF by run.sh). Taps are drawn as a fading circle.
  */
 async function recordGuestFlow(browser, share) {
-  const size = { width: 390, height: 760 };
+  const size = mobile.viewport; // same phone screen as the screenshots, so the README shows them at the same size
   const ctx = await browser.newContext({ ...mobile, viewport: size, deviceScaleFactor: 1, recordVideo: { dir: `${OUT}/video`, size } });
   await ctx.addInitScript(() => {
     // Native confirm dialogs freeze Chromium's screencast: answer "yes" without one in the recording.
