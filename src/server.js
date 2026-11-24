@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { config } from './config.js';
-import { db, lists, guests, items } from './db.js';
+import { db, lists, guests, items, showTakenLevel } from './db.js';
 import { tokens, csrfFor, safeEqual, rateLimit, resetRateLimit } from './security.js';
 
 import { makeT } from './i18n.js';
@@ -195,6 +195,9 @@ const FLASH = {
   taken: ['error', 'msg.taken'],
   chooseBuyer: ['error', 'msg.chooseBuyer'],
   buyerSaved: ['success', 'msg.buyerSaved'],
+  pickedFor: ['success', 'msg.pickedFor'],
+  guestRenamed: ['success', 'admin.guestRenamed'],
+  guestsMerged: ['success', 'admin.guestsMerged'],
   boughtLocked: ['error', 'msg.boughtLocked'],
   saved: ['success', 'admin.saved'],
   created: ['success', 'admin.created'],
@@ -312,6 +315,8 @@ route('GET', '/l/:token', (ctx) => {
     guest,
     available: items.available(list.id),
     mine: items.reservedBy(guest.id),
+    forOthers: items.reservedForOthersBy(guest.id),
+    taken: list.show_taken ? items.takenByOthersList(list.id, guest.id) : [],
     takenByOthers: items.takenByOthers(list.id, guest.id),
     total: items.guestVisibleCount(list.id),
     adminNames: adminNames(),
@@ -354,9 +359,12 @@ route('POST', '/l/:token/pick/:id', (ctx) => {
   // A list that asks who buys needs an answer (a page opened before it was switched on has none).
   const buyer = ctx.session.list.ask_buyer ? buyerChoice(ctx.body.buyer) : null;
   if (ctx.session.list.ask_buyer && !buyer) return redirect(ctx.res, `/l/${ctx.session.list.token}?m=chooseBuyer`);
-  const ok = items.reserve(id, ctx.session.guest, buyer);
-  if (ok) notify('pick', { ...ctx.session, item: items.get(id) });
-  redirect(ctx.res, `/l/${ctx.session.list.token}?m=${ok ? 'picked' : 'taken'}`);
+  // On a list that allows it, on behalf of someone else (by name; their own name is just a pick).
+  const forName = ctx.session.list.allow_on_behalf ? clean(ctx.body.for, 60) : '';
+  const holder = items.reserve(id, ctx.session.guest, buyer, forName || null);
+  const onBehalf = holder && holder.id !== ctx.session.guest.id;
+  if (holder) notify('pick', { ...ctx.session, item: items.get(id), forName: onBehalf ? holder.name : undefined });
+  redirect(ctx.res, `/l/${ctx.session.list.token}?m=${holder ? (onBehalf ? 'pickedFor' : 'picked') : 'taken'}`);
 }, { auth: 'guest' });
 
 // Change (or give, for a gift an admin reserved for them) the answer to "who buys it?".
@@ -378,7 +386,8 @@ route('POST', '/l/:token/unpick/:id', (ctx) => {
   }
   // Already bought for them: they talk to the list's managers instead.
   const it = items.get(id);
-  redirect(ctx.res, `/l/${ctx.session.list.token}${it?.bought_at && it.reserved_guest_id === ctx.session.guest.id ? '?m=boughtLocked' : '?m=unpicked'}`);
+  const mine = it && (it.reserved_guest_id === ctx.session.guest.id || it.reserved_by_guest_id === ctx.session.guest.id);
+  redirect(ctx.res, `/l/${ctx.session.list.token}${it?.bought_at && mine ? '?m=boughtLocked' : '?m=unpicked'}`);
 }, { auth: 'guest' });
 
 // ----- admin -----
@@ -706,6 +715,8 @@ function validateList(ctx, body) {
     visibility: body.visibility === 'private' ? 'private' : 'shared',
     auto_add_new: checkbox(body.auto_add_new),
     ask_buyer: checkbox(body.ask_buyer),
+    allow_on_behalf: checkbox(body.allow_on_behalf),
+    show_taken: body.show_taken === undefined ? undefined : showTakenLevel(body.show_taken),
   };
   return { form, error: form.title ? undefined : ctx.t('admin.titleRequired') };
 }
@@ -1080,6 +1091,36 @@ route('POST', '/admin/items/:id/move', (ctx) => {
   if (!item) return;
   items.move(item.id, ctx.body.dir === 'up' ? 'up' : 'down');
   redirect(ctx.res, `/admin/lists/${item.list_id}#item-${item.id}`);
+}, { auth: 'admin' });
+
+/** A guest of a list this admin can see (404 otherwise). */
+function loadGuest(ctx, id = Number(ctx.params.id)) {
+  const guest = guests.get(id);
+  if (guest && lists.canSee(ctx.user.id, guest.list_id)) return guest;
+  notFound(ctx);
+  return null;
+}
+
+// Rename a guest. If someone else in the list already has that name, ask whether they are the
+// same person (merge) instead.
+route('POST', '/admin/guests/:id/rename', (ctx) => {
+  const guest = loadGuest(ctx);
+  if (!guest) return;
+  const name = clean(ctx.body.name, 60);
+  if (!name) return redirect(ctx.res, `/admin/lists/${guest.list_id}#guests`);
+  const r = guests.rename(guest.id, name);
+  if (r.conflict) return html(ctx.res, views.mergeGuestPage(ctx, { list: lists.get(guest.list_id), from: guest, into: r.conflict }), 409);
+  redirect(ctx.res, `/admin/lists/${guest.list_id}?m=guestRenamed#guests`);
+}, { auth: 'admin' });
+
+// The same person joined twice: keep `into`, move everything from this guest to them.
+route('POST', '/admin/guests/:id/merge', (ctx) => {
+  const guest = loadGuest(ctx);
+  if (!guest) return;
+  const into = guests.get(Number(ctx.body.into));
+  if (!into || into.list_id !== guest.list_id) return notFound(ctx);
+  guests.merge(guest.id, into.id);
+  redirect(ctx.res, `/admin/lists/${guest.list_id}?m=guestsMerged#guests`);
 }, { auth: 'admin' });
 
 route('POST', '/admin/guests/:id/delete', (ctx) => {

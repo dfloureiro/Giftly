@@ -202,13 +202,14 @@ function adminUrl(list) {
   return base && list ? `${base}/admin/lists/${list.id}` : undefined;
 }
 
-function message(event, { list, guest, item, byUser, buyerChanged }) {
+function message(event, { list, guest, item, byUser, buyerChanged, forName }) {
   const t = makeT(config.lang);
   const buyer = item?.reserved_buyer === 'guest' || item?.reserved_buyer === 'us' ? item.reserved_buyer : null;
   const vars = {
     buyer: buyer ? ` · ${t(`notify.buyer.${buyer}`)}` : '',
     admin: byUser?.name ?? '',
     name: guest?.name ?? '',
+    for: forName ?? '',
     item: item?.title ?? '',
     price: item?.price ? ` (${item.price})` : '',
     list: list?.title ?? '',
@@ -218,10 +219,11 @@ function message(event, { list, guest, item, byUser, buyerChanged }) {
     // An admin reserving on someone's behalf: "Diogo reserved a gift for Ana".
     // A guest changing who buys a gift they hold goes to the admins who follow picks.
     title: t(buyerChanged ? (byUser ? 'notify.buyerChangedByAdmin.title' : 'notify.buyerChanged.title')
-      : byUser && event === 'pick' ? 'notify.pickByAdmin.title' : `notify.${event}.title`, vars),
+      : byUser && event === 'pick' ? 'notify.pickByAdmin.title'
+      : forName && event === 'pick' ? 'notify.pickOnBehalf.title' : `notify.${event}.title`, vars),
     message: t(`notify.${event}.message`, vars),
     click: adminUrl(list),
-    data: { reserved_by_admin: byUser?.name, list: list?.title, guest: guest?.name, item: item?.title, price: item?.price || undefined, buyer: buyer || undefined, item_url: item?.url || undefined },
+    data: { reserved_by_admin: byUser?.name, list: list?.title, guest: guest?.name, item: item?.title, price: item?.price || undefined, buyer: buyer || undefined, on_behalf_of: forName || undefined, item_url: item?.url || undefined },
   };
 }
 

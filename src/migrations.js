@@ -300,6 +300,14 @@ export const migrations = [
   ALTER TABLE items ADD COLUMN bought_at INTEGER;
   ALTER TABLE items ADD COLUMN bought_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
   `,
+  // v20 (5.4): guests can see the gifts others reserved (show_taken: 0 no, 1 everything, 2 who but
+  // no link/price, 3 only that it's taken) and reserve on behalf of someone else (allow_on_behalf):
+  // the gift is the other guest's (reserved_guest_id), reserved_by_guest_id says who reserved it.
+  `
+  ALTER TABLE lists ADD COLUMN show_taken INTEGER NOT NULL DEFAULT 0 CHECK (show_taken BETWEEN 0 AND 3);
+  ALTER TABLE lists ADD COLUMN allow_on_behalf INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE items ADD COLUMN reserved_by_guest_id INTEGER REFERENCES guests(id) ON DELETE SET NULL;
+  `,
 ];
 
 /** Shop-style price text for an idea that had a price (as 3.2 did). */

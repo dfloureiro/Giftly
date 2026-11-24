@@ -1,6 +1,6 @@
 // Routes for personal wishlists, lists created from them, and "I'll give it".
 import { config } from './config.js';
-import { db, tx, lists } from './db.js';
+import { db, tx, lists, showTakenLevel } from './db.js';
 import {
   wishlists, wishItems, createListFromWishlist, claimForGift, REMOVE_REASONS, WISHLIST_VISIBILITIES,
   siblingWishlists, listIdsFrom,
@@ -230,7 +230,9 @@ export function registerWishlistRoutes({ route, html, redirect, notFound, clean,
       description: cleanMultiline(ctx.body.description, 2000),
       visibility: ctx.body.visibility === 'shared' ? 'shared' : 'private',
       auto_add_new: ctx.body.auto_add_new === '1',
-      ask_buyer: ctx.body.ask_buyer === '1',
+      ask_buyer: [].concat(ctx.body.ask_buyer).includes('1'),
+      allow_on_behalf: [].concat(ctx.body.allow_on_behalf).includes('1'),
+      show_taken: showTakenLevel(ctx.body.show_taken),
       itemIds: [].concat(ctx.body.items ?? []).map(Number),
     });
     if (!id) return notFound(ctx);

@@ -90,7 +90,7 @@ function reservationText(ctx, it, adminNames) {
   return it.claimed_elsewhere && !it.reserved_name
     ? h`<span class="muted">🎀 ${ctx.t('wish.claimedElsewhere')}</span>`
     : it.reserved_name
-    ? h`🎀 ${ctx.t('admin.reservedBy', { name: it.reserved_name })}${it.reserved_buyer ? h` <span class="badge buyer-${it.bought_at ? 'bought' : it.reserved_buyer}">${ctx.t(it.bought_at ? 'admin.buyer.bought' : `admin.buyer.${it.reserved_buyer}`)}</span>` : ''} <span class="muted">· ${fmtDate(ctx, it.reserved_at)}${it.reserved_by_user_id ? ` · ${ctx.t('admin.byAdmin', { name: adminNames[it.reserved_by_user_id] || '—' })}` : ''}${it.reserved_guest_id ? '' : ` · ${ctx.t('admin.manual')}`}</span>`
+    ? h`🎀 ${it.reserved_by_guest_name ? ctx.t('admin.reservedByFor', { by: it.reserved_by_guest_name, name: it.reserved_name }) : ctx.t('admin.reservedBy', { name: it.reserved_name })}${it.reserved_buyer ? h` <span class="badge buyer-${it.bought_at ? 'bought' : it.reserved_buyer}">${ctx.t(it.bought_at ? 'admin.buyer.bought' : `admin.buyer.${it.reserved_buyer}`)}</span>` : ''} <span class="muted">· ${fmtDate(ctx, it.reserved_at)}${it.reserved_by_user_id ? ` · ${ctx.t('admin.byAdmin', { name: adminNames[it.reserved_by_user_id] || '—' })}` : ''}${it.reserved_guest_id ? '' : ` · ${ctx.t('admin.manual')}`}</span>`
     : h`<span class="muted">${ctx.t('admin.free')}</span>`;
 }
 
@@ -150,7 +150,7 @@ function layout(ctx, { title, body, bodyClass = '' }) {
 <link rel="manifest" href="/site.webmanifest">
 <meta name="theme-color" content="#C8553D">
 <meta name="apple-mobile-web-app-title" content="${site}">
-<link rel="stylesheet" href="/static/style.css?v=30">
+<link rel="stylesheet" href="/static/style.css?v=31">
 <script src="/static/app.js?v=7" defer></script>
 </head>
 <body class="${bodyClass}">
@@ -264,7 +264,53 @@ function buyerChoiceForm(ctx, list, it) {
   </form>`;
 }
 
-export function guestListPage(ctx, { list, guest, available, mine, takenByOthers, total, adminNames = {} }) {
+/** The pick button(s) of an available gift: for themselves, and (when the list allows it) for someone else. */
+function pickControls(ctx, list, it, namesList) {
+  const forSelf = list.ask_buyer ? pickWithBuyer(ctx, list, it)
+    : postButton(ctx, `/l/${list.token}/pick/${it.id}`, ctx.t('list.pick'), { cls: 'primary', confirm: ctx.t('list.pickConfirm', { title: it.title }) });
+  if (!list.allow_on_behalf) return forSelf;
+  return h`<div class="pick-actions">
+    ${forSelf}
+    <details class="on-behalf">
+      <summary class="small">${ctx.t('list.onBehalf')}</summary>
+      <form method="post" action="/l/${list.token}/pick/${it.id}" class="stack" data-confirm="${ctx.t('list.pickForConfirm', { title: it.title })}">
+        ${csrfField(ctx)}
+        <label>${ctx.t('list.onBehalfName')}
+          <input name="for" required maxlength="60" autocomplete="off"${namesList ? h` list="${namesList}"` : ''} placeholder="${ctx.t('login.namePlaceholder')}">
+        </label>
+        ${list.ask_buyer
+          ? h`<button type="submit" name="buyer" value="guest" class="primary">${ctx.t('list.pickBuySelf')}</button>
+             <button type="submit" name="buyer" value="us" class="secondary">${ctx.t('list.pickBuyForMe')}</button>`
+          : h`<button type="submit" class="primary">${ctx.t('list.pickFor')}</button>`}
+      </form>
+    </details>
+  </div>`;
+}
+
+/**
+ * A gift someone else reserved, as the list's show_taken level allows: 1 everything, 2 who but no
+ * link or price, 3 only that it's taken. Reservations from another list (or an admin's "I'll give
+ * it") never show a name. Who buys it and whether it was bought never show.
+ */
+function takenItem(ctx, list, it) {
+  const shown = list.show_taken === 1 ? it : { ...it, url: '', price: '' };
+  const named = list.show_taken !== 3 && it.reserved_name;
+  return h`<li class="item taken">
+    ${thumb(ctx, it)}
+    <div class="body">${itemBody(ctx, shown)}
+      <p class="small muted">🎀 ${named
+        ? (it.reserved_by_guest_name
+          ? ctx.t('list.takenByFor', { by: it.reserved_by_guest_name, name: it.reserved_name })
+          : ctx.t('list.takenBy', { name: it.reserved_name }))
+        : ctx.t('list.takenAnon')}</p></div>
+  </li>`;
+}
+
+export function guestListPage(ctx, { list, guest, available, mine, forOthers = [], taken = [], takenByOthers, total, adminNames = {} }) {
+  // Names guests may suggest when reserving for someone: only those the page already shows.
+  const names = list.show_taken === 1 || list.show_taken === 2
+    ? [...new Set(taken.filter((t) => t.reserved_name).flatMap((t) => [t.reserved_name, t.reserved_by_guest_name]).filter(Boolean))] : [];
+  const namesList = list.allow_on_behalf && names.length ? `names-${list.id}` : null;
   return layout(ctx, {
     title: list.title,
     body: h`
@@ -282,13 +328,29 @@ export function guestListPage(ctx, { list, guest, available, mine, takenByOthers
 ${mine.length ? h`
 <section class="mine">
   <h2>${ctx.t('list.mine')}</h2>
-  <p class="small muted">${ctx.t('list.mineHint')}</p>
+  <p class="small muted">${ctx.t(list.show_taken === 3 ? 'list.mineHintAnon' : list.show_taken ? 'list.mineHintNamed' : 'list.mineHint')}</p>
   <ul class="items">
     ${mine.map((it) => h`<li class="item picked" id="item-${it.id}">
       ${thumb(ctx, it)}
       <div class="body">${itemBody(ctx, it)}
         ${it.wish_status && it.wish_status !== 'active' ? h`<p class="flash flash-error small">${ctx.t(`wish.guestRemoved.${it.wish_removed_reason === 'unwanted' ? 'unwanted' : 'bought'}`)}</p>` : ''}
         ${it.reserved_by_user_id ? h`<p class="small muted reserved-for-you">🎀 ${ctx.t('list.reservedForYou', { name: adminNames[it.reserved_by_user_id] || '—' })}</p>` : ''}
+        ${it.reserved_by_guest_name ? h`<p class="small muted reserved-for-you">🎀 ${ctx.t('list.reservedForYou', { name: it.reserved_by_guest_name })}</p>` : ''}
+        ${list.ask_buyer || it.bought_at ? buyerChoiceForm(ctx, list, it) : ''}</div>
+      ${it.bought_at ? '' : postButton(ctx, `/l/${list.token}/unpick/${it.id}`, ctx.t('list.unpick'), { cls: 'secondary', confirm: ctx.t('list.unpickConfirm', { title: it.title }) })}
+    </li>`)}
+  </ul>
+</section>` : ''}
+
+${forOthers.length ? h`
+<section class="mine for-others">
+  <h2>${ctx.t('list.forOthers')}</h2>
+  <p class="small muted">${ctx.t('list.forOthersHint')}</p>
+  <ul class="items">
+    ${forOthers.map((it) => h`<li class="item picked" id="item-${it.id}">
+      ${thumb(ctx, it)}
+      <div class="body">${itemBody(ctx, it)}
+        <p class="small"><strong>${ctx.t('list.forName', { name: it.reserved_name })}</strong></p>
         ${list.ask_buyer || it.bought_at ? buyerChoiceForm(ctx, list, it) : ''}</div>
       ${it.bought_at ? '' : postButton(ctx, `/l/${list.token}/unpick/${it.id}`, ctx.t('list.unpick'), { cls: 'secondary', confirm: ctx.t('list.unpickConfirm', { title: it.title }) })}
     </li>`)}
@@ -298,16 +360,23 @@ ${mine.length ? h`
 <section>
   <h2>${ctx.t('list.available')}</h2>
   <p class="small muted">${ctx.t('list.howItWorks')}
-    ${takenByOthers ? h` ${ctx.t('list.takenByOthers', { n: takenByOthers })}` : ''}</p>
+    ${takenByOthers && !list.show_taken ? h` ${ctx.t('list.takenByOthers', { n: takenByOthers })}` : ''}</p>
   ${available.length ? h`
   <ul class="items">
     ${available.map((it) => h`<li class="item">
       ${thumb(ctx, it)}
       <div class="body">${itemBody(ctx, it)}</div>
-      ${list.ask_buyer ? pickWithBuyer(ctx, list, it) : postButton(ctx, `/l/${list.token}/pick/${it.id}`, ctx.t('list.pick'), { cls: 'primary', confirm: ctx.t('list.pickConfirm', { title: it.title }) })}
+      ${pickControls(ctx, list, it, namesList)}
     </li>`)}
   </ul>` : h`<p class="empty">${total ? ctx.t('list.none') : ctx.t('list.empty')}</p>`}
-</section>`,
+  ${namesList ? h`<datalist id="${namesList}">${names.map((n) => h`<option value="${n}"></option>`)}</datalist>` : ''}
+</section>
+
+${list.show_taken && taken.length ? h`
+<section class="taken-section">
+  <h2>${ctx.t('list.takenTitle')}</h2>
+  <ul class="items">${taken.map((it) => takenItem(ctx, list, it))}</ul>
+</section>` : ''}`,
   });
 }
 
@@ -392,6 +461,23 @@ function adminHeader(ctx, backHref, backLabel) {
 ${backHref ? h`<p class="backline"><a href="${backHref}" class="back">${backLabel}</a></p>` : ''}`;
 }
 
+/** What guests may do on a list (also on "Create a list from this wishlist"). Unticking is sent as "0". */
+export function guestOptionFields(ctx, v = {}) {
+  const box = (name, label, hint) => h`<label class="check"><input type="hidden" name="${name}" value="0"><input type="checkbox" name="${name}" value="1"${v[name] ? raw(' checked') : ''}> ${ctx.t(label)}</label>
+    <p class="small muted hint">${ctx.t(hint)}</p>`;
+  const level = Number(v.show_taken) || 0;
+  return h`<fieldset class="group guest-options">
+    <legend>${ctx.t('admin.guestOptions')}</legend>
+    ${box('ask_buyer', 'admin.askBuyer', 'admin.askBuyerHint')}
+    ${box('allow_on_behalf', 'admin.allowOnBehalf', 'admin.allowOnBehalfHint')}
+    <label>${ctx.t('admin.showTaken')}
+      <select name="show_taken">
+        ${[0, 1, 2, 3].map((n) => h`<option value="${n}"${level === n ? raw(' selected') : ''}>${ctx.t(`admin.showTaken.${n}`)}</option>`)}
+      </select>
+    </label>
+  </fieldset>`;
+}
+
 function listFields(ctx, v, { withArchived = false, canSetVisibility = true } = {}) {
   return h`
     ${canSetVisibility ? h`<label>${ctx.t('give.visibility')}
@@ -400,8 +486,7 @@ function listFields(ctx, v, { withArchived = false, canSetVisibility = true } = 
         <option value="private"${v.visibility === 'private' ? raw(' selected') : ''}>${ctx.t('lists.vis.private')}</option>
       </select>
     </label>` : ''}
-    <label class="check"><input type="hidden" name="ask_buyer" value="0"><input type="checkbox" name="ask_buyer" value="1"${v.ask_buyer ? raw(' checked') : ''}> ${ctx.t('admin.askBuyer')}</label>
-    <p class="small muted hint">${ctx.t('admin.askBuyerHint')}</p>
+    ${guestOptionFields(ctx, v)}
     ${v.source_wishlist_id ? h`<label class="check"><input type="hidden" name="auto_add_new" value="0"><input type="checkbox" name="auto_add_new" value="1"${v.auto_add_new ? raw(' checked') : ''}> ${ctx.t('wish.autoAdd')}</label>` : ''}
     <label>${ctx.t('admin.listTitle')}
       <input name="title" required maxlength="120" value="${v.title || ''}" placeholder="${ctx.t('admin.listTitlePlaceholder')}">
@@ -632,8 +717,8 @@ ${pending.length ? h`<section class="card">
   </ul>
 </section>` : ''}
 
-<section class="card">
-  <details>
+<section class="card" id="guests">
+  <details${['guestRenamed', 'guestsMerged'].includes(ctx.url?.searchParams.get('m')) ? raw(' open') : ''}>
   <summary><strong>${ctx.t('admin.guests')}</strong> <span class="muted small">(${allGuests.length})</span></summary>
   ${allGuests.length ? h`
   <table>
@@ -641,12 +726,51 @@ ${pending.length ? h`<section class="card">
     <tbody>
       ${allGuests.map((g) => h`<tr>
         <td>${g.name}</td><td>${g.pick_count}</td><td>${g.last_seen ? fmtDate(ctx, g.last_seen) : h`<span class="muted">${ctx.t('admin.notYet')}</span>`}</td>
-        <td>${postButton(ctx, `/admin/guests/${g.id}/delete`, ctx.t('admin.deleteGuest'), { cls: 'link danger', confirm: ctx.t('admin.deleteGuestConfirm') })}</td>
+        <td class="guest-actions">${guestActions(ctx, g, allGuests)}
+          ${postButton(ctx, `/admin/guests/${g.id}/delete`, ctx.t('admin.deleteGuest'), { cls: 'link danger', confirm: ctx.t('admin.deleteGuestConfirm') })}</td>
       </tr>`)}
     </tbody>
   </table>` : h`<p class="empty">${ctx.t('admin.noGuests')}</p>`}
   </details>
 </section>`,
+  });
+}
+
+/** Rename a guest, or merge them into another guest of the list (the same person who joined twice). */
+function guestActions(ctx, g, allGuests) {
+  const others = allGuests.filter((o) => o.id !== g.id);
+  return h`<details class="guest-edit">
+      <summary class="link">${ctx.t('admin.renameGuest')}</summary>
+      <form method="post" action="/admin/guests/${g.id}/rename" class="stack">
+        ${csrfField(ctx)}
+        <input name="name" required maxlength="60" value="${g.name}" aria-label="${ctx.t('login.name')}">
+        <button type="submit" class="primary">${ctx.t('admin.save')}</button>
+      </form>
+    </details>
+    ${others.length ? h`<details class="guest-edit">
+      <summary class="link">${ctx.t('admin.mergeGuest')}</summary>
+      <form method="post" action="/admin/guests/${g.id}/merge" class="stack" data-confirm="${ctx.t('admin.mergeConfirm', { name: g.name })}">
+        ${csrfField(ctx)}
+        <label>${ctx.t('admin.mergeInto', { name: g.name })}
+          <select name="into">${others.map((o) => h`<option value="${o.id}">${o.name}</option>`)}</select>
+        </label>
+        <p class="small muted">${ctx.t('admin.mergeHint', { name: g.name })}</p>
+        <button type="submit" class="primary">${ctx.t('admin.mergeButton')}</button>
+      </form>
+    </details>` : ''}`;
+}
+
+/** Renaming to a name another guest already has: are they the same person? */
+export function mergeGuestPage(ctx, { list, from, into }) {
+  return formPage(ctx, {
+    title: ctx.t('admin.sameGuestTitle'), back: `/admin/lists/${list.id}#guests`, backLabel: list.title,
+    body: h`<p>${ctx.t('admin.sameGuestText', { from: from.name, into: into.name })}</p>
+    <form method="post" action="/admin/guests/${from.id}/merge" class="stack">
+      ${csrfField(ctx)}<input type="hidden" name="into" value="${into.id}">
+      <p class="small muted">${ctx.t('admin.mergeHint', { name: from.name })}</p>
+      <button type="submit" class="primary">${ctx.t('admin.mergeButton')}</button>
+    </form>
+    <p><a href="/admin/lists/${list.id}#guests">${ctx.t('admin.cancel')}</a></p>`,
   });
 }
 

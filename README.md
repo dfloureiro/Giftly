@@ -13,7 +13,7 @@ No more two aunts buying the same toaster.</p>
 2. **Share the list's secret link** with family and friends.
 3. **Guests open it, type their name and pick a gift.** No account, no email, no app.
 4. **A picked gift disappears for everyone else**, so nobody buys the same thing twice. You see who picked what.
-5. **Optionally, guests say who buys it:** they'll buy it themselves, or they'd like you to buy it for them (and you mark it once bought). Switch it on per list.
+5. **Optional, per list:** guests say who buys the gift (they do, or they'd like you to, and you mark it once bought), see what others already reserved, and reserve on behalf of someone else.
 
 ## What else it does
 

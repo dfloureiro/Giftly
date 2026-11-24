@@ -389,3 +389,21 @@ form.buyer-choice button.link { font-size: inherit; }
 .buyer-row { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; margin-top: 6px; }
 .buyer-row form.buyer-choice { margin: 0; }
 .bought-for-you { margin: 6px 0 0; color: var(--ok); }
+
+/* reserving on behalf of someone, and gifts others reserved */
+.item > .pick-actions { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; min-width: 12rem; }
+.pick-actions > form.inline, .pick-actions > form.inline button { width: 100%; }
+details.on-behalf > summary { cursor: pointer; color: var(--accent); text-align: center; list-style: none; padding: 4px 0; }
+details.on-behalf > summary::-webkit-details-marker { display: none; }
+details.on-behalf[open] > summary { margin-bottom: 6px; }
+.item.taken { opacity: .72; }
+.item.taken .thumb { filter: grayscale(.6); }
+fieldset.guest-options { display: grid; gap: 8px; }
+td.guest-actions { white-space: nowrap; }
+td.guest-actions details.guest-edit, td.guest-actions > form.inline { display: inline-block; margin-right: 10px; vertical-align: top; }
+td.guest-actions details.guest-edit > summary { cursor: pointer; color: var(--accent); text-decoration: underline; list-style: none; }
+td.guest-actions details.guest-edit[open] { display: block; white-space: normal; margin: 6px 0; }
+@media (max-width: 520px) {
+  .item > .pick-actions { flex: 1 1 100%; }
+  td.guest-actions { white-space: normal; }
+}

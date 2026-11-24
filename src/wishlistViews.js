@@ -1,5 +1,5 @@
 // Views for personal wishlists. The owner's page shows NOTHING about reservations.
-import { h, raw, layout, csrfField, postButton, adminHeader, uploadField, dragHandle, pageHead, formPage } from './views.js';
+import { h, raw, layout, csrfField, postButton, adminHeader, uploadField, dragHandle, pageHead, formPage, guestOptionFields } from './views.js';
 
 function hostOf(url) {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
@@ -235,8 +235,7 @@ ${adminHeader(ctx, back, `← ${w.owner_name}`)}
         : h`<p class="small muted">${ctx.t('wish.emptyOther', { name: g.w.owner_name })}</p>`}
     </fieldset>`)}
     <label class="check"><input type="checkbox" name="auto_add_new" value="1" checked> ${ctx.t('wish.autoAdd')}</label>
-    <label class="check"><input type="checkbox" name="ask_buyer" value="1"> ${ctx.t('admin.askBuyer')}</label>
-    <p class="small muted hint">${ctx.t('admin.askBuyerHint')}</p>
+    ${guestOptionFields(ctx)}
     ${onlyPrivate ? h`<p class="small muted">🔒 ${ctx.t('wish.privateListOnly')}</p><input type="hidden" name="visibility" value="private">` : h`<label>${ctx.t('give.visibility')}
       <select name="visibility">
         <option value="private" selected>${ctx.t('lists.vis.private')}</option>

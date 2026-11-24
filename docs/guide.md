@@ -58,12 +58,24 @@ Some guests would rather you buy the gift for them (they live far away, or they'
 
 Switching it off hides the question; the answers already given stay on the gifts.
 
+### What guests can see and do
+
+A list's **Guests** settings (when creating it, or in its ⚙️ menu → *Edit*) decide what guests see and can do. All are off by default.
+
+- **Guests see the gifts others already reserved.** Instead of only "2 gift(s) already picked by others", the reserved gifts appear at the bottom, greyed out, under *Already reserved*. Choose how much they show:
+  1. everything, including who reserved it, the link and the price;
+  2. who reserved it, without the link or the price;
+  3. only that it's reserved (no name, link or price).
+
+  Photos and notes always show. A gift from a wishlist that was reserved in **another** list (or by an admin's *I'll give it*) only ever says *Already reserved*. Who buys a gift and whether it was bought never show to other guests.
+- **Guests can reserve on behalf of others.** Under each gift, *Reserve on behalf of someone else…* asks for a name: Maria reserves the scarf on behalf of Diogo. The gift is Diogo's: when he opens the list with that name he sees it in his picks ("Reserved for you by Maria"). Maria sees it under *Reserved by you for others*. Either of them can give it up or change who buys it. You see "Reserved by Maria on behalf of Diogo", and the notification says so too. While the list shows names (levels 1 and 2 above), the name field suggests the names already on the page; otherwise it suggests none, so nobody learns who else was invited.
+
 ### What guests see
 
 1. They open the link and type their name. That's all: no account, no email, nothing tracked.
-2. They see the available gifts and tap *I'll give this one* (or, on a list that [asks who buys](#who-buys-the-gift), *I'll buy it* / *Please buy it for me*).
+2. They see the available gifts and tap *I'll give this one* (or, on a list that [asks who buys](#who-buys-the-gift), *I'll buy it* / *Please buy it for me*). On lists that [allow it](#what-guests-can-see-and-do), they can also reserve on behalf of someone else.
 3. The gift **disappears for everyone else**, so nobody buys the same thing twice. If two people tap at the same moment, only one gets it.
-4. Their picks stay at the top, and they can give them up.
+4. Their picks stay at the top, and they can give them up. If the list [shows them](#what-guests-can-see-and-do), what others reserved is listed at the bottom.
 
 A guest is recognised by their name within a list (not case-sensitive), so typing the same name on another device shows the same picks. That's deliberately simple: it's built for family and friends, not strangers.
 
@@ -73,6 +85,7 @@ The admin shows everything: who picked what and when, and who joined. You can:
 
 - **Release** any gift.
 - **Reserve** a gift for someone who told you in person: type their name, or pick a guest who already joined. The reservation belongs to that guest: when they open the list with that name, they see it in their picks ("Reserved for you by …") and can give it up. The other admins are notified.
+- **Rename** a guest, or **merge** two guests who are the same person (João joined once as "João" and once as "João Loureiro"), in the list's *Guests* section. Merging moves all of one guest's reservations, including those they made on behalf of others, to the other, and removes the first. Renaming to a name another guest already has asks whether to merge them. Whoever joined under the removed name types their name again on their next visit.
 
 ## Wishlists
 

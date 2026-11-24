@@ -74,6 +74,9 @@ export const LIST_VISIBLE = `((l.visibility = 'shared' OR l.owner_id = $uid)
      OR EXISTS (SELECT 1 FROM items li JOIN wishlist_items lwi ON lwi.id = li.wishlist_item_id
                 WHERE li.list_id = l.id AND lwi.wishlist_id = w.id))))`;
 
+/** What guests see of the gifts others reserved: 0 nothing, 1 everything, 2 who (no link/price), 3 only that it's taken. */
+export const showTakenLevel = (v) => ([1, 2, 3].includes(Number(v)) ? Number(v) : 0);
+
 export const lists = {
   /** Lists this admin can see, with counters. */
   all(uid) {
@@ -95,11 +98,12 @@ export const lists = {
   byToken(token) {
     return db.prepare('SELECT * FROM lists WHERE token = ?').get(token);
   },
-  create({ title, description, owner_id = null, visibility = 'shared', source_wishlist_id = null, auto_add_new = true, recipient_user_id = null, ask_buyer = false }) {
+  create({ title, description, owner_id = null, visibility = 'shared', source_wishlist_id = null, auto_add_new = true, recipient_user_id = null, ask_buyer = false, show_taken = 0, allow_on_behalf = false }) {
     const id = Number(db.prepare(
-      `INSERT INTO lists (title, description, token, owner_id, visibility, source_wishlist_id, auto_add_new, recipient_user_id, ask_buyer, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(title, description, newToken(), owner_id, visibility, source_wishlist_id, auto_add_new ? 1 : 0, recipient_user_id, ask_buyer ? 1 : 0, now()).lastInsertRowid);
+      `INSERT INTO lists (title, description, token, owner_id, visibility, source_wishlist_id, auto_add_new, recipient_user_id, ask_buyer, show_taken, allow_on_behalf, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(title, description, newToken(), owner_id, visibility, source_wishlist_id, auto_add_new ? 1 : 0, recipient_user_id, ask_buyer ? 1 : 0,
+      showTakenLevel(show_taken), allow_on_behalf ? 1 : 0, now()).lastInsertRowid);
     if (source_wishlist_id) db.prepare('INSERT OR IGNORE INTO list_sources (list_id, wishlist_id) VALUES (?, ?)').run(id, source_wishlist_id);
     return id;
   },
@@ -107,7 +111,7 @@ export const lists = {
    * Only the owner changes visibility; an ownerless (pre-3.0) list becomes yours if you make
    * it private. Archiving marks its reserved wishlist items as received.
    */
-  update(id, { title, description, archived, visibility, auto_add_new, ask_buyer }, uid) {
+  update(id, { title, description, archived, visibility, auto_add_new, ask_buyer, show_taken, allow_on_behalf }, uid) {
     tx(() => {
       const l = lists.get(id);
       let owner = l.owner_id;
@@ -117,8 +121,10 @@ export const lists = {
         if (owner == null && visibility === 'private') owner = uid;
       }
       const flag = (v, current) => (v === undefined ? current : (v ? 1 : 0));
-      db.prepare('UPDATE lists SET title = ?, description = ?, archived = ?, visibility = ?, owner_id = ?, auto_add_new = ?, ask_buyer = ? WHERE id = ?')
-        .run(title, description, archived ? 1 : 0, vis, owner, flag(auto_add_new, l.auto_add_new), flag(ask_buyer, l.ask_buyer), id);
+      db.prepare(`UPDATE lists SET title = ?, description = ?, archived = ?, visibility = ?, owner_id = ?, auto_add_new = ?, ask_buyer = ?,
+          show_taken = ?, allow_on_behalf = ? WHERE id = ?`)
+        .run(title, description, archived ? 1 : 0, vis, owner, flag(auto_add_new, l.auto_add_new), flag(ask_buyer, l.ask_buyer),
+          show_taken === undefined ? l.show_taken : showTakenLevel(show_taken), flag(allow_on_behalf, l.allow_on_behalf), id);
       if (archived && !l.archived) {
         db.prepare(`UPDATE wishlist_items SET status = 'received', removed_reason = 'received', removed_at = ?
           WHERE status = 'active' AND id IN (SELECT wishlist_item_id FROM items
@@ -184,11 +190,43 @@ export const guests = {
   touch(id) {
     db.prepare('UPDATE guests SET last_seen = ? WHERE id = ?').run(now(), id);
   },
+  /**
+   * Rename a guest (and the name on their reservations). Returns { ok } or, when another guest of
+   * the list already has that name (not case-sensitive), { conflict: thatGuest } and changes nothing.
+   */
+  rename(id, name) {
+    return tx(() => {
+      const g = guests.get(id);
+      const other = db.prepare('SELECT * FROM guests WHERE list_id = ? AND name = ? AND id != ?').get(g.list_id, name, id);
+      if (other) return { conflict: other };
+      db.prepare('UPDATE guests SET name = ? WHERE id = ?').run(name, id);
+      db.prepare('UPDATE items SET reserved_name = ? WHERE reserved_guest_id = ?').run(name, id);
+      return { ok: true };
+    });
+  },
+  /**
+   * The same person joined twice: `fromId`'s reservations (theirs and those they made for others)
+   * move to `intoId`, and `fromId` is removed (that device has to join again). Same list only.
+   */
+  merge(fromId, intoId) {
+    return tx(() => {
+      const from = guests.get(fromId);
+      const into = guests.get(intoId);
+      if (!from || !into || from.id === into.id || from.list_id !== into.list_id) return false;
+      db.prepare('UPDATE items SET reserved_guest_id = ?, reserved_name = ? WHERE reserved_guest_id = ?').run(into.id, into.name, from.id);
+      db.prepare('UPDATE items SET reserved_by_guest_id = ? WHERE reserved_by_guest_id = ?').run(into.id, from.id);
+      // "Reserved by me on behalf of me" is just mine.
+      db.prepare('UPDATE items SET reserved_by_guest_id = NULL WHERE reserved_guest_id = ? AND reserved_by_guest_id = ?').run(into.id, into.id);
+      db.prepare('UPDATE guests SET created_at = MIN(created_at, ?), last_seen = MAX(last_seen, ?) WHERE id = ?').run(from.created_at, from.last_seen, into.id);
+      db.prepare('DELETE FROM guests WHERE id = ?').run(from.id);
+      return true;
+    });
+  },
   delete(id) {
     tx(() => {
       db.prepare('DELETE FROM wishlist_claims WHERE item_id IN (SELECT id FROM items WHERE reserved_guest_id = ?)').run(id);
       db.prepare(
-        'UPDATE items SET reserved_guest_id = NULL, reserved_name = NULL, reserved_at = NULL, reserved_by_user_id = NULL, reserved_buyer = NULL, bought_at = NULL, bought_by_user_id = NULL WHERE reserved_guest_id = ?'
+        'UPDATE items SET reserved_guest_id = NULL, reserved_name = NULL, reserved_at = NULL, reserved_by_user_id = NULL, reserved_buyer = NULL, bought_at = NULL, bought_by_user_id = NULL, reserved_by_guest_id = NULL WHERE reserved_guest_id = ?'
       ).run(id);
       db.prepare('DELETE FROM guests WHERE id = ?').run(id);
     });
@@ -203,7 +241,8 @@ const ITEM_JOIN = `LEFT JOIN wishlist_items wi ON wi.id = i.wishlist_item_id
   LEFT JOIN wishlist_claims wc ON wc.wishlist_item_id = i.wishlist_item_id`;
 const ITEM_COLS = `i.*, wi.status AS wish_status, wi.removed_reason AS wish_removed_reason, wi.wishlist_id AS wish_list_id,
   (wc.wishlist_item_id IS NOT NULL AND (wc.item_id IS NULL OR wc.item_id != i.id)) AS claimed_elsewhere,
-  EXISTS (SELECT 1 FROM list_item_overrides ov WHERE ov.item_id = i.id) AS overridden`;
+  EXISTS (SELECT 1 FROM list_item_overrides ov WHERE ov.item_id = i.id) AS overridden,
+  (SELECT rg.name FROM guests rg WHERE rg.id = i.reserved_by_guest_id) AS reserved_by_guest_name`;
 const GUEST_OFFERABLE = `i.hidden = 0 AND i.pending = 0
   AND (i.wishlist_item_id IS NULL OR (wi.status = 'active' AND wc.wishlist_item_id IS NULL))`;
 
@@ -223,13 +262,26 @@ export const items = {
   reservedBy(guestId) {
     return db.prepare(`SELECT ${ITEM_COLS} FROM items i ${ITEM_JOIN} WHERE i.reserved_guest_id = ? ORDER BY i.reserved_at`).all(guestId);
   },
-  /** How many gifts guests of this list no longer see because someone (else) has them. */
+  /**
+   * Gifts of this list a guest no longer sees as available because someone else has them (not
+   * theirs, not reserved by them for someone else). Linked items reserved in another list or as an
+   * admin's "I'll give it" are included (claimed_elsewhere, never with a name).
+   */
+  takenByOthersList(listId, guestId) {
+    return db.prepare(`SELECT ${ITEM_COLS} FROM items i ${ITEM_JOIN}
+      WHERE i.list_id = $list AND i.hidden = 0 AND i.pending = 0
+        AND (i.reserved_guest_id IS NULL OR i.reserved_guest_id != $guest)
+        AND (i.reserved_by_guest_id IS NULL OR i.reserved_by_guest_id != $guest)
+        AND (i.reserved_name IS NOT NULL OR (i.wishlist_item_id IS NOT NULL AND wi.status = 'active' AND wc.wishlist_item_id IS NOT NULL))
+      ORDER BY i.position, i.id`).all({ list: listId, guest: guestId });
+  },
   takenByOthers(listId, guestId) {
-    return db.prepare(`SELECT COUNT(*) AS n FROM items i ${ITEM_JOIN}
-      WHERE i.list_id = ? AND i.hidden = 0 AND i.pending = 0
-        AND (i.reserved_guest_id IS NULL OR i.reserved_guest_id != ?)
-        AND (i.reserved_name IS NOT NULL OR (i.wishlist_item_id IS NOT NULL AND wi.status = 'active' AND wc.wishlist_item_id IS NOT NULL))`)
-      .get(listId, guestId).n;
+    return items.takenByOthersList(listId, guestId).length;
+  },
+  /** Gifts a guest reserved on behalf of someone else (theirs to give up too). */
+  reservedForOthersBy(guestId) {
+    return db.prepare(`SELECT ${ITEM_COLS} FROM items i ${ITEM_JOIN}
+      WHERE i.reserved_by_guest_id = ? AND i.reserved_guest_id != i.reserved_by_guest_id ORDER BY i.reserved_at`).all(guestId);
   },
   /** Items a guest of this list could ever see (for the "this list is empty" message). */
   guestVisibleCount(listId) {
@@ -294,13 +346,13 @@ export const items = {
         db.prepare('INSERT OR REPLACE INTO wishlist_claims (wishlist_item_id, item_id, gift_id, created_at) VALUES (?, ?, NULL, ?)')
           .run(item.wishlist_item_id, id, now());
       }
-      db.prepare('UPDATE items SET reserved_guest_id = ?, reserved_name = ?, reserved_at = ?, reserved_by_user_id = ?, reserved_buyer = ?, bought_at = NULL, bought_by_user_id = NULL WHERE id = ?')
+      db.prepare('UPDATE items SET reserved_guest_id = ?, reserved_name = ?, reserved_at = ?, reserved_by_user_id = ?, reserved_buyer = ?, bought_at = NULL, bought_by_user_id = NULL, reserved_by_guest_id = NULL WHERE id = ?')
         .run(guest.id, guest.name, now(), userId ?? null, buyer, id);
       return guest;
     });
   },
   /** Atomic: only succeeds if nobody else got there first. */
-  reserve(id, guest, buyer = null) {
+  reserve(id, guest, buyer = null, forName = null) {
     return tx(() => {
       const item = db.prepare(`SELECT ${ITEM_COLS} FROM items i ${ITEM_JOIN}
         WHERE i.id = ? AND i.list_id = ? AND i.reserved_name IS NULL AND ${GUEST_OFFERABLE}`).get(id, guest.list_id);
@@ -311,17 +363,23 @@ export const items = {
           .run(item.wishlist_item_id, id, now());
         if (claim.changes !== 1) return false;
       }
-      return db.prepare(
-        'UPDATE items SET reserved_guest_id = ?, reserved_name = ?, reserved_at = ?, reserved_by_user_id = NULL, reserved_buyer = ?, bought_at = NULL, bought_by_user_id = NULL WHERE id = ? AND reserved_name IS NULL'
-      ).run(guest.id, guest.name, now(), buyer, id).changes === 1;
+      // On behalf of someone else: the gift is theirs (found or created by name, like an admin's
+      // reservation), and we remember who reserved it.
+      const holder = forName ? guests.placeholder(guest.list_id, forName) : guest;
+      const by = holder.id === guest.id ? null : guest.id;
+      const ok = db.prepare(
+        'UPDATE items SET reserved_guest_id = ?, reserved_name = ?, reserved_at = ?, reserved_by_user_id = NULL, reserved_buyer = ?, bought_at = NULL, bought_by_user_id = NULL, reserved_by_guest_id = ? WHERE id = ? AND reserved_name IS NULL'
+      ).run(holder.id, holder.name, now(), buyer, by, id).changes === 1;
+      return ok ? holder : false;
     });
   },
   /** A guest gives up a gift — not once the managers bought it for them (an admin can still release it). */
   unreserve(id, guest) {
-    db.prepare('DELETE FROM wishlist_claims WHERE item_id = ? AND item_id IN (SELECT id FROM items WHERE reserved_guest_id = ? AND bought_at IS NULL)').run(id, guest.id);
+    db.prepare(`DELETE FROM wishlist_claims WHERE item_id = $id AND item_id IN (SELECT id FROM items
+      WHERE (reserved_guest_id = $guest OR reserved_by_guest_id = $guest) AND bought_at IS NULL)`).run({ id, guest: guest.id });
     const r = db.prepare(
-      'UPDATE items SET reserved_guest_id = NULL, reserved_name = NULL, reserved_at = NULL, reserved_by_user_id = NULL, reserved_buyer = NULL, bought_at = NULL, bought_by_user_id = NULL WHERE id = ? AND reserved_guest_id = ? AND bought_at IS NULL'
-    ).run(id, guest.id);
+      'UPDATE items SET reserved_guest_id = NULL, reserved_name = NULL, reserved_at = NULL, reserved_by_user_id = NULL, reserved_buyer = NULL, bought_at = NULL, bought_by_user_id = NULL, reserved_by_guest_id = NULL WHERE id = $id AND (reserved_guest_id = $guest OR reserved_by_guest_id = $guest) AND bought_at IS NULL'
+    ).run({ id, guest: guest.id });
     return r.changes === 1;
   },
   /**
@@ -330,7 +388,8 @@ export const items = {
    */
   setBuyer(id, guest, buyer) {
     return (guest
-      ? db.prepare('UPDATE items SET reserved_buyer = ? WHERE id = ? AND reserved_guest_id = ? AND bought_at IS NULL').run(buyer, id, guest.id)
+      ? db.prepare(`UPDATE items SET reserved_buyer = $buyer WHERE id = $id
+          AND (reserved_guest_id = $guest OR reserved_by_guest_id = $guest) AND bought_at IS NULL`).run({ buyer, id, guest: guest.id })
       : db.prepare('UPDATE items SET reserved_buyer = ? WHERE id = ? AND reserved_name IS NOT NULL AND bought_at IS NULL').run(buyer, id)).changes === 1;
   },
   /** An admin marks a gift they were asked to buy as bought (userId), or not bought yet (null). */
@@ -340,7 +399,7 @@ export const items = {
   },
   release(id) {
     db.prepare('DELETE FROM wishlist_claims WHERE item_id = ?').run(id);
-    db.prepare('UPDATE items SET reserved_guest_id = NULL, reserved_name = NULL, reserved_at = NULL, reserved_by_user_id = NULL, reserved_buyer = NULL, bought_at = NULL, bought_by_user_id = NULL WHERE id = ?').run(id);
+    db.prepare('UPDATE items SET reserved_guest_id = NULL, reserved_name = NULL, reserved_at = NULL, reserved_by_user_id = NULL, reserved_buyer = NULL, bought_at = NULL, bought_by_user_id = NULL, reserved_by_guest_id = NULL WHERE id = ?').run(id);
   },
   delete(id) {
     db.prepare('DELETE FROM items WHERE id = ?').run(id);

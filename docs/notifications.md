@@ -21,7 +21,7 @@ You can set up one or more:
 |---|---|
 | [ntfy](https://ntfy.sh) (free phone app) | A topic such as `https://ntfy.sh/giftly-<random>` or just `giftly-<random>` (letters, numbers, `-` and `_` only). Add an access token for protected or self-hosted servers. |
 | Telegram | A bot token (from @BotFather) and your chat ID (send your bot a message, then open `https://api.telegram.org/bot<token>/getUpdates`). |
-| Discord / Slack / anything else | A webhook URL. It receives a JSON POST with `content` (Discord), `text` (Slack), plus `event`, `list`, `guest`, `item`, `price`, `item_url`, `buyer` (`guest` or `us`, on lists that [ask who buys](guide.md#who-buys-the-gift)) and `url`. |
+| Discord / Slack / anything else | A webhook URL. It receives a JSON POST with `content` (Discord), `text` (Slack), plus `event`, `list`, `guest`, `item`, `price`, `item_url`, `buyer` (`guest` or `us`, on lists that [ask who buys](guide.md#who-buys-the-gift)), `on_behalf_of` (when a guest [reserved for someone else](guide.md#what-guests-can-see-and-do)) and `url`. |
 
 Good to know:
 
