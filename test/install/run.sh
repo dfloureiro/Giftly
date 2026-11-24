@@ -10,7 +10,7 @@ ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 WORK=$(mktemp -d)
 REG=127.0.0.1:5555
 OLD3=ghcr.io/dfloureiro/giftly:3.5.0   # the last 3.x: flat data layout
-export GIFTLY_REPO_RAW="file://$ROOT" GIFTLY_YES=1 GIFTLY_READY_TRIES=20 GIFTLY_IMAGE="$REG/giftly" GIFTLY_TAG=4
+export GIFTLY_REPO_RAW="file://$ROOT" GIFTLY_YES=1 GIFTLY_READY_TRIES=20 GIFTLY_IMAGE="$REG/giftly" GIFTLY_TAG=5
 fails=0
 ok() { printf 'ok   %s\n' "$*"; }
 bad() { printf 'FAIL %s\n' "$*"; fails=$((fails + 1)); }
@@ -34,7 +34,7 @@ GOOD_ID=$(docker image inspect -f '{{.Id}}' giftly-test-good)
 publish() { # publish IMAGE TAG: the registry now serves IMAGE under $REG/giftly:TAG
   docker tag "$1" "$REG/giftly:$2" && docker push -q "$REG/giftly:$2" >/dev/null
 }
-i=0; until publish "$GOOD_ID" 4 2>/dev/null; do i=$((i + 1)); [ "$i" -lt 20 ] || { echo "registry didn't start"; exit 1; }; sleep 1; done
+i=0; until publish "$GOOD_ID" 5 2>/dev/null; do i=$((i + 1)); [ "$i" -lt 20 ] || { echo "registry didn't start"; exit 1; }; sleep 1; done
 # A new version that upgrades the data into a new release (as a real migration would) and then
 # never becomes healthy.
 mkdir -p "$WORK/broken"

@@ -79,7 +79,7 @@ It asks for your domain and a [Cloudflare Tunnel](#exposing-it-with-cloudflare-t
 
 Running it again updates Giftly. It never changes your `.env` or `cloudflared.env`. It manages `compose.yaml` itself: the images are named **by digest** (the exact image, not a tag that can move), and the file is rewritten on every update, so put your own changes in `compose.override.yaml` (a `compose.yaml` you had edited is kept next to it as `compose.yaml.local-<date>`). An update counts as successful only when Giftly serves your data (not just answers), and the tunnel is connected if you use one. Otherwise it puts back your settings, the exact previous images (by digest) and the [data release](#data-and-recovery) they served, checks that they work again, and tells you why. A failed download changes nothing.
 
-The image follows `ghcr.io/dfloureiro/giftly:4`: fixes and new features within 4.x, never a breaking 5.0. To follow an exact version, set `GIFTLY_TAG=4.0.0` in `.env`.
+The image follows `ghcr.io/dfloureiro/giftly:5`: fixes and new features within 5.x, never a breaking 6.0. To follow an exact version, set `GIFTLY_TAG=5.0.0` in `.env`.
 
 Or by hand with Docker Compose:
 
@@ -191,7 +191,7 @@ The *Occasions* and *People* parts of the admin plan the gifts **you** give, not
 
 **Reminders:** once a day (at `REMINDER_HOUR`, default 9:00 in `TZ`) each admin gets a message on their own notification channels for every birthday or occasion that is coming up and still has no gift bought, for example *"In 14 days: Ana's birthday. No gift bought yet (1 planned)."* or *"In 3 days: Christmas 2026. 6 of 18 people still without a gift."*. Each admin chooses how many days before under **Notifications** (default 14 and 3; empty turns reminders off) and can send today's reminders on demand to check. Reminders only include what that admin can see, so shared occasions remind everyone, private ones only their owner, and nobody is reminded of their own birthday. Each reminder is sent once; if the server was off on the exact day, it goes out on the next run.
 
-**Upgrading to 5.0** reorganises the admin (the old `/admin/give…` addresses are gone; guest links don't change) and moves every gift that was still an "idea" into a wishlist of ideas for its person: shared ideas into the shared one, private ideas (and ideas for an admin) into the giver's private ideas. Gifts taken with "I'll give it" become *planned*. Each admin gets their record in People.
+**Upgrading to 5.0:** 4.x installs stay on `:4` (5.0 is a breaking change), so you move on purpose: run the installer again (it now installs `:5`, after removing any `GIFTLY_TAG=4` from `.env`), or with Compose set `GIFTLY_TAG=5` (or the image `ghcr.io/dfloureiro/giftly:5`) and `docker compose pull && docker compose up -d`. Like every schema change, it upgrades a copy of your data into a new release, so going back to 4.0 finds the old data untouched. 5.0 reorganises the admin (the old `/admin/give…` addresses are gone; guest links don't change) and moves every gift that was still an "idea" into a wishlist of ideas for its person: shared ideas into the shared one, private ideas (and ideas for an admin) into the giver's private ideas. Gifts taken with "I'll give it" become *planned*. Each admin gets their record in People.
 
 The privacy is enforced by the app; whoever has access to the server or the `/data` volume can read the database.
 

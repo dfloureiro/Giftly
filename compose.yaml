@@ -3,9 +3,9 @@
 # image tags below with the exact digests it installed (so a rollback runs the exact same images).
 services:
   giftly:
-    # ":4" follows fixes and features within 4.x (never a breaking 5.0). Set GIFTLY_TAG in .env
-    # to pin an exact version (e.g. 4.0.0) or to "latest".
-    image: ghcr.io/dfloureiro/giftly:${GIFTLY_TAG:-4}
+    # ":5" follows fixes and features within 5.x (never a breaking 6.0). Set GIFTLY_TAG in .env
+    # to pin an exact version (e.g. 5.0.0) or to "latest".
+    image: ghcr.io/dfloureiro/giftly:${GIFTLY_TAG:-5}
     # build: .            # uncomment to build locally instead
     restart: unless-stopped
     env_file: .env        # Giftly's settings only

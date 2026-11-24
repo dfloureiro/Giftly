@@ -159,7 +159,7 @@ if [ -f compose.yaml ]; then
   current=$(sha compose.yaml)
   if [ ! -f .compose.sha256 ] || [ "$current" != "$(cat .compose.sha256)" ]; then
     case "$current" in
-      10f10e1706af00a29972946527f578b49e38d052bd8f90f8d84fdff8bf2d7fce|9d43d63e5d4eddc1f90dc0af7e3732057adfbab1ba7eb7d2705dc2c8a86d658e|26383f047c300561b626778df8fa31cde2e0c28000ddef5aa588e999b0f8d698|6833f6f60b58fc87c48f2c5ef88f8ed18acc877d4d7ae4f1d248f2a7d50d00e6) ;;
+      10f10e1706af00a29972946527f578b49e38d052bd8f90f8d84fdff8bf2d7fce|9d43d63e5d4eddc1f90dc0af7e3732057adfbab1ba7eb7d2705dc2c8a86d658e|26383f047c300561b626778df8fa31cde2e0c28000ddef5aa588e999b0f8d698|6833f6f60b58fc87c48f2c5ef88f8ed18acc877d4d7ae4f1d248f2a7d50d00e6|9ef514f9cdfdf9ee3d2ff93deb8dda44f706c1f6f45172725c2298bc7986f9b4) ;;
       *) cp compose.yaml "compose.yaml.local-$SNAP_NAME"
          say "Note: your compose.yaml had local changes. It is now managed by install.sh; your version is kept"
          say "  as compose.yaml.local-$SNAP_NAME. Move your changes to compose.override.yaml." ;;
@@ -323,7 +323,7 @@ fi
 
 # --- Resolve the images to digests (downloads them; the current version keeps running) -------
 GIFTLY_TAG=${GIFTLY_TAG:-$(sed -n 's/^GIFTLY_TAG=//p' .env | tail -n 1)}
-GIFTLY_TAG=${GIFTLY_TAG:-4}
+GIFTLY_TAG=${GIFTLY_TAG:-5}
 GIFTLY_REF="${GIFTLY_IMAGE:-ghcr.io/dfloureiro/giftly}:$GIFTLY_TAG"
 CLOUDFLARED_REF=$(awk '/^  cloudflared:/{c=1} c && /^    image:/{print $2; exit}' .compose.template)
 pin_images .compose.template '' ''   # the release's compose.yaml, still with tags

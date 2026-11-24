@@ -7,7 +7,7 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 WORK=$(mktemp -d)
 REG=127.0.0.1:5556
-export GIFTLY_REPO_RAW="file://$ROOT" GIFTLY_YES=1 GIFTLY_READY_TRIES=30 GIFTLY_IMAGE="$REG/giftly" GIFTLY_TAG=4
+export GIFTLY_REPO_RAW="file://$ROOT" GIFTLY_YES=1 GIFTLY_READY_TRIES=30 GIFTLY_IMAGE="$REG/giftly" GIFTLY_TAG=5
 BASE=http://127.0.0.1:3000
 fails=0
 ok() { printf 'ok   %s\n' "$*"; }
@@ -30,8 +30,8 @@ resum() { # resum DIR ARCHIVE: rewrite the checksums of an unpacked backup and p
 }
 
 docker run -d --name giftly-test-registry-bk -p "$REG:5000" registry:2 >/dev/null
-docker build -q -t "$REG/giftly:4" "$ROOT" >/dev/null
-i=0; until docker push -q "$REG/giftly:4" >/dev/null 2>&1; do i=$((i + 1)); [ "$i" -lt 20 ] || { echo "registry didn't start"; exit 1; }; sleep 1; done
+docker build -q -t "$REG/giftly:5" "$ROOT" >/dev/null
+i=0; until docker push -q "$REG/giftly:5" >/dev/null 2>&1; do i=$((i + 1)); [ "$i" -lt 20 ] || { echo "registry didn't start"; exit 1; }; sleep 1; done
 
 mkdir -p "$WORK/g"
 (cd "$WORK" && GIFTLY_DIR=g ADMIN_USERNAME=bk sh "$ROOT/install.sh") > "$WORK/install.log" 2>&1 || { cat "$WORK/install.log"; exit 1; }
