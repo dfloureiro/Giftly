@@ -146,7 +146,7 @@ After logging in (at `/login`) you land on **Occasions**. The main menu (a bar a
 
 **Occasions** · **People** · **Lists** · **My wishlist**
 
-Your **Profile**, **Notifications** (channels and reminders), the **Admins** and *Log out* are in the account menu (your initials, top right). Every screen has its main action at the top (*+ New occasion*, *+ New person*, *+ New list*, *+ Add to the wishlist*, and *+ Add a gift* in a list).
+Your **Profile**, **Notifications** (channels and reminders), the **Admins** and *Log out* are in the account menu (your initials, top right). Every screen has its main action at the top (*+ New occasion*, *+ New person*, *+ New list*, *+ Add to the wishlist*, and *+ Add a gift* in a list). A page's settings and rarer actions are in its **⚙️ menu**: a list (settings, new link, delete), an occasion (edit, duplicate for next year, delete), a person (edit, delete) and your wishlist (who can see it). Every detail page has a *←* link back to where you came from.
 
 - **Occasions:** *Upcoming* shows the next 60 days as cards ("Christmas: 6 of 18 missing", "Ana's birthday: no gift yet"); from 1 November that Christmas is pinned on top. *All* lists every occasion and birthday by year (everyone's birthday this year, and earlier birthdays that had gifts). *+ New occasion* creates Christmas or any other occasion.
 - **People:** everyone you give gifts to, with search. Each person's page has everything about them: their wishlist, their upcoming occasions, the gift history by year and occasion, and the actions *I'll give it* and *Create a list from this wishlist*.
@@ -155,7 +155,7 @@ Your **Profile**, **Notifications** (channels and reminders), the **Admins** and
 
 ## Wishlists
 
-Every admin has a personal wishlist (*My wishlist*): what they'd like to receive, in order of preference, with link, notes, and the shop's image and price, as for list gifts. Removing an item asks why: *I bought it*, *I don't want it any more*, or *I received it*. The other admins see it on that admin's page in **People** (unless it's private).
+Every admin has a personal wishlist (*My wishlist*): what they'd like to receive, in order of preference, with link, notes, and the shop's image and price, as for list gifts. Removing an item asks why: *I bought it*, *I don't want it any more*, or *I received it*. Removed and received items stay in a history, where you can put them back or delete them for good (lists that had them keep their copy). The other admins see it on that admin's page in **People** (unless it's private).
 
 For people who aren't admins (children, grandparents…), the admins keep a **wishlist of ideas** on their page: everyone who can see the person can add, edit and reorder ideas. Tick *Only for me* to keep an idea **private**: it goes into your own private ideas for that person, which only you see. An admin's page can also have ideas for them, next to their own wishlist; they never see those.
 

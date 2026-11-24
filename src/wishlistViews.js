@@ -77,7 +77,10 @@ export function ownWishlistPage(ctx, { wishlist, active, history, error }) {
   return page(ctx, {
     title: ctx.t('wish.mine'),
     body: h`
-${pageHead(ctx, ctx.t('wish.mineTitle'), { href: '/admin/wishlist/new', label: ctx.t('wish.addToWishlist') })}
+${pageHead(ctx, h`${ctx.t('wish.mineTitle')}${wishlist.visibility === 'private' ? h` <span class="badge private">🔒 ${ctx.t('give.private')}</span>` : ''}`,
+  { href: '/admin/wishlist/new', label: ctx.t('wish.addToWishlist') },
+  ['shared', 'private'].map((v) => ({ post: '/admin/wishlist/visibility', extra: `<input type="hidden" name="visibility" value="${v}">`,
+    label: `${wishlist.visibility === v ? '✓ ' : ''}${ctx.t(v === 'shared' ? 'wish.vis.admins' : 'wish.vis.private')}` })))}
 <p class="small muted">${ctx.t('wish.mineIntro')}</p>
 ${error ? h`<div class="flash flash-error" role="alert">${error}</div>` : ''}
 
@@ -97,26 +100,13 @@ ${active.length ? h`<ul class="items admin-items" data-sortable="/admin/wishlist
   </li>`)}
 </ul>` : h`<p class="empty">${ctx.t('wish.empty')}</p>`}
 
-<section class="card">
-  <h2>${ctx.t('give.visibility')}</h2>
-  <form method="post" action="/admin/wishlist/visibility" class="row">
-    ${csrfField(ctx)}
-    <label class="grow">
-      <select name="visibility">
-        <option value="shared"${wishlist.visibility === 'shared' ? raw(' selected') : ''}>${ctx.t('wish.vis.admins')}</option>
-        <option value="private"${wishlist.visibility === 'private' ? raw(' selected') : ''}>${ctx.t('wish.vis.private')}</option>
-      </select>
-    </label>
-    <button type="submit" class="secondary">${ctx.t('admin.save')}</button>
-  </form>
-</section>
-
 ${history.length ? h`<section>
   <details>
     <summary><strong>${ctx.t('wish.history')}</strong> <span class="muted small">(${history.length})</span></summary>
     <ul class="plain">
       ${history.map((it) => h`<li class="row"><span class="grow">${it.title} <span class="muted small">· ${ctx.t(`wish.reason.${it.removed_reason}`)}</span></span>
-        ${postButton(ctx, `/admin/wishlist/items/${it.id}/restore`, ctx.t('wish.restore'), { cls: 'link small' })}</li>`)}
+        ${postButton(ctx, `/admin/wishlist/items/${it.id}/restore`, ctx.t('wish.restore'), { cls: 'link small' })}
+        ${postButton(ctx, `/admin/wishlist/items/${it.id}/delete`, ctx.t('admin.delete'), { cls: 'link small danger', confirm: ctx.t('wish.deleteForever') })}</li>`)}
     </ul>
   </details>
 </section>` : ''}`,
@@ -213,18 +203,20 @@ ${addForm ? h`<details class="add-gift add-wish">
 ${editable && history.length ? h`<details>
   <summary class="small">${ctx.t('wish.history')} (${history.length})</summary>
   <ul class="plain">${history.map((it) => h`<li class="row"><span class="grow">${it.title} <span class="muted small">· ${ctx.t(`wish.reason.${it.removed_reason}`)}</span></span>
-    ${postButton(ctx, `/admin/wishlist/items/${it.id}/restore`, ctx.t('wish.restore'), { cls: 'link small' })}</li>`)}</ul>
+    ${postButton(ctx, `/admin/wishlist/items/${it.id}/restore`, ctx.t('wish.restore'), { cls: 'link small' })}
+    ${postButton(ctx, `/admin/wishlist/items/${it.id}/delete`, ctx.t('admin.delete'), { cls: 'link small danger', confirm: ctx.t('wish.deleteForever') })}</li>`)}</ul>
 </details>` : ''}`;
 }
 
 /** "Maria's wishlist" (hers), "Ideas for Maria" (kept by the admins) or "Your private ideas for Maria". */
 export const wishTitle = (ctx, w) => ctx.t(w.kind === 'own' ? 'wish.ofName' : w.owner_id ? 'wish.myPrivateIdeas' : 'wish.ideasFor', { name: w.owner_name });
 
-export function newListPage(ctx, { wishlist: w, groups, error }) {
+export function newListPage(ctx, { wishlist: w, groups, error, back = '/admin/people' }) {
   const onlyPrivate = groups.some((g) => g.w.kind === 'ideas' && g.w.owner_id);
-  return page(ctx, {
+  return layout(ctx, {
     title: ctx.t('wish.createList'),
     body: h`
+${adminHeader(ctx, back, `← ${w.owner_name}`)}
 <h1>${ctx.t('wish.createList')}</h1>
 <section class="card">
   ${error ? h`<div class="flash flash-error" role="alert">${error}</div>` : ''}

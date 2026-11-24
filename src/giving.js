@@ -86,7 +86,9 @@ export const people = {
     return true;
   },
   get(uid, id) {
-    return db.prepare(`SELECT p.* FROM people p WHERE p.id = $id AND ${personVisible('p')}`).get({ uid, id }) ?? null;
+    return db.prepare(`SELECT p.*,
+        EXISTS (SELECT 1 FROM person_favorites f WHERE f.user_id = $uid AND f.person_id = p.id) AS favorite
+      FROM people p WHERE p.id = $id AND ${personVisible('p')}`).get({ uid, id }) ?? null;
   },
   /** `f.user_id` is only set by the admin-record helpers below (never from a form). */
   create(uid, f) {

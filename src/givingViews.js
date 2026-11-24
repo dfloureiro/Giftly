@@ -1,5 +1,9 @@
 // Views for occasions, people and the gifts to give them (admin only).
 import { h, raw, layout, csrfField, postButton, adminHeader, uploadField, birthdayFields, pageHead, formPage } from './views.js';
+
+/** Back to the Occasions view a page was opened from ("Upcoming" unless it says "all"). */
+const occasionsBack = (ctx) => (ctx.url.searchParams.get('from') === 'all' ? '/admin/occasions?view=all' : '/admin/occasions');
+const fromAll = (ctx) => (ctx.url.searchParams.get('from') === 'all' ? 'from=all' : '');
 import { config } from './config.js';
 import { STATUSES, VISIBILITIES, daysBetween, today } from './giving.js';
 import { wishSection } from './wishlistViews.js';
@@ -239,7 +243,7 @@ function newChristmasButton(ctx, year) {
 /** Occasions: "Upcoming" (the home page: the next 60 days as cards) or "All" (grouped by year). */
 export function occasionsPage(ctx, { view, q = '', entries, pinned, season, christmasYear, christmas, hasPeople, all }) {
   const tabs = subnav(ctx, [['/admin/occasions', 'give.upcoming', 'upcoming'], ['/admin/occasions?view=all', 'give.all', 'all']], view);
-  const head = h`${pageHead(ctx, ctx.t('nav.occasions'), { href: '/admin/occasions/new', label: ctx.t('give.newOccasion') })}${tabs}`;
+  const head = h`${pageHead(ctx, ctx.t('nav.occasions'), { href: `/admin/occasions/new${view === 'all' ? '?from=all' : ''}`, label: ctx.t('give.newOccasion') })}${tabs}`;
   if (view === 'all') {
     const years = [];
     for (const e of all) {
@@ -250,7 +254,7 @@ export function occasionsPage(ctx, { view, q = '', entries, pinned, season, chri
     const row = (e) => {
       const isB = e.kind === 'birthday';
       const name = isB ? e.person.name : e.occasion.name;
-      const href = isB ? `/admin/people/${e.person.id}#year-${e.year}` : `/admin/occasions/${e.occasion.id}`;
+      const href = isB ? `/admin/people/${e.person.id}#year-${e.year}` : `/admin/occasions/${e.occasion.id}?from=all`;
       const what = isB
         ? h`🎂 ${ctx.t('give.birthdayOf', { name })}${e.age ? h` <span class="muted">(${e.age})</span>` : ''} ${privateBadge(ctx, e.person)}`
         : h`${e.occasion.type === 'christmas' ? '🎄' : '📅'} ${name} ${privateBadge(ctx, e.occasion)}`;
@@ -289,7 +293,7 @@ export function newOccasionPage(ctx, { people, christmasYear, christmas, form = 
   return layout(ctx, {
     title: ctx.t('give.newOccasion'),
     body: h`
-${adminHeader(ctx, '/admin/occasions?view=all', `← ${ctx.t('nav.occasions')}`)}
+${adminHeader(ctx, occasionsBack(ctx), `← ${ctx.t('nav.occasions')}`)}
 <h1>${ctx.t('give.newOccasion')}</h1>
 ${!christmas ? h`<section class="card">
   <h2>🎄 ${ctx.t('give.christmasName', { year: christmasYear })}</h2>
@@ -383,7 +387,7 @@ export function newPersonPage(ctx, { form = {}, error }) {
   });
 }
 
-export function personPage(ctx, { person, next, history, choices, others = [], personForm, personError, wish, soon = [], giveChoices = [], preselect = '' }) {
+export function personPage(ctx, { person, next, history, choices, others = [], wish, soon = [], giveChoices = [], preselect = '' }) {
   const back = `/admin/people/${person.id}`;
   // Group the history by year → occasion, newest first.
   const groups = [];
@@ -403,10 +407,15 @@ export function personPage(ctx, { person, next, history, choices, others = [], p
   const years = [...new Set(groups.map((g) => g.year))];
   const age = next && person.birth_year ? next.year - person.birth_year : null;
   const ideasArgs = { choices: giveChoices, preselect, editable: true, personId: person.id, back };
-  return page(ctx, {
+  return layout(ctx, {
     title: person.name,
     body: h`
-<h1>${favoriteButton(ctx, person, back)} ${person.name} ${privateBadge(ctx, person)}</h1>
+${adminHeader(ctx, '/admin/people', `← ${ctx.t('give.people')}`)}
+${pageHead(ctx, h`${favoriteButton(ctx, person, back)} ${person.name} ${privateBadge(ctx, person)}`, null, [
+  { href: `/admin/people/${person.id}/edit`, label: ctx.t('give.editPerson') },
+  person.user_id ? { note: ctx.t('people.cantDeleteAdmin') }
+    : { post: `/admin/people/${person.id}/delete`, label: ctx.t('give.deletePerson'), confirm: ctx.t('give.deletePersonConfirm', { name: person.name }), danger: true },
+])}
 <p class="muted">${next ? h`🎂 ${ctx.t('give.birthdayOn', { date: fmtDay(ctx, next.date, { year: true }) })}${age ? h` · ${ctx.t('give.turns', { age })}` : ''}` : ctx.t('give.noBirthday')}
   ${person.gives_christmas ? h` · 🎄 ${ctx.t('give.givesChristmas')}` : ''}</p>
 ${person.user_id ? h`<p class="small muted">👤 ${ctx.t('people.isAdmin', { name: person.name })}</p>` : ''}
@@ -453,21 +462,7 @@ ${wish.mine ? h`
     <ul class="gifts">${grp.gifts.map((g) => giftRow(ctx, g, { back, others, forPerson: person.id }))}</ul>`)}`)
   : h`<p class="empty">${ctx.t('give.noGiftsYet')}</p>`}
 </section>
-
-<section class="card">
-  <details${personError ? raw(' open') : ''}>
-    <summary><strong>${ctx.t('give.editPerson')}</strong></summary>
-    ${personError ? h`<div class="flash flash-error" role="alert">${personError}</div>` : ''}
-    <form method="post" action="/admin/people/${person.id}" class="stack">
-      ${csrfField(ctx)}
-      ${personFields(ctx, { ...(personForm || person), user_id: person.user_id }, { canSetVisibility: isOwner(ctx, person) })}
-      <button type="submit" class="primary">${ctx.t('admin.save')}</button>
-    </form>
-    <hr>
-    ${person.user_id ? h`<p class="small muted">${ctx.t('people.cantDeleteAdmin')}</p>`
-      : postButton(ctx, `/admin/people/${person.id}/delete`, ctx.t('give.deletePerson'), { cls: 'danger', confirm: ctx.t('give.deletePersonConfirm', { name: person.name }) })}
-  </details>
-</section>`,
+`,
   });
 }
 
@@ -476,8 +471,9 @@ function pickFromWishlist(ctx, person, occasionValue) {
   return h`<p class="small"><a href="/admin/people/${person.id}?occasion=${encodeURIComponent(occasionValue)}#wishlist">🎀 ${ctx.t('wish.pickFromWishlist')}</a></p>`;
 }
 
-export function checklistPage(ctx, { occasion, rows, orphans, total, done, spent, onlyMissing, candidates, occasionForm, occasionError }) {
+export function checklistPage(ctx, { occasion, rows, orphans, total, done, spent, onlyMissing, candidates }) {
   const back = `/admin/occasions/${occasion.id}${onlyMissing ? '?missing=1' : ''}`;
+  const keep = fromAll(ctx); // "from=all" survives the "only missing" filter
   const shown = onlyMissing ? rows.filter((r) => !r.done) : rows;
   const pct = total ? Math.round((done / total) * 100) : 0;
   const participants = rows.map((r) => r.person);
@@ -486,9 +482,12 @@ export function checklistPage(ctx, { occasion, rows, orphans, total, done, spent
   return layout(ctx, {
     title: occasion.name,
     body: h`
-${adminHeader(ctx, '/admin/occasions', `← ${ctx.t('nav.occasions')}`)}
-<h1>${occasion.type === 'christmas' ? '🎄' : '📅'} ${occasion.name} ${privateBadge(ctx, occasion)}</h1>
-${postButton(ctx, `/admin/occasions/${occasion.id}/duplicate`, `⧉ ${ctx.t('give.duplicate', { year: Number(occasion.date.slice(0, 4)) + 1 })}`, { cls: 'link small' })}
+${adminHeader(ctx, occasionsBack(ctx), `← ${ctx.t('nav.occasions')}`)}
+${pageHead(ctx, h`${occasion.type === 'christmas' ? '🎄' : '📅'} ${occasion.name} ${privateBadge(ctx, occasion)}`, null, [
+  { href: `/admin/occasions/${occasion.id}/edit`, label: ctx.t('give.editOccasion') },
+  { post: `/admin/occasions/${occasion.id}/duplicate`, label: `⧉ ${ctx.t('give.duplicate', { year: Number(occasion.date.slice(0, 4)) + 1 })}` },
+  { post: `/admin/occasions/${occasion.id}/delete`, label: ctx.t('give.deleteOccasion'), confirm: ctx.t('give.deleteOccasionConfirm'), danger: true },
+])}
 <p class="muted">${fmtDay(ctx, occasion.date, { year: true })}</p>
 
 <section class="card progress-card">
@@ -496,8 +495,8 @@ ${postButton(ctx, `/admin/occasions/${occasion.id}/duplicate`, `⧉ ${ctx.t('giv
   <progress max="${total || 1}" value="${done}" aria-label="${ctx.t('give.progress', { done, total })}">${pct}%</progress>
   ${spent.length ? h`<p class="small">${ctx.t('give.spent', { total: moneyList(ctx, spent) })}</p>` : ''}
   <p class="small">${onlyMissing
-    ? h`<a href="/admin/occasions/${occasion.id}">${ctx.t('give.showAll')}</a>`
-    : h`<a href="/admin/occasions/${occasion.id}?missing=1">${ctx.t('give.onlyMissing')}</a>`}</p>
+    ? h`<a href="/admin/occasions/${occasion.id}${keep ? `?${keep}` : ''}">${ctx.t('give.showAll')}</a>`
+    : h`<a href="/admin/occasions/${occasion.id}?missing=1${keep ? `&${keep}` : ''}">${ctx.t('give.onlyMissing')}</a>`}</p>
 </section>
 
 ${!rows.length ? h`<p class="empty">${ctx.t('give.noParticipants')}</p>` : ''}
@@ -524,26 +523,36 @@ ${candidates.length ? h`<section class="card">
     <button type="submit" class="secondary">${ctx.t('admin.add')}</button>
   </form>
 </section>` : ''}
+`,
+  });
+}
 
-<section class="card">
-  <details${occasionError ? raw(' open') : ''}>
-    <summary><strong>${ctx.t('give.editOccasion')}</strong></summary>
-    ${occasionError ? h`<div class="flash flash-error" role="alert">${occasionError}</div>` : ''}
-    <form method="post" action="/admin/occasions/${occasion.id}" class="stack">
+export function editPersonPage(ctx, { person, form, error }) {
+  return formPage(ctx, {
+    title: ctx.t('give.editPerson'), back: `/admin/people/${person.id}`, backLabel: person.name, error,
+    body: h`<form method="post" action="/admin/people/${person.id}" class="stack">
+      ${csrfField(ctx)}
+      ${personFields(ctx, { ...(form || person), user_id: person.user_id }, { canSetVisibility: isOwner(ctx, person) })}
+      <button type="submit" class="primary">${ctx.t('admin.save')}</button>
+    </form>`,
+  });
+}
+
+export function editOccasionPage(ctx, { occasion, form, error }) {
+  const v = form || occasion;
+  return formPage(ctx, {
+    title: ctx.t('give.editOccasion'), back: `/admin/occasions/${occasion.id}`, backLabel: occasion.name, error,
+    body: h`<form method="post" action="/admin/occasions/${occasion.id}" class="stack">
       ${csrfField(ctx)}
       <label>${ctx.t('give.occasionName')}
-        <input name="name" required maxlength="120" value="${(occasionForm || occasion).name}">
+        <input name="name" required maxlength="120" value="${v.name}">
       </label>
       <label>${ctx.t('give.date')}
-        <input name="date" type="date" required value="${(occasionForm || occasion).date}">
+        <input name="date" type="date" required value="${v.date}">
       </label>
-      ${visibilityField(ctx, (occasionForm || occasion).visibility, { disabled: !isOwner(ctx, occasion) })}
+      ${visibilityField(ctx, v.visibility, { disabled: !isOwner(ctx, occasion) })}
       <button type="submit" class="primary">${ctx.t('admin.save')}</button>
-    </form>
-    <hr>
-    ${postButton(ctx, `/admin/occasions/${occasion.id}/delete`, ctx.t('give.deleteOccasion'), { cls: 'danger', confirm: ctx.t('give.deleteOccasionConfirm') })}
-  </details>
-</section>`,
+    </form>`,
   });
 }
 

@@ -103,6 +103,11 @@ const WISHES = [
     }
     await phone.locator('.account-menu > summary').click();
     await phone.screenshot({ path: `${OUT}/check-m-menu.png` });
+    for (const [path, name] of [[listUrl.replace(B, ''), 'list-gear'], [person.replace(B, ''), 'person-gear']]) {
+      await phone.goto(`${B}${path}`);
+      await phone.locator('.gear-menu > summary').click();
+      await phone.screenshot({ path: `${OUT}/check-m-${name}.png` });
+    }
   }
   await browser.close();
 })().catch((e) => { console.error(e); process.exit(1); });

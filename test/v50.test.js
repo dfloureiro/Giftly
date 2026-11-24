@@ -130,10 +130,10 @@ test("each admin gets a record the others see; it never reaches them (people, oc
   const bd = birthdayIn(9);
   const saved = await maria.post('/admin/profile', { name: 'Maria', username: 'maria50', ...bd }, { from: '/admin/profile' });
   assert.match(saved.location, /m=saved/);
-  const record = await text(diogo, `/admin/people/${mariaP}`);
+  const record = await text(diogo, `/admin/people/${mariaP}/edit`);
   assert.match(record, new RegExp(`name="birthday_day"[^>]*value="${bd.birthday_day}"`));
   await diogo.post(`/admin/people/${mariaP}`, { name: 'Maria', birthday_day: '2', birthday_month: '2', visibility: 'shared' }, { from: `/admin/people/${mariaP}` });
-  assert.match(await text(diogo, `/admin/people/${mariaP}`), new RegExp(`name="birthday_day"[^>]*value="${bd.birthday_day}"`), 'the profile wins');
+  assert.match(await text(diogo, `/admin/people/${mariaP}/edit`), new RegExp(`name="birthday_day"[^>]*value="${bd.birthday_day}"`), 'the profile wins');
   assert.match(await text(diogo, '/admin/occasions'), /Maria&#39;s birthday/, 'the others are reminded of it');
   assert.ok(!(await text(maria, '/admin/occasions')).includes('Maria&#39;s birthday'), 'she is not');
 
@@ -470,4 +470,107 @@ test('"All" occasions include birthdays: everyone\'s this year, and earlier ones
   // Your own birthday is never there (your record is invisible to you).
   assert.ok(!(await text(maria, '/admin/occasions?view=all')).includes('Maria&#39;s birthday'));
   assert.match(await text(diogo, '/admin/occasions?view=all'), /Maria&#39;s birthday/);
+});
+
+// ---------- 5.2: back links, ⚙️ menus, deleting from the history ----------
+
+test('back links go where you came from; the star on a person page shows the favourite', async () => {
+  const backOf = (html) => /<p class="backline"><a href="([^"]+)"/.exec(html)?.[1];
+  assert.equal(backOf(await text(diogo, '/admin/occasions/new')), '/admin/occasions');
+  assert.equal(backOf(await text(diogo, '/admin/occasions/new?from=all')), '/admin/occasions?view=all');
+  assert.match(await text(diogo, '/admin/occasions?view=all'), /href="\/admin\/occasions\/new\?from=all"/);
+  const y = new Date().getFullYear() + 9;
+  const occ = idFrom((await diogo.post('/admin/occasions/christmas', { year: String(y) }, { from: '/admin/occasions' })).location, 'occasions');
+  assert.match(await text(diogo, '/admin/occasions?view=all'), new RegExp(`href="/admin/occasions/${occ}\\?from=all"`));
+  assert.equal(backOf(await text(diogo, `/admin/occasions/${occ}?from=all`)), '/admin/occasions?view=all');
+  assert.equal(backOf(await text(diogo, `/admin/occasions/${occ}`)), '/admin/occasions');
+  assert.match(await text(diogo, `/admin/occasions/${occ}?from=all`), new RegExp(`/admin/occasions/${occ}\\?missing=1&amp;from=all`));
+
+  const list = idFrom((await diogo.post('/admin/lists', { title: 'Back list' }, { from: '/admin/lists/new' })).location, 'lists');
+  assert.equal(backOf(await text(diogo, `/admin/lists/${list}`)), '/admin/lists');
+  const p = await addPerson(diogo, { name: 'Star Person' });
+  assert.equal(backOf(await text(diogo, `/admin/people/${p}`)), '/admin/people');
+  assert.equal(backOf(await text(diogo, `/admin/people/${p}/new-list`.replace('/new-list', '')) ), '/admin/people');
+  const w = await wishlistOf(diogo, 'Star Person');
+  assert.equal(backOf(await text(diogo, `/admin/wishlists/${w}/new-list`)), `/admin/people/${p}`);
+
+  await diogo.post(`/admin/people/${p}/favorite`, { on: '1', back: `/admin/people/${p}` }, { from: `/admin/people/${p}` });
+  const page = await text(diogo, `/admin/people/${p}`);
+  assert.match(page, /class="fav on" aria-pressed="true"/, 'filled star on the person page');
+  assert.match(page, /name="on" value="0"/, 'pressing it again removes the favourite');
+});
+
+test('settings live in a ⚙️ menu: list, occasion, person and my wishlist', async () => {
+  const menu = (html) => html.slice(html.indexOf('class="account-menu gear-menu"'), html.indexOf('</details>', html.indexOf('gear-menu')));
+  const list = idFrom((await diogo.post('/admin/lists', { title: 'Gear list' }, { from: '/admin/lists/new' })).location, 'lists');
+  const lp = await text(diogo, `/admin/lists/${list}`);
+  assert.match(menu(lp), new RegExp(`href="/admin/lists/${list}/edit"`));
+  assert.match(menu(lp), new RegExp(`action="/admin/lists/${list}/new-link"`));
+  assert.match(menu(lp), new RegExp(`action="/admin/lists/${list}/delete"`));
+  assert.ok(!lp.includes(`action="/admin/lists/${list}" `) && !lp.includes(`action="/admin/lists/${list}" class`), 'no settings form at the bottom');
+  assert.match(lp, /<details>\s*<summary><strong>Guests<\/strong> <span class="muted small">\(0\)<\/span>/, 'guests folded, with their count');
+  assert.match(await text(diogo, `/admin/lists/${list}/edit`), new RegExp(`action="/admin/lists/${list}"`));
+  const bad = await diogo.post(`/admin/lists/${list}`, { title: '' }, { from: `/admin/lists/${list}/edit` });
+  assert.equal(bad.status, 400);
+  assert.match(bad.text, /List settings/);
+
+  const priv = idFrom((await diogo.post('/admin/lists', { title: 'Gear private', visibility: 'private' }, { from: '/admin/lists/new' })).location, 'lists');
+  assert.equal((await maria.get(`/admin/lists/${priv}/edit`)).status, 404);
+
+  const occ = idFrom((await diogo.post('/admin/occasions', { name: 'Gear party', date: '2099-01-01' }, { from: '/admin/occasions/new' })).location, 'occasions');
+  const op = await text(diogo, `/admin/occasions/${occ}`);
+  assert.match(menu(op), new RegExp(`href="/admin/occasions/${occ}/edit"`));
+  assert.match(menu(op), new RegExp(`action="/admin/occasions/${occ}/duplicate"`));
+  assert.match(menu(op), new RegExp(`action="/admin/occasions/${occ}/delete"`));
+  assert.match(await text(diogo, `/admin/occasions/${occ}/edit`), /name="date"[^>]*value="2099-01-01"/);
+  assert.equal((await diogo.post(`/admin/occasions/${occ}`, { name: '', date: '2099-01-01' }, { from: `/admin/occasions/${occ}/edit` })).status, 400);
+
+  const p = await addPerson(diogo, { name: 'Gear Person' });
+  const pp = await text(diogo, `/admin/people/${p}`);
+  assert.match(menu(pp), new RegExp(`href="/admin/people/${p}/edit"`));
+  assert.match(menu(pp), new RegExp(`action="/admin/people/${p}/delete"`));
+  const mariaP = await personId(diogo, 'Maria');
+  const adminMenu = menu(await text(diogo, `/admin/people/${mariaP}`));
+  assert.ok(!adminMenu.includes('/delete'), "an admin's record has no delete");
+  assert.match(adminMenu, /can&#39;t be deleted/);
+  assert.equal((await bea.get(`/admin/people/${(await personId(diogo, 'Bea'))}/edit`)).status, 404, 'never your own record');
+
+  const wp = menu(await text(bea, '/admin/wishlist'));
+  assert.match(wp, /✓ Visible to the other admins/);
+  await bea.post('/admin/wishlist/visibility', { visibility: 'private' }, { from: '/admin/wishlist' });
+  assert.match(menu(await text(bea, '/admin/wishlist')), /✓ Only me/);
+  await bea.post('/admin/wishlist/visibility', { visibility: 'shared' }, { from: '/admin/wishlist' });
+});
+
+test('removed and received items can be deleted for good — the same answer whether reserved or not', async () => {
+  const a = await addOwnWish(bea, 'Delete me reserved');
+  const b = await addOwnWish(bea, 'Delete me free');
+  const w = await wishlistOf(diogo, 'Bea');
+  const list = await listFrom(diogo, w, [a], 'Delete test');
+  const guest = await joinList(server.base, list.token, 'Deleter');
+  await guest.post(`/l/${list.token}/pick/${list.itemIds[0]}`, {}, { from: `/l/${list.token}` });
+  for (const id of [a, b]) await bea.post(`/admin/wishlist/items/${id}/remove`, { reason: 'bought' }, { from: '/admin/wishlist' });
+  const page = await text(bea, '/admin/wishlist');
+  assert.match(page, new RegExp(`action="/admin/wishlist/items/${a}/delete"`));
+  const ra = await bea.post(`/admin/wishlist/items/${a}/delete`, {}, { from: '/admin/wishlist' });
+  const rb = await bea.post(`/admin/wishlist/items/${b}/delete`, {}, { from: '/admin/wishlist' });
+  assert.equal(ra.status, rb.status);
+  assert.equal(ra.location, rb.location, 'identical answers');
+  const after = await text(bea, '/admin/wishlist');
+  assert.ok(!after.includes('Delete me reserved') && !after.includes('Delete me free'));
+  assert.match(await text(diogo, `/admin/lists/${list.id}`), /Delete me reserved[\s\S]*Reserved by Deleter/, 'the list keeps its copy and the reservation');
+
+  // Active items can't be deleted this way (they are removed first, with a reason).
+  const c = await addOwnWish(bea, 'Still active');
+  await bea.post(`/admin/wishlist/items/${c}/delete`, {}, { from: '/admin/wishlist' });
+  assert.match(await text(bea, '/admin/wishlist'), /Still active/);
+  assert.equal((await diogo.post(`/admin/wishlist/items/${c}/delete`, {}, { from: '/admin/lists' })).status, 404, "not someone else's");
+
+  // Ideas: whoever can edit them.
+  const kid = await addPerson(diogo, { name: 'History Kid' });
+  const idea = await addIdea(diogo, kid, 'Old idea');
+  await diogo.post(`/admin/wishlist/items/${idea}/remove`, { reason: 'unwanted' }, { from: `/admin/people/${kid}` });
+  assert.match(await text(bea, `/admin/people/${kid}`), new RegExp(`/admin/wishlist/items/${idea}/delete`));
+  await bea.post(`/admin/wishlist/items/${idea}/delete`, {}, { from: `/admin/people/${kid}` });
+  assert.ok(!(await text(diogo, `/admin/people/${kid}`)).includes('Old idea'));
 });

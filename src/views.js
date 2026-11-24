@@ -104,7 +104,7 @@ function layout(ctx, { title, body, bodyClass = '' }) {
 <link rel="manifest" href="/site.webmanifest">
 <meta name="theme-color" content="#C8553D">
 <meta name="apple-mobile-web-app-title" content="${site}">
-<link rel="stylesheet" href="/static/style.css?v=25">
+<link rel="stylesheet" href="/static/style.css?v=26">
 <script src="/static/app.js?v=6" defer></script>
 </head>
 <body class="${bodyClass}">
@@ -340,9 +340,24 @@ function listFields(ctx, v, { withArchived = false, canSetVisibility = true } = 
     ${withArchived ? h`<label class="check"><input type="checkbox" name="archived" value="1"${v.archived ? raw(' checked') : ''}> ${ctx.t('admin.archived')}</label>` : ''}`;
 }
 
-/** A page title with its main action on the right ("＋ New …"), the same on every screen. */
-export function pageHead(ctx, title, action = null) {
-  return h`<div class="page-head"><h1>${title}</h1>${action ? h`<a class="button primary" href="${action.href}">＋ ${action.label}</a>` : ''}</div>`;
+/**
+ * The ⚙️ menu of a page (its settings and rare actions): items are links ({ href, label }),
+ * one-button forms ({ post, label, confirm, danger, extra }) or a note ({ note }).
+ */
+export function gearMenu(ctx, items) {
+  return h`<details class="account-menu gear-menu">
+    <summary class="gear" aria-label="${ctx.t('nav.options')}" title="${ctx.t('nav.options')}">⚙️</summary>
+    <div class="menu">
+      ${items.filter(Boolean).map((it) => it.href ? h`<a href="${it.href}">${it.label}</a>`
+        : it.post ? postButton(ctx, it.post, it.label, { cls: `link${it.danger ? ' danger' : ''}`, confirm: it.confirm, extra: it.extra || '' })
+        : h`<p class="small muted menu-note">${it.note}</p>`)}
+    </div>
+  </details>`;
+}
+
+/** A page title with its main action on the right ("＋ New …") and/or its ⚙️ menu, the same on every screen. */
+export function pageHead(ctx, title, action = null, gear = null) {
+  return h`<div class="page-head"><h1>${title}</h1>${action || gear ? h`<div class="head-actions">${action ? h`<a class="button primary" href="${action.href}">＋ ${action.label}</a>` : ''}${gear ? gearMenu(ctx, gear) : ''}</div>` : ''}</div>`;
 }
 
 /** A page with one form: "New list", "New person", "Add a gift"… */
@@ -485,17 +500,19 @@ function uploadField(ctx) {
   </div>`;
 }
 
-export function adminListPage(ctx, { list, allItems: everything, allGuests, baseUrl, listForm, listError, adminNames = {}, sourceOwner = '', changedIds = new Set() }) {
-  const lf = { ...list, ...(listForm || {}) };
+export function adminListPage(ctx, { list, allItems: everything, allGuests, baseUrl, adminNames = {}, sourceOwner = '', changedIds = new Set() }) {
   const allItems = everything.filter((i) => !i.pending);
   const pending = everything.filter((i) => i.pending);
-  const canSetVisibility = list.owner_id == null || list.owner_id === ctx.user.id;
   return layout(ctx, {
     title: list.title,
     body: h`
-${adminHeader(ctx)}
-<h1>${list.title} ${list.archived ? h`<span class="badge">${ctx.t('admin.archivedBadge')}</span>` : ''}
-  ${list.visibility === 'private' ? h`<span class="badge private">🔒 ${ctx.t('give.private')}</span>` : ''}</h1>
+${adminHeader(ctx, '/admin/lists', `← ${ctx.t('nav.lists')}`)}
+${pageHead(ctx, h`${list.title} ${list.archived ? h`<span class="badge">${ctx.t('admin.archivedBadge')}</span>` : ''}
+  ${list.visibility === 'private' ? h`<span class="badge private">🔒 ${ctx.t('give.private')}</span>` : ''}`, null, [
+  { href: `/admin/lists/${list.id}/edit`, label: ctx.t('admin.editList') },
+  { post: `/admin/lists/${list.id}/new-link`, label: ctx.t('admin.newLink'), confirm: ctx.t('admin.newLinkConfirm') },
+  { post: `/admin/lists/${list.id}/delete`, label: ctx.t('admin.deleteList'), confirm: ctx.t('admin.deleteListConfirm'), danger: true },
+])}
 ${list.source_wishlist_id ? h`<p class="small muted">🎀 ${ctx.t('wish.listFrom', { name: sourceOwner })}</p>` : ''}
 <section class="share card">
   <p>${ctx.t('admin.shareHint')}</p>
@@ -503,7 +520,6 @@ ${list.source_wishlist_id ? h`<p class="small muted">🎀 ${ctx.t('wish.listFrom
     <input readonly value="${`${baseUrl}/l/${list.token}`}" id="share-link" aria-label="${ctx.t('admin.shareLink')}">
     <button type="button" class="primary" data-copy="#share-link" data-copied="${ctx.t('admin.copied')}">${ctx.t('admin.copy')}</button>
   </div>
-  ${postButton(ctx, `/admin/lists/${list.id}/new-link`, ctx.t('admin.newLink'), { cls: 'link small', confirm: ctx.t('admin.newLinkConfirm') })}
 </section>
 
 <section>
@@ -543,8 +559,9 @@ ${pending.length ? h`<section class="card">
   </ul>
 </section>` : ''}
 
-<section>
-  <h2>${ctx.t('admin.guests')}</h2>
+<section class="card">
+  <details>
+  <summary><strong>${ctx.t('admin.guests')}</strong> <span class="muted small">(${allGuests.length})</span></summary>
   ${allGuests.length ? h`
   <table>
     <thead><tr><th>${ctx.t('login.name')}</th><th>${ctx.t('admin.picks')}</th><th>${ctx.t('admin.lastSeen')}</th><th></th></tr></thead>
@@ -555,19 +572,20 @@ ${pending.length ? h`<section class="card">
       </tr>`)}
     </tbody>
   </table>` : h`<p class="empty">${ctx.t('admin.noGuests')}</p>`}
-</section>
-
-<section class="card">
-  <h2>${ctx.t('admin.editList')}</h2>
-  ${listError ? h`<div class="flash flash-error" role="alert">${listError}</div>` : ''}
-  <form method="post" action="/admin/lists/${list.id}" class="stack">
-    ${csrfField(ctx)}
-    ${listFields(ctx, lf, { withArchived: true, canSetVisibility })}
-    <button type="submit" class="primary">${ctx.t('admin.save')}</button>
-  </form>
-  <hr>
-  ${postButton(ctx, `/admin/lists/${list.id}/delete`, ctx.t('admin.deleteList'), { cls: 'danger', confirm: ctx.t('admin.deleteListConfirm') })}
+  </details>
 </section>`,
+  });
+}
+
+export function editListPage(ctx, { list, form, error }) {
+  const canSetVisibility = list.owner_id == null || list.owner_id === ctx.user.id;
+  return formPage(ctx, {
+    title: ctx.t('admin.editList'), back: `/admin/lists/${list.id}`, backLabel: list.title, error,
+    body: h`<form method="post" action="/admin/lists/${list.id}" class="stack">
+    ${csrfField(ctx)}
+    ${listFields(ctx, { ...list, ...(form || {}) }, { withArchived: true, canSetVisibility })}
+    <button type="submit" class="primary">${ctx.t('admin.save')}</button>
+  </form>`,
   });
 }
 

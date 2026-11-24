@@ -166,6 +166,19 @@ export const wishItems = {
     });
   },
 
+  /**
+   * Delete a removed or received item for good (claims go with it; list copies stay, unlinked).
+   * Active items are never deleted here: they are removed first, with a reason. Returns true if deleted.
+   */
+  delete(id) {
+    return tx(() => {
+      if (!db.prepare("SELECT 1 FROM wishlist_items WHERE id = ? AND status != 'active'").get(id)) return false;
+      db.prepare('DELETE FROM list_item_overrides WHERE item_id IN (SELECT id FROM items WHERE wishlist_item_id = ?)').run(id);
+      db.prepare('DELETE FROM wishlist_items WHERE id = ?').run(id);
+      return true;
+    });
+  },
+
   /** Back on the active wishlist (e.g. removed by mistake). */
   restore(id) {
     db.prepare("UPDATE wishlist_items SET status = 'active', removed_reason = NULL, removed_at = NULL, updated_at = ? WHERE id = ?").run(now(), id);

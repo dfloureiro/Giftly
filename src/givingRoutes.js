@@ -157,10 +157,16 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
     const person = people.get(uid, Number(ctx.params.id));
     if (!person) return notFound(ctx);
     const { f, error } = personForm(ctx.body);
-    if (error) return renderPerson(ctx, person, { personForm: f, personError: ctx.t(error) }, 400);
+    if (error) return html(ctx.res, gv.editPersonPage(ctx, { person, form: f, error: ctx.t(error) }), 400);
     people.update(uid, person.id, f);
     if (f.gives_christmas && !person.gives_christmas) joinCurrentChristmas(uid, person.id);
     redirect(ctx.res, `/admin/people/${person.id}?m=saved`);
+  }, A);
+
+  route('GET', '/admin/people/:id/edit', (ctx) => {
+    const person = people.get(uidOf(ctx), Number(ctx.params.id));
+    if (!person) return notFound(ctx);
+    html(ctx.res, gv.editPersonPage(ctx, { person }));
   }, A);
 
   route('POST', '/admin/people/:id/delete', (ctx) => {
@@ -254,9 +260,15 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
     const occasion = occasions.get(uid, Number(ctx.params.id));
     if (!occasion) return notFound(ctx);
     const { f, error } = occasionForm(ctx);
-    if (error) return renderChecklist(ctx, occasion, { occasionForm: f, occasionError: ctx.t(error) }, 400);
+    if (error) return html(ctx.res, gv.editOccasionPage(ctx, { occasion, form: f, error: ctx.t(error) }), 400);
     occasions.update(uid, occasion.id, f);
     redirect(ctx.res, `/admin/occasions/${occasion.id}?m=saved`);
+  }, A);
+
+  route('GET', '/admin/occasions/:id/edit', (ctx) => {
+    const occasion = occasions.get(uidOf(ctx), Number(ctx.params.id));
+    if (!occasion) return notFound(ctx);
+    html(ctx.res, gv.editOccasionPage(ctx, { occasion }));
   }, A);
 
   route('POST', '/admin/occasions/:id/delete', (ctx) => {

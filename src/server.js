@@ -716,9 +716,14 @@ route('POST', '/admin/lists/:id', (ctx) => {
   const list = loadList(ctx);
   if (!list) return;
   const { form, error } = validateList(ctx, ctx.body);
-  if (error) return renderAdminList(ctx, list, { listForm: form, listError: error }, 400);
+  if (error) return html(ctx.res, views.editListPage(ctx, { list, form, error }), 400);
   lists.update(list.id, form, ctx.user.id);
   redirect(ctx.res, `/admin/lists/${list.id}?m=saved`);
+}, { auth: 'admin' });
+
+route('GET', '/admin/lists/:id/edit', (ctx) => {
+  const list = loadList(ctx);
+  if (list) html(ctx.res, views.editListPage(ctx, { list }));
 }, { auth: 'admin' });
 
 route('POST', '/admin/lists/:id/new-link', (ctx) => {

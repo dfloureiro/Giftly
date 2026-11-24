@@ -1,5 +1,7 @@
 const strings = {
   pt: {
+    "nav.options": "Opções",
+    "wish.deleteForever": "Apagar de vez? As listas que o tinham mantêm-no, mas deixa de estar ligado à wishlist.",
     "give.newPerson": "Nova pessoa",
     "lists.fromWishlistHint": "Para criar uma lista a partir de uma wishlist, abre a pessoa em Pessoas.",
     "give.allHint": "Ocasiões e aniversários por ano: os aniversários deste ano de toda a gente e, dos anos anteriores, os que tiveram prendas.",
@@ -427,7 +429,7 @@ const strings = {
     'admin.save': 'Guardar',
     'admin.archivedBadge': 'arquivada',
     'admin.items': 'Prendas',
-    'admin.guests': 'Pessoas',
+    'admin.guests': 'Convidados',
     'admin.reserved': 'reservadas',
     'admin.open': 'Abrir',
     'admin.back': '← Listas',
@@ -474,6 +476,8 @@ const strings = {
     'error.home': 'Ir para o início',
   },
   en: {
+    "nav.options": "Options",
+    "wish.deleteForever": "Delete it for good? Lists that had it keep it, no longer linked to the wishlist.",
     "give.newPerson": "New person",
     "lists.fromWishlistHint": "To create a list from a wishlist, open the person in People.",
     "give.allHint": "Occasions and birthdays by year: everyone's birthday this year and, for earlier years, those that had gifts.",
@@ -901,7 +905,7 @@ const strings = {
     'admin.save': 'Save',
     'admin.archivedBadge': 'archived',
     'admin.items': 'Gifts',
-    'admin.guests': 'People',
+    'admin.guests': 'Guests',
     'admin.reserved': 'reserved',
     'admin.open': 'Open',
     'admin.back': '← Lists',

@@ -151,6 +151,15 @@ export function registerWishlistRoutes({ route, html, redirect, notFound, clean,
     setImmediate(() => tellWatchers(watchers, wi, reason, ctx.user));
   }, A);
 
+  // Removed and received items can be deleted for good. Same answer whether anyone had reserved
+  // it (the owner learns nothing); lists keep their copy, no longer linked to the wishlist.
+  route('POST', '/admin/wishlist/items/:id/delete', (ctx) => {
+    const wi = ownItem(ctx);
+    if (!wi) return;
+    if (wishItems.delete(wi.id)) releaseImage(wi.image_file);
+    redirect(ctx.res, at(ctx.wishlist, 'deleted', 'wishlist'));
+  }, A);
+
   route('POST', '/admin/wishlist/items/:id/restore', (ctx) => {
     const wi = ownItem(ctx);
     if (!wi) return;
@@ -197,13 +206,16 @@ export function registerWishlistRoutes({ route, html, redirect, notFound, clean,
     return people.list(uid).find((p) => p.user_id === w.owner_id) ?? null;
   }
 
+  /** The person page a wishlist belongs to (as `uid` sees it). */
+  const backTo = (uid, w) => { const p = recipientOf(uid, w); return p ? `/admin/people/${p.id}` : '/admin/people'; };
+
   /** The items to choose from: this wishlist and its sibling (an admin's own + ideas for them). */
   const groupsFor = (uid, w) => siblingWishlists(uid, w).map((x) => ({ w: x, items: wishItems.othersView(x.id, uid) }));
 
   route('GET', '/admin/wishlists/:id/new-list', (ctx) => {
     const w = loadOthers(ctx);
     if (!w) return;
-    html(ctx.res, wv.newListPage(ctx, { wishlist: w, groups: groupsFor(ctx.user.id, w) }));
+    html(ctx.res, wv.newListPage(ctx, { wishlist: w, groups: groupsFor(ctx.user.id, w), back: backTo(ctx.user.id, w) }));
   }, A);
 
   route('POST', '/admin/wishlists/:id/new-list', (ctx) => {
@@ -211,7 +223,7 @@ export function registerWishlistRoutes({ route, html, redirect, notFound, clean,
     if (!w) return;
     const title = clean(ctx.body.title, 120);
     if (!title) {
-      return html(ctx.res, wv.newListPage(ctx, { wishlist: w, groups: groupsFor(ctx.user.id, w), error: ctx.t('admin.titleRequired') }), 400);
+      return html(ctx.res, wv.newListPage(ctx, { wishlist: w, groups: groupsFor(ctx.user.id, w), back: backTo(ctx.user.id, w), error: ctx.t('admin.titleRequired') }), 400);
     }
     const id = createListFromWishlist(ctx.user.id, w.id, {
       title,
