@@ -1,6 +1,6 @@
 // Wishlists: Sam's wishlist, Emma's list from it, a guest pick and "I'll give it".
 const { chromium } = require('playwright');
-const { B, OUT, desktop, mobile, art, login } = require('./common.js');
+const { B, OUT, desktop, mobile, art, login, phoneOf, phoneShot } = require('./common.js');
 
 const WISHES = [
   { t: 'Noise-cancelling earbuds', u: 'https://shop.example/earbuds', e: '🎧', bg: ['#dbeafe', '#bfdbfe'] },
@@ -61,13 +61,10 @@ const WISHES = [
   await item.locator('form button[type=submit]').click();
   await emma.waitForURL(/m=giving/);
 
-  await sam.goto(`${B}/admin/wishlist`);
-  await sam.screenshot({ path: `${OUT}/wishlist-own.png`, fullPage: true });
-  await emma.goto(samPage);
-  await emma.screenshot({ path: `${OUT}/wishlist-others.png`, fullPage: true });
-  await emma.goto(listUrl);
-  await emma.setViewportSize({ width: 980, height: 1250 });
-  await emma.screenshot({ path: `${OUT}/wishlist-list.png` });
+  await phoneShot(await phoneOf(browser, sam), '/admin/wishlist', 'wishlist-own.png');
+  const emmaPhone = await phoneOf(browser, emma);
+  await phoneShot(emmaPhone, samPage.replace(B, ''), 'wishlist-others.png', { selector: '#wishlist' });
+  await phoneShot(emmaPhone, listUrl.replace(B, ''), 'wishlist-list.png', { selector: 'section > .page-head' });
 
   // Ideas Emma keeps for Sam (an admin) on Sam's record in People — Sam never sees them.
   const person = samPage;
@@ -103,6 +100,9 @@ const WISHES = [
     }
     await phone.locator('.account-menu > summary').click();
     await phone.screenshot({ path: `${OUT}/check-m-menu.png` });
+    await phone.goto(`${B}/lang?to=pt&back=/admin/wishlist`);
+    await phone.screenshot({ path: `${OUT}/check-m-pt.png` });
+    await phone.goto(`${B}/lang?to=en&back=/admin/wishlist`);
     for (const [path, name] of [[listUrl.replace(B, ''), 'list-gear'], [person.replace(B, ''), 'person-gear']]) {
       await phone.goto(`${B}${path}`);
       await phone.locator('.gear-menu > summary').click();

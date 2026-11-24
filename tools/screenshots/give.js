@@ -107,10 +107,10 @@ const PEOPLE = [
   await m.addCookies(await ctx.cookies());
   const mp = await m.newPage();
   await mp.goto(`${B}/admin/occasions`);
-  await mp.screenshot({ path: `${OUT}/give-upcoming.png`, fullPage: true });
+  await mp.screenshot({ path: `${OUT}/give-upcoming.png` });
   await mp.goto(`${B}/admin/occasions/${xmas.cur}`);
-  await mp.screenshot({ path: `${OUT}/give-checklist.png`, fullPage: true });
+  await mp.screenshot({ path: `${OUT}/give-checklist.png` });
   await mp.goto(`${B}/admin/people/${ids.Leo}`);
-  await mp.screenshot({ path: `${OUT}/give-person.png`, fullPage: true });
+  await mp.screenshot({ path: `${OUT}/give-person.png` });
   await browser.close();
 })().catch((e) => { console.error(e); process.exit(1); });

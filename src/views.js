@@ -104,7 +104,7 @@ function layout(ctx, { title, body, bodyClass = '' }) {
 <link rel="manifest" href="/site.webmanifest">
 <meta name="theme-color" content="#C8553D">
 <meta name="apple-mobile-web-app-title" content="${site}">
-<link rel="stylesheet" href="/static/style.css?v=26">
+<link rel="stylesheet" href="/static/style.css?v=27">
 <script src="/static/app.js?v=6" defer></script>
 </head>
 <body class="${bodyClass}">
@@ -287,7 +287,7 @@ const NAV = [
   { href: '/admin/occasions', key: 'nav.occasions', icon: 'occasions', on: (p) => p.startsWith('/admin/occasions') },
   { href: '/admin/people', key: 'nav.people', icon: 'people', on: (p) => p.startsWith('/admin/people') || p.startsWith('/admin/wishlists/') },
   { href: '/admin/lists', key: 'nav.lists', icon: 'lists', on: (p) => p.startsWith('/admin/lists') || p.startsWith('/admin/items') },
-  { href: '/admin/wishlist', key: 'nav.myWishlist', short: 'nav.wishlistShort', icon: 'wishlist', on: (p) => p === '/admin/wishlist' || p.startsWith('/admin/wishlist/') },
+  { href: '/admin/wishlist', key: 'nav.myWishlist', icon: 'wishlist', on: (p) => p === '/admin/wishlist' || p.startsWith('/admin/wishlist/') },
 ];
 
 /** "Maria Ana Silva" → "MS". */

@@ -28,4 +28,20 @@ async function login(page, username, password) {
 const ymd = (d) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Lisbon', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
 const inDays = (n) => ymd(new Date(Date.now() + n * 86_400_000));
 
-module.exports = { B, OUT, desktop, mobile, art, login, inDays };
+/** A phone page signed in as whoever `from` (a page) is: the README shows the app as on a phone. */
+async function phoneOf(browser, from, opts = {}) {
+  const ctx = await browser.newContext({ ...mobile, ...opts });
+  await ctx.addCookies(await from.context().cookies());
+  const page = await ctx.newPage();
+  page.on('dialog', (d) => d.accept());
+  return page;
+}
+
+/** One phone screen of `path` (optionally scrolled to `selector`), like a real phone shows it. */
+async function phoneShot(page, path, file, { selector } = {}) {
+  await page.goto(`${B}${path}`);
+  if (selector) await page.locator(selector).first().evaluate((el) => window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - 12));
+  await page.screenshot({ path: `${OUT}/${file}` });
+}
+
+module.exports = { B, OUT, desktop, mobile, art, login, inDays, phoneOf, phoneShot };

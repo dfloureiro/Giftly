@@ -59,7 +59,7 @@ test('navigation: Occasions · People · Lists · My wishlist (top and bottom ba
   assert.deepEqual([...top.matchAll(/href="([^"]+)"/g)].map((m) => m[1]), ['/admin/occasions', '/admin/people', '/admin/lists', '/admin/wishlist']);
   const bottom = page.slice(page.indexOf('class="bottom-nav"'), page.indexOf('</nav>', page.indexOf('class="bottom-nav"')));
   assert.deepEqual([...bottom.matchAll(/href="([^"]+)"/g)].map((m) => m[1]), ['/admin/occasions', '/admin/people', '/admin/lists', '/admin/wishlist']);
-  assert.match(bottom, /<span>Wishlist<\/span>/, 'short label on the phone');
+  assert.match(bottom, /<span>My wishlist<\/span>/, 'the full name on the phone too');
   assert.match(bottom, /<svg class="nav-icon"/);
   const menu = page.slice(page.indexOf('class="account-menu"'), page.indexOf('</details>', page.indexOf('class="account-menu"')));
   assert.deepEqual([...menu.matchAll(/href="([^"]+)"/g)].map((m) => m[1]), ['/admin/profile', '/admin/notifications', '/admin/users']);

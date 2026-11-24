@@ -15,51 +15,49 @@ Self-hosted gift lists for families and friends.
 - **Wishlists:** every admin keeps a personal wishlist, and the admins keep a wishlist of ideas for everyone else (shared, or private to one admin). Create guest lists from them (linked and kept in sync) or take an item with "I'll give it"; an admin never sees what was reserved or planned for them.
 - **Gifts to give:** keep track of the gifts *you* give: people, birthdays, Christmas and other occasions, with a checklist per occasion, what each person got last year, shared or private entries per admin, and **reminders** when a gift is still missing.
 
-<p align="center">
-  <img src="docs/screenshots/guest-list.png" alt="A guest's view of a gift list: their own pick at the top, available gifts with images, prices and shop links below" width="720">
-</p>
+Made for the phone first: this is how guests and admins see it.
 
 <p align="center">
   <img src="docs/screenshots/guest-flow.gif" alt="A guest opens the list link on a phone, types their name, scrolls to a plant and taps “I'll give this one”; it moves to their picks" width="240">
   &nbsp;
-  <img src="docs/screenshots/join-mobile.png" alt="Joining a list on a phone: only a name is needed" width="240">
+  <img src="docs/screenshots/guest-list.png" alt="A guest's view of a gift list on a phone: their own pick at the top, available gifts with images, prices and shop links below" width="240">
   &nbsp;
   <img src="docs/screenshots/guest-mobile-dark.png" alt="The gift list on a phone in dark mode" width="240">
 </p>
 
 <details>
-<summary><strong>Admin view</strong></summary>
+<summary><strong>Occasions and people</strong></summary>
 <p align="center">
-  <img src="docs/screenshots/admin-list.png" alt="Admin page of a list: share link, every gift with who reserved it and when, and edit/release/reorder/delete actions" width="720">
-</p>
-<p align="center">
-  <img src="docs/screenshots/notifications.png" alt="Notification settings in your profile: which events to be notified about, and ntfy, Telegram and webhook channels" width="480">
-</p>
-<p align="center">
-  <img src="docs/screenshots/admins.png" alt="Admins page: every admin account, new-password links, and invite links to add another admin" width="600">
-</p>
-</details>
-
-<details>
-<summary><strong>Wishlists</strong></summary>
-<p align="center">
-  <img src="docs/screenshots/wishlist-own.png" alt="Your own wishlist: items in order of preference, with no hint of what was reserved" width="480">
-  &nbsp;
-  <img src="docs/screenshots/wishlist-others.png" alt="Another admin's wishlist: available or already chosen items, I'll give it, and create a list from it" width="480">
-</p>
-<p align="center">
-  <img src="docs/screenshots/wishlist-list.png" alt="A private guest list created from someone's wishlist, with linked items, hide here, and items reserved elsewhere" width="600">
-</p>
-</details>
-
-<details>
-<summary><strong>Gifts to give</strong></summary>
-<p align="center">
-  <img src="docs/screenshots/give-upcoming.png" alt="Upcoming occasions in the next 60 days: birthdays and Christmas, each with whether there is already a gift" width="240">
+  <img src="docs/screenshots/give-upcoming.png" alt="Occasions, the home page: the next 60 days as cards, Christmas pinned on top, each with how many gifts are missing" width="240">
   &nbsp;
   <img src="docs/screenshots/give-checklist.png" alt="Christmas checklist on a phone: progress, total spent, each person's gifts with status, and what they got last year" width="240">
   &nbsp;
-  <img src="docs/screenshots/give-person.png" alt="A person's page: next birthday and age, and their gift history by occasion" width="240">
+  <img src="docs/screenshots/give-person.png" alt="A person's page: next birthday and age, their wishlist, upcoming occasions and gift history" width="240">
+</p>
+</details>
+
+<details>
+<summary><strong>Lists and wishlists</strong></summary>
+<p align="center">
+  <img src="docs/screenshots/admin-list.png" alt="Admin page of a list on a phone: every gift with who reserved it, and add, edit, release and reorder actions" width="240">
+  &nbsp;
+  <img src="docs/screenshots/wishlist-own.png" alt="Your own wishlist: items in order of preference, with no hint of what was reserved" width="240">
+  &nbsp;
+  <img src="docs/screenshots/wishlist-others.png" alt="Another admin's wishlist on their page: available or already chosen items, I'll give it, and create a list from it" width="240">
+</p>
+<p align="center">
+  <img src="docs/screenshots/wishlist-list.png" alt="A private guest list created from someone's wishlist, with linked items, hide here, and items reserved elsewhere" width="240">
+  &nbsp;
+  <img src="docs/screenshots/join-mobile.png" alt="Joining a list on a phone: only a name is needed" width="240">
+</p>
+</details>
+
+<details>
+<summary><strong>Settings</strong></summary>
+<p align="center">
+  <img src="docs/screenshots/notifications.png" alt="Notifications: which events to be notified about, ntfy, Telegram and webhook channels, and reminders" width="240">
+  &nbsp;
+  <img src="docs/screenshots/admins.png" alt="Admins page: every admin account, new-password links, and invite links to add another admin" width="240">
 </p>
 </details>
 

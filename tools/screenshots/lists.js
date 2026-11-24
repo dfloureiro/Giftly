@@ -1,7 +1,7 @@
 // Guest lists: a demo list with gifts, two guests, and screenshots of guest and admin pages.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
-const { B, OUT, desktop, mobile, art, login } = require('./common.js');
+const { B, OUT, desktop, mobile, art, login, phoneOf, phoneShot } = require('./common.js');
 
 const ITEMS = [
   { emoji: '🎧', bg: ['#dbeafe', '#bfdbfe'], title: 'Wireless headphones', url: 'https://shop.example/headphones', notes: 'Over-ear, black or navy' },
@@ -73,23 +73,21 @@ async function phase2(browser, admin) {
   const tom = await guest('Uncle Tom', desktop, ['Wireless headphones']);
   await tom.ctx.close();
   await recordGuestFlow(browser, share);
-  const rose = await guest('Grandma Rose', desktop, ['Wool scarf']);
-  await rose.p.screenshot({ path: `${OUT}/guest-list.png`, fullPage: true });
+  const rose = await guest('Grandma Rose', mobile, ['Wool scarf']);
+  await rose.p.screenshot({ path: `${OUT}/guest-list.png` });
   await rose.ctx.close();
   const dark = await guest('Grandma Rose', { ...mobile, colorScheme: 'dark' }, []);
   await dark.p.screenshot({ path: `${OUT}/guest-mobile-dark.png` });
   await dark.ctx.close();
 
-  await admin.goto(listUrl);
-  await admin.setViewportSize({ width: 980, height: 1350 });
-  await admin.screenshot({ path: `${OUT}/admin-list.png` });
+  const phone = await phoneOf(browser, admin);
+  await phoneShot(phone, listUrl.replace(B, ''), 'admin-list.png', { selector: 'section > .page-head' });
 
   await admin.goto(`${B}/admin/notifications`);
-  await admin.setViewportSize({ width: 980, height: 900 });
   await admin.fill('input[name=ntfy_url]', 'https://ntfy.example/giftly-demo');
   await admin.locator('#notifications button[type=submit]').first().click();
   await admin.waitForURL(/notifySaved/);
-  await admin.locator('#notifications').screenshot({ path: `${OUT}/notifications.png` });
+  await phoneShot(phone, '/admin/notifications', 'notifications.png');
 
   // Admins page: Lucas joins through an invite link.
   await admin.goto(`${B}/admin/users`);
@@ -102,9 +100,7 @@ async function phase2(browser, admin) {
   await other.fill('input[name=password]', 'demo-password-2');
   await other.fill('input[name=confirm]', 'demo-password-2');
   await other.click('button[type=submit]');
-  await admin.goto(`${B}/admin/users`);
-  await admin.setViewportSize({ width: 980, height: 620 });
-  await admin.screenshot({ path: `${OUT}/admins.png` });
+  await phoneShot(phone, '/admin/users', 'admins.png');
 }
 
 /**

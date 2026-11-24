@@ -367,3 +367,4 @@ form.give-now { margin: 0; }
 .gear-menu .menu button.link.danger { color: var(--err); }
 .menu-note { margin: 4px 12px 8px; max-width: 240px; }
 .page-head h1 { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+@media (max-width: 640px) { .bottom-nav a span { text-align: center; line-height: 1.15; } }
