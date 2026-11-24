@@ -228,3 +228,27 @@ test('admins mark a gift they were asked to buy as bought; the guest sees it and
   assert.match(r.location, /m=reservationChanged/);
   assert.match((await admin.get(`/admin/lists/${id}`)).text, /Reserved by Ana <span class="badge buyer-us">/);
 });
+
+test('a list created from a wishlist can ask who buys too', async () => {
+  const person = Number(/\/admin\/people\/(\d+)/.exec((await admin.post('/admin/people', { visibility: 'shared', name: 'Leo Buyer' }, { from: '/admin/people' })).location)[1]);
+  await admin.post('/admin/wishlist/items', { person_id: String(person), title: 'Kite' }, { from: `/admin/people/${person}` });
+  const wid = Number(/\/admin\/wishlists\/(\d+)\/new-list/.exec((await admin.get(`/admin/people/${person}/new-list`)).location)[1]);
+  const form = (await admin.get(`/admin/wishlists/${wid}/new-list`)).text;
+  assert.match(form, /name="ask_buyer" value="1">/, 'offered, unticked by default');
+
+  const create = async (title, ask) => {
+    const pairs = [['_csrf', await admin.csrf(`/admin/wishlists/${wid}/new-list`)], ['title', title], ['visibility', 'shared'], ['auto_add_new', '1']];
+    for (const [, item] of form.matchAll(/name="items" value="(\d+)"/g)) pairs.push(['items', item]);
+    if (ask) pairs.push(['ask_buyer', '1']);
+    const r = await admin.request(`/admin/wishlists/${wid}/new-list`, { method: 'POST', form: pairs });
+    return Number(/\/admin\/lists\/(\d+)/.exec(r.location)[1]);
+  };
+  const asks = await create('Leo asks', true);
+  const plain = await create('Leo plain', false);
+  assert.match((await admin.get(`/admin/lists/${asks}/edit`)).text, /name="ask_buyer" value="1" checked/);
+  assert.doesNotMatch((await admin.get(`/admin/lists/${plain}/edit`)).text, /name="ask_buyer" value="1" checked/);
+
+  const token = /\/l\/([A-Za-z0-9_-]{22})/.exec((await admin.get(`/admin/lists/${asks}`)).text)[1];
+  const ana = await joinList(server.base, token, 'Ana');
+  assert.match((await ana.get(`/l/${token}`)).text, /name="buyer" value="us"/);
+});

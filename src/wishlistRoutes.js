@@ -230,6 +230,7 @@ export function registerWishlistRoutes({ route, html, redirect, notFound, clean,
       description: cleanMultiline(ctx.body.description, 2000),
       visibility: ctx.body.visibility === 'shared' ? 'shared' : 'private',
       auto_add_new: ctx.body.auto_add_new === '1',
+      ask_buyer: ctx.body.ask_buyer === '1',
       itemIds: [].concat(ctx.body.items ?? []).map(Number),
     });
     if (!id) return notFound(ctx);

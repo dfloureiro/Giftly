@@ -374,14 +374,14 @@ export const listIdsFrom = (wishlistId) =>
  * Create a guest list from a wishlist (and its siblings: an admin's own + the ideas for them),
  * with the chosen items in wishlist order. Returns the new list id, or null if not allowed.
  */
-export function createListFromWishlist(uid, wishlistId, { title, description = '', visibility = 'private', auto_add_new = true, itemIds = null }) {
+export function createListFromWishlist(uid, wishlistId, { title, description = '', visibility = 'private', auto_add_new = true, ask_buyer = false, itemIds = null }) {
   const w = wishlists.get(wishlistId);
   if (!wishlists.viewableByOther(uid, w)) return null; // never from your own wishlist (you could never see it)
   const sources = siblingWishlists(uid, w);
   // Private ideas only ever go into a private list (LIST_VISIBLE also hides it from everyone else).
   if (sources.some((x) => x.kind === 'ideas' && x.owner_id != null)) visibility = 'private';
   return tx(() => {
-    const id = lists.create({ title, description, owner_id: uid, visibility, source_wishlist_id: w.id, auto_add_new });
+    const id = lists.create({ title, description, owner_id: uid, visibility, source_wishlist_id: w.id, auto_add_new, ask_buyer });
     const chosen = itemIds ? new Set(itemIds.map(Number)) : null;
     for (const src of sources) {
       db.prepare('INSERT OR IGNORE INTO list_sources (list_id, wishlist_id) VALUES (?, ?)').run(id, src.id);
