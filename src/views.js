@@ -104,7 +104,7 @@ function layout(ctx, { title, body, bodyClass = '' }) {
 <link rel="manifest" href="/site.webmanifest">
 <meta name="theme-color" content="#C8553D">
 <meta name="apple-mobile-web-app-title" content="${site}">
-<link rel="stylesheet" href="/static/style.css?v=24">
+<link rel="stylesheet" href="/static/style.css?v=25">
 <script src="/static/app.js?v=6" defer></script>
 </head>
 <body class="${bodyClass}">
@@ -340,12 +340,31 @@ function listFields(ctx, v, { withArchived = false, canSetVisibility = true } = 
     ${withArchived ? h`<label class="check"><input type="checkbox" name="archived" value="1"${v.archived ? raw(' checked') : ''}> ${ctx.t('admin.archived')}</label>` : ''}`;
 }
 
-export function adminDashboard(ctx, { all, form, error }) {
+/** A page title with its main action on the right ("＋ New …"), the same on every screen. */
+export function pageHead(ctx, title, action = null) {
+  return h`<div class="page-head"><h1>${title}</h1>${action ? h`<a class="button primary" href="${action.href}">＋ ${action.label}</a>` : ''}</div>`;
+}
+
+/** A page with one form: "New list", "New person", "Add a gift"… */
+export function formPage(ctx, { title, back, backLabel, error, body }) {
   return layout(ctx, {
-    title: ctx.t('admin.title'),
+    title,
+    body: h`
+${adminHeader(ctx, back, `← ${backLabel}`)}
+<section class="card">
+  <h1>${title}</h1>
+  ${error ? h`<div class="flash flash-error" role="alert">${error}</div>` : ''}
+  ${body}
+</section>`,
+  });
+}
+
+export function adminDashboard(ctx, { all }) {
+  return layout(ctx, {
+    title: ctx.t('nav.lists'),
     body: h`
 ${adminHeader(ctx)}
-<h1>${ctx.t('admin.lists')}</h1>
+${pageHead(ctx, ctx.t('nav.lists'), { href: '/admin/lists/new', label: ctx.t('admin.newList') })}
 ${all.length ? h`
 <ul class="lists">
   ${all.map((l) => h`<li class="${l.archived ? 'archived' : ''}">
@@ -358,16 +377,40 @@ ${all.length ? h`
     </a>
   </li>`)}
 </ul>` : h`<p class="empty">${ctx.t('admin.noLists')}</p>`}
+<p class="small muted">${ctx.t('lists.fromWishlistHint')}</p>`,
+  });
+}
 
-<section class="card">
-  <h2>${ctx.t('admin.newList')}</h2>
-  ${error ? h`<div class="flash flash-error" role="alert">${error}</div>` : ''}
-  <form method="post" action="/admin/lists" class="stack">
+export function newListFormPage(ctx, { form = {}, error }) {
+  return formPage(ctx, {
+    title: ctx.t('admin.newList'), back: '/admin/lists', backLabel: ctx.t('nav.lists'), error,
+    body: h`<form method="post" action="/admin/lists" class="stack">
     ${csrfField(ctx)}
     ${listFields(ctx, form)}
     <button type="submit" class="primary">${ctx.t('admin.create')}</button>
+  </form>`,
+  });
+}
+
+/** Add gifts to a list: one with its details, or several at once (one per line). */
+export function newItemPage(ctx, { list, form = {}, error }) {
+  return formPage(ctx, {
+    title: ctx.t('admin.addItem'), back: `/admin/lists/${list.id}`, backLabel: list.title, error,
+    body: h`<form method="post" action="/admin/lists/${list.id}/items" class="stack">
+    ${csrfField(ctx)}
+    ${itemFields(ctx, form)}
+    ${uploadField(ctx)}
+    <button type="submit" class="primary">${ctx.t('admin.add')}</button>
   </form>
-</section>`,
+  <details>
+    <summary>${ctx.t('admin.bulkAdd')}</summary>
+    <form method="post" action="/admin/lists/${list.id}/items/bulk" class="stack">
+      ${csrfField(ctx)}
+      <p class="small muted">${ctx.t('admin.bulkHint')}</p>
+      <textarea name="lines" rows="6" placeholder="${ctx.t('admin.bulkPlaceholder')}"></textarea>
+      <button type="submit" class="primary">${ctx.t('admin.add')}</button>
+    </form>
+  </details>`,
   });
 }
 
@@ -442,7 +485,7 @@ function uploadField(ctx) {
   </div>`;
 }
 
-export function adminListPage(ctx, { list, allItems: everything, allGuests, baseUrl, listForm, listError, itemError, adminNames = {}, sourceOwner = '', changedIds = new Set() }) {
+export function adminListPage(ctx, { list, allItems: everything, allGuests, baseUrl, listForm, listError, adminNames = {}, sourceOwner = '', changedIds = new Set() }) {
   const lf = { ...list, ...(listForm || {}) };
   const allItems = everything.filter((i) => !i.pending);
   const pending = everything.filter((i) => i.pending);
@@ -464,7 +507,8 @@ ${list.source_wishlist_id ? h`<p class="small muted">🎀 ${ctx.t('wish.listFrom
 </section>
 
 <section>
-  <h2>${ctx.t('admin.items')} <span class="muted small">${allItems.filter((i) => i.reserved_name).length}/${allItems.length} ${ctx.t('admin.reserved')}</span></h2>
+  <div class="page-head"><h2>${ctx.t('admin.items')} <span class="muted small">${allItems.filter((i) => i.reserved_name).length}/${allItems.length} ${ctx.t('admin.reserved')}</span></h2>
+    <a class="button primary" href="/admin/lists/${list.id}/items/new">＋ ${ctx.t('admin.addItem')}</a></div>
   ${allItems.length ? h`
   <ul class="items admin-items" data-sortable="/admin/lists/${list.id}/order">
     ${allItems.map((it, idx) => h`<li class="item ${it.reserved_name ? 'picked' : ''}" id="item-${it.id}" data-id="${it.id}">
@@ -498,26 +542,6 @@ ${pending.length ? h`<section class="card">
       ${postButton(ctx, `/admin/items/${it.id}/ignore`, ctx.t('wish.ignore'), { cls: 'secondary' })}</li>`)}
   </ul>
 </section>` : ''}
-
-<section class="card">
-  <h2>${ctx.t('admin.addItem')}</h2>
-  ${itemError ? h`<div class="flash flash-error" role="alert">${itemError}</div>` : ''}
-  <form method="post" action="/admin/lists/${list.id}/items" class="stack">
-    ${csrfField(ctx)}
-    ${itemFields(ctx, {})}
-    ${uploadField(ctx)}
-    <button type="submit" class="primary">${ctx.t('admin.add')}</button>
-  </form>
-  <details>
-    <summary>${ctx.t('admin.bulkAdd')}</summary>
-    <form method="post" action="/admin/lists/${list.id}/items/bulk" class="stack">
-      ${csrfField(ctx)}
-      <p class="small muted">${ctx.t('admin.bulkHint')}</p>
-      <textarea name="lines" rows="6" placeholder="${ctx.t('admin.bulkPlaceholder')}"></textarea>
-      <button type="submit" class="primary">${ctx.t('admin.add')}</button>
-    </form>
-  </details>
-</section>
 
 <section>
   <h2>${ctx.t('admin.guests')}</h2>

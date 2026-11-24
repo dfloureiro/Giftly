@@ -28,7 +28,7 @@ const WISHES = [
   await sam.fill('input[name=confirm]', 'demo-password-3');
   await sam.click('button[type=submit]');
   for (const w of WISHES) {
-    await sam.goto(`${B}/admin/wishlist`);
+    await sam.goto(`${B}/admin/wishlist/new`);
     const f = sam.locator('form[action="/admin/wishlist/items"]');
     await f.locator('input[name=title]').fill(w.t);
     if (w.u) await f.locator('input[name=url]').fill(w.u);
@@ -97,7 +97,7 @@ const WISHES = [
     await emma.screenshot({ path: `${OUT}/check-linked-edit.png`, fullPage: true });
     const phone = await (await browser.newContext(mobile)).newPage();
     await phone.context().addCookies(await emma.context().cookies());
-    for (const [path, name] of [['/admin/occasions', 'occasions'], ['/admin/occasions?view=all', 'occasions-all'], [person.replace(B, ''), 'person'], ['/admin/people', 'people'], ['/admin/wishlist', 'wishlist']]) {
+    for (const [path, name] of [['/admin/occasions', 'occasions'], ['/admin/occasions?view=all', 'occasions-all'], [person.replace(B, ''), 'person'], ['/admin/people', 'people'], ['/admin/wishlist', 'wishlist'], ['/admin/lists', 'lists'], [`${listUrl.replace(B, '')}/items/new`, 'add-item']]) {
       await phone.goto(`${B}${path}`);
       await phone.screenshot({ path: `${OUT}/check-m-${name}.png`, fullPage: true });
     }

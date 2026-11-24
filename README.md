@@ -146,9 +146,9 @@ After logging in (at `/login`) you land on **Occasions**. The main menu (a bar a
 
 **Occasions** · **People** · **Lists** · **My wishlist**
 
-Your **Profile**, **Notifications** (channels and reminders), the **Admins** and *Log out* are in the account menu (your initials, top right).
+Your **Profile**, **Notifications** (channels and reminders), the **Admins** and *Log out* are in the account menu (your initials, top right). Every screen has its main action at the top (*+ New occasion*, *+ New person*, *+ New list*, *+ Add to the wishlist*, and *+ Add a gift* in a list).
 
-- **Occasions:** *Upcoming* shows the next 60 days as cards ("Christmas: 6 of 18 missing", "Ana's birthday: no gift yet"); from 1 November that Christmas is pinned on top. *All* lists every occasion by year. *+ New occasion* creates Christmas or any other occasion.
+- **Occasions:** *Upcoming* shows the next 60 days as cards ("Christmas: 6 of 18 missing", "Ana's birthday: no gift yet"); from 1 November that Christmas is pinned on top. *All* lists every occasion and birthday by year (everyone's birthday this year, and earlier birthdays that had gifts). *+ New occasion* creates Christmas or any other occasion.
 - **People:** everyone you give gifts to, with search. Each person's page has everything about them: their wishlist, their upcoming occasions, the gift history by year and occasion, and the actions *I'll give it* and *Create a list from this wishlist*.
 - **Lists:** the guest lists, with their secret links (these links never change and never ask for a login).
 - **My wishlist:** only yours.

@@ -2,7 +2,7 @@
 // which applies the shared/private rule for the logged-in user (ctx.user.id).
 import { config } from './config.js';
 import {
-  people, occasions, gifts, checklist, upcoming, today, nextBirthday, validDate, occasionOptions, personUpcoming, christmasSeason,
+  people, occasions, gifts, checklist, upcoming, today, nextBirthday, validDate, occasionOptions, personUpcoming, christmasSeason, allOccasions,
   VISIBILITIES, STATUSES,
 } from './giving.js';
 import { saveImageBuffer, removeImage } from './preview.js';
@@ -59,10 +59,7 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
       christmasYear: year,
       christmas,
       hasPeople: people.list(uid).length > 0,
-      all: view === 'all' ? occasions.list(uid, { q }).map((o) => {
-        const c = checklist(uid, o);
-        return { ...o, total: c.total, done: c.done };
-      }) : [],
+      all: view === 'all' ? allOccasions(uid, { q }) : [],
       ...extra,
     }), status);
   }
@@ -104,6 +101,7 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
   }
 
   route('GET', '/admin/people', (ctx) => renderPeople(ctx), A);
+  route('GET', '/admin/people/new', (ctx) => html(ctx.res, gv.newPersonPage(ctx, {})), A);
 
   // An admin joined and a person with their name already exists: never linked alone, asked here.
   route('POST', '/admin/people/admins/:uid/link', (ctx) => {
@@ -125,7 +123,7 @@ export function registerGivingRoutes({ route, html, redirect, notFound, clean, c
 
   route('POST', '/admin/people', (ctx) => {
     const { f, error } = personForm(ctx.body);
-    if (error) return renderPeople(ctx, { form: f, error: ctx.t(error) }, 400);
+    if (error) return html(ctx.res, gv.newPersonPage(ctx, { form: f, error: ctx.t(error) }), 400);
     const id = people.create(uidOf(ctx), f);
     if (f.gives_christmas) joinCurrentChristmas(uidOf(ctx), id);
     redirect(ctx.res, `/admin/people/${id}?m=created`);

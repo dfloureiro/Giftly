@@ -100,7 +100,7 @@ test('Occasions: Upcoming (60 days, cards with their state) and All (by year); C
   assert.ok(!up.includes('Far Kid'));
   assert.ok(!up.includes(`Party ${y}`), 'not in the next 60 days');
   const all = await text(diogo, '/admin/occasions?view=all');
-  assert.match(all, new RegExp(`<h2>${y}</h2>\\s*<ul class="lists">[\\s\\S]*Party ${y}`));
+  assert.match(all, new RegExp(`<h2>${y}</h2>\\s*<ul class="upcoming compact">[\\s\\S]*Party ${y}`));
   assert.match(all, /class="subtab active" aria-current="page">All</);
   assert.ok(far && occ);
 
@@ -410,4 +410,64 @@ test('migration to 5.0: ideas move to ideas wishlists without losses; "I\'ll giv
   assert.deepEqual(linkedTo(B), ['Bruno'], 'an existing link is kept');
   assert.deepEqual(linkedTo(C), [], 'same name as an unlinked person: asked in the app, not linked alone');
   db.close();
+});
+
+// ---------- 5.0.1: one way to add things ----------
+
+test('every main screen has its "＋ New …" button on top, opening a page with the form', async () => {
+  const head = (html) => html.slice(html.indexOf('<div class="page-head">'), html.indexOf('</div>', html.indexOf('<div class="page-head">')));
+  for (const [page, href] of [['/admin/occasions', '/admin/occasions/new'], ['/admin/people', '/admin/people/new'],
+    ['/admin/lists', '/admin/lists/new'], ['/admin/wishlist', '/admin/wishlist/new']]) {
+    const html = await text(diogo, page);
+    assert.match(head(html), new RegExp(`<a class="button primary" href="${href}">＋ `), page);
+    assert.equal((await diogo.get(href)).status, 200, href);
+  }
+  assert.ok(!(await text(diogo, '/admin/lists')).includes('action="/admin/lists"'), 'no form on the index any more');
+  assert.match(await text(diogo, '/admin/lists/new'), /action="\/admin\/lists"/);
+  assert.match(await text(diogo, '/admin/people/new'), /action="\/admin\/people"/);
+  assert.match(await text(diogo, '/admin/wishlist/new'), /action="\/admin\/wishlist\/items"/);
+
+  // A list: "Add a gift" on top of its gifts, with its own page (one or many).
+  const list = idFrom((await diogo.post('/admin/lists', { title: 'Add flow' }, { from: '/admin/lists/new' })).location, 'lists');
+  assert.match(await text(diogo, `/admin/lists/${list}`), new RegExp(`href="/admin/lists/${list}/items/new"`));
+  const add = await text(diogo, `/admin/lists/${list}/items/new`);
+  assert.match(add, new RegExp(`action="/admin/lists/${list}/items"`));
+  assert.match(add, new RegExp(`action="/admin/lists/${list}/items/bulk"`));
+  assert.equal((await maria.get(`/admin/lists/${list}/items/new`)).status, 200, 'shared list: other admins too');
+  const priv = idFrom((await diogo.post('/admin/lists', { title: 'Private add', visibility: 'private' }, { from: '/admin/lists/new' })).location, 'lists');
+  assert.equal((await maria.get(`/admin/lists/${priv}/items/new`)).status, 404, 'only lists you can see');
+
+  // Mistakes come back on the same page, with what was typed.
+  const bad = await diogo.post(`/admin/lists/${list}/items`, { title: 'Bad link', url: 'javascript:alert(1)' }, { from: `/admin/lists/${list}/items/new` });
+  assert.equal(bad.status, 400);
+  assert.match(bad.text, /value="Bad link"/);
+  const noName = await diogo.post('/admin/people', { name: '', notes: 'kept' }, { from: '/admin/people/new' });
+  assert.equal(noName.status, 400);
+  assert.match(noName.text, /kept<\/textarea>/);
+  const noTitle = await diogo.post('/admin/lists', { title: '', description: 'kept too' }, { from: '/admin/lists/new' });
+  assert.equal(noTitle.status, 400);
+  assert.match(noTitle.text, /kept too/);
+  const noWish = await diogo.post('/admin/wishlist/items', { title: '', notes: 'still here' }, { from: '/admin/wishlist/new' });
+  assert.equal(noWish.status, 400);
+  assert.match(noWish.text, /value="still here"/);
+});
+
+test('"All" occasions include birthdays: everyone\'s this year, and earlier ones that had gifts', async () => {
+  const year = Number(lisbonDay(0).slice(0, 4));
+  const ana = await addPerson(diogo, { name: 'Allyear Ana', birthday_day: '15', birthday_month: '3' });
+  const old = await addPerson(diogo, { name: 'Allyear Old', birthday_day: '20', birthday_month: '7' });
+  await diogo.post('/admin/gifts', { person_id: String(old), occasion: `birthday:${year - 2}`, name: 'Old kite', status: 'given' }, { from: '/admin/lists' });
+  const all = await text(diogo, '/admin/occasions?view=all');
+  const section = (y) => all.slice(all.indexOf(`<h2>${y}</h2>`), all.indexOf('</ul>', all.indexOf(`<h2>${y}</h2>`)));
+  assert.match(section(year), /Allyear Ana&#39;s birthday/);
+  assert.match(section(year), /Allyear Old&#39;s birthday/);
+  assert.match(section(year - 2), /Allyear Old&#39;s birthday[\s\S]*has a gift/, 'an earlier birthday with a gift');
+  assert.ok(!section(year - 1).includes('Allyear'), 'earlier birthdays without gifts are left out');
+  assert.match(all, new RegExp(`href="/admin/people/${ana}#year-${year}"`));
+  const found = await text(diogo, '/admin/occasions?view=all&q=allyear%20ana');
+  assert.match(found, /Allyear Ana/);
+  assert.ok(!found.includes('Allyear Old'));
+  // Your own birthday is never there (your record is invisible to you).
+  assert.ok(!(await text(maria, '/admin/occasions?view=all')).includes('Maria&#39;s birthday'));
+  assert.match(await text(diogo, '/admin/occasions?view=all'), /Maria&#39;s birthday/);
 });

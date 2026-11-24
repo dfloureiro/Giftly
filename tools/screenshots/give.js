@@ -22,8 +22,7 @@ const PEOPLE = [
 
   const ids = {};
   for (const x of PEOPLE) {
-    await p.goto(`${B}/admin/people`);
-    await p.locator('details:has(form[action="/admin/people"]) > summary').click();
+    await p.goto(`${B}/admin/people/new`);
     const f = p.locator('form[action="/admin/people"]');
     await f.locator('input[name=name]').fill(x.name);
     await f.locator('input[name=birthday_day]').fill(String(Number(x.bd.slice(8))));
@@ -46,7 +45,7 @@ const PEOPLE = [
   }
   const xmas = {};
   await p.goto(`${B}/admin/occasions?view=all`);
-  for (const a of await p.locator('ul.lists a').all()) {
+  for (const a of await p.locator('#occasion-list a[href^="/admin/occasions/"]').all()) {
     const t = await a.innerText();
     const id = Number(/occasions\/(\d+)/.exec(await a.getAttribute('href'))[1]);
     if (t.includes(String(YEAR - 1))) xmas.last = id; else if (t.includes(String(YEAR))) xmas.cur = id;

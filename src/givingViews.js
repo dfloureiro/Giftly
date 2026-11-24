@@ -1,5 +1,5 @@
 // Views for occasions, people and the gifts to give them (admin only).
-import { h, raw, layout, csrfField, postButton, adminHeader, uploadField, birthdayFields } from './views.js';
+import { h, raw, layout, csrfField, postButton, adminHeader, uploadField, birthdayFields, pageHead, formPage } from './views.js';
 import { config } from './config.js';
 import { STATUSES, VISIBILITIES, daysBetween, today } from './giving.js';
 import { wishSection } from './wishlistViews.js';
@@ -208,7 +208,7 @@ function entryState(ctx, e) {
   if (e.kind === 'birthday') {
     return e.done ? h`<span class="pill ok">✓ ${ctx.t('give.hasGift')}</span>`
       : e.planned ? h`<span class="pill">📌 ${ctx.t('give.plannedCount', { n: e.planned })}</span>`
-      : h`<span class="pill missing">${ctx.t('give.noGift')}</span>`;
+      : h`<span class="pill ${e.past ? 'past' : 'missing'}">${ctx.t('give.noGift')}</span>`;
   }
   if (!e.total) return h`<span class="pill">${ctx.t('give.noParticipantsShort')}</span>`;
   return e.done ? h`<span class="pill ok">✓ ${ctx.t('give.allSorted')}</span>`
@@ -239,27 +239,34 @@ function newChristmasButton(ctx, year) {
 /** Occasions: "Upcoming" (the home page: the next 60 days as cards) or "All" (grouped by year). */
 export function occasionsPage(ctx, { view, q = '', entries, pinned, season, christmasYear, christmas, hasPeople, all }) {
   const tabs = subnav(ctx, [['/admin/occasions', 'give.upcoming', 'upcoming'], ['/admin/occasions?view=all', 'give.all', 'all']], view);
-  const head = h`<div class="page-head"><h1>${ctx.t('nav.occasions')}</h1><a class="button primary" href="/admin/occasions/new">＋ ${ctx.t('give.newOccasion')}</a></div>${tabs}`;
+  const head = h`${pageHead(ctx, ctx.t('nav.occasions'), { href: '/admin/occasions/new', label: ctx.t('give.newOccasion') })}${tabs}`;
   if (view === 'all') {
     const years = [];
-    for (const o of all) {
-      const y = o.date.slice(0, 4);
-      let g = years.find((x) => x.year === y);
-      if (!g) years.push(g = { year: y, list: [] });
-      g.list.push(o);
+    for (const e of all) {
+      let g = years.find((x) => x.year === e.year);
+      if (!g) years.push(g = { year: e.year, list: [] });
+      g.list.push(e);
     }
+    const row = (e) => {
+      const isB = e.kind === 'birthday';
+      const name = isB ? e.person.name : e.occasion.name;
+      const href = isB ? `/admin/people/${e.person.id}#year-${e.year}` : `/admin/occasions/${e.occasion.id}`;
+      const what = isB
+        ? h`🎂 ${ctx.t('give.birthdayOf', { name })}${e.age ? h` <span class="muted">(${e.age})</span>` : ''} ${privateBadge(ctx, e.person)}`
+        : h`${e.occasion.type === 'christmas' ? '🎄' : '📅'} ${name} ${privateBadge(ctx, e.occasion)}`;
+      return h`<li data-search="${name}" class="${e.done ? 'done' : ''}"><a href="${href}">
+    <span class="when"><strong>${fmtDay(ctx, e.date)}</strong></span>
+    <span class="what">${what}</span>
+    <span class="state">${entryState(ctx, e)}</span>
+  </a></li>`;
+    };
     return page(ctx, {
       title: ctx.t('nav.occasions'),
       body: h`${head}
-<p class="small muted">${ctx.t('give.birthdaysAutomatic')}</p>
+<p class="small muted">${ctx.t('give.allHint')}</p>
 ${searchBox(ctx, { q, action: '/admin/occasions', target: '#occasion-list li[data-search]', placeholder: ctx.t('give.searchOccasions'), extra: raw('<input type="hidden" name="view" value="all">') })}
 ${all.length ? h`<div id="occasion-list">${years.map((g) => h`<h2>${g.year}</h2>
-<ul class="lists">
-  ${g.list.map((o) => h`<li data-search="${o.name}"><a href="/admin/occasions/${o.id}">
-    <strong>${o.type === 'christmas' ? '🎄' : '📅'} ${o.name} ${privateBadge(ctx, o)}</strong>
-    <span class="small muted">${fmtDay(ctx, o.date, { year: true })} · ${ctx.t('give.progressShort', { done: o.done, total: o.total })}</span>
-  </a></li>`)}
-</ul>`)}</div>
+<ul class="upcoming compact">${g.list.map(row)}</ul>`)}</div>
 <p class="empty" data-filter-empty hidden>${ctx.t('give.noMatches')}</p>` : h`<p class="empty">${q ? ctx.t('give.noMatches') : ctx.t('give.noOccasions')}</p>`}`,
     });
   }
@@ -272,7 +279,7 @@ ${season && !christmas && hasPeople ? h`<section class="card pinned">
   <p class="small muted">${ctx.t('give.newChristmasHint')}</p>
   ${newChristmasButton(ctx, christmasYear)}
 </section>` : ''}
-${!hasPeople ? h`<p class="empty">${ctx.t('give.noPeopleYet')} <a href="/admin/people">${ctx.t('give.addPerson')}</a></p>` : ''}
+${!hasPeople ? h`<p class="empty">${ctx.t('give.noPeopleYet')} <a href="/admin/people/new">${ctx.t('give.addPerson')}</a></p>` : ''}
 ${hasPeople && !entries.length && !pinned ? h`<p class="empty">${ctx.t('give.nothingSoon')}</p>` : ''}
 <ul class="upcoming">${entries.map((e) => entryCard(ctx, e))}</ul>`,
   });
@@ -348,11 +355,11 @@ function adminMatchCard(ctx, { user, candidates }) {
 </section>`;
 }
 
-export function peoplePage(ctx, { list, form, error, q = '', matches = [] }) {
+export function peoplePage(ctx, { list, q = '', matches = [] }) {
   return page(ctx, {
     title: ctx.t('give.people'),
     body: h`
-<h1>${ctx.t('give.people')}</h1>
+${pageHead(ctx, ctx.t('give.people'), { href: '/admin/people/new', label: ctx.t('give.newPerson') })}
 ${matches.map((m) => adminMatchCard(ctx, m))}
 ${searchBox(ctx, { q, action: '/admin/people', target: '#people-list > li', placeholder: ctx.t('give.searchPeople') })}
 ${list.length ? h`<ul class="lists with-fav" id="people-list">
@@ -361,18 +368,18 @@ ${list.length ? h`<ul class="lists with-fav" id="people-list">
     <span class="small muted">${p.next ? ctx.t('give.nextBirthday', { date: fmtDay(ctx, p.next.date), when: inDays(ctx, daysBetween(today(), p.next.date)) }) : ctx.t('give.noBirthday')}</span>
   </a></li>`)}
 </ul>
-<p class="empty" data-filter-empty hidden>${ctx.t('give.noMatches')}</p>` : h`<p class="empty">${q ? ctx.t('give.noMatches') : ctx.t('give.noPeopleYet')}</p>`}
-<section class="card">
-  <details${error ? raw(' open') : ''}>
-    <summary><strong>＋ ${ctx.t('give.addPerson')}</strong></summary>
-    ${error ? h`<div class="flash flash-error" role="alert">${error}</div>` : ''}
-    <form method="post" action="/admin/people" class="stack">
+<p class="empty" data-filter-empty hidden>${ctx.t('give.noMatches')}</p>` : h`<p class="empty">${q ? ctx.t('give.noMatches') : ctx.t('give.noPeopleYet')}</p>`}`,
+  });
+}
+
+export function newPersonPage(ctx, { form = {}, error }) {
+  return formPage(ctx, {
+    title: ctx.t('give.newPerson'), back: '/admin/people', backLabel: ctx.t('give.people'), error,
+    body: h`<form method="post" action="/admin/people" class="stack">
       ${csrfField(ctx)}
       ${personFields(ctx, form)}
       <button type="submit" class="primary">${ctx.t('admin.add')}</button>
-    </form>
-  </details>
-</section>`,
+    </form>`,
   });
 }
 

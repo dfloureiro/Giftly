@@ -381,8 +381,10 @@ route('GET', '/login', (ctx) => {
 });
 
 route('GET', '/admin/lists', (ctx) => {
-  html(ctx.res, views.adminDashboard(ctx, { all: lists.all(ctx.user.id), form: {} }));
+  html(ctx.res, views.adminDashboard(ctx, { all: lists.all(ctx.user.id) }));
 }, { auth: 'admin' });
+
+route('GET', '/admin/lists/new', (ctx) => html(ctx.res, views.newListFormPage(ctx, {})), { auth: 'admin' });
 
 route('POST', '/login', async (ctx) => {
   const username = clean(ctx.body.username, 64).toLowerCase();
@@ -678,7 +680,7 @@ function validateList(ctx, body) {
 
 route('POST', '/admin/lists', (ctx) => {
   const { form, error } = validateList(ctx, ctx.body);
-  if (error) return html(ctx.res, views.adminDashboard(ctx, { all: lists.all(ctx.user.id), form, error }), 400);
+  if (error) return html(ctx.res, views.newListFormPage(ctx, { form, error }), 400);
   const id = lists.create({ ...form, owner_id: ctx.user.id });
   redirect(ctx.res, `/admin/lists/${id}?m=created`);
 }, { auth: 'admin' });
@@ -762,11 +764,16 @@ route('POST', '/admin/lists/:id/items', (ctx) => {
   const list = loadList(ctx);
   if (!list) return;
   const { form, error } = validateItem(ctx, ctx.body);
-  if (error) return renderAdminList(ctx, list, { itemError: error }, 400);
+  if (error) return html(ctx.res, views.newItemPage(ctx, { list, form, error }), 400);
   const id = items.create(list.id, form);
   applyUpload(id, ctx.body.image_data);
   enqueuePreview(id); // keeps an uploaded image, still reads the price
   redirect(ctx.res, `/admin/lists/${list.id}?m=added&n=1`);
+}, { auth: 'admin' });
+
+route('GET', '/admin/lists/:id/items/new', (ctx) => {
+  const list = loadList(ctx);
+  if (list) html(ctx.res, views.newItemPage(ctx, { list }));
 }, { auth: 'admin' });
 
 route('POST', '/admin/lists/:id/items/bulk', (ctx) => {

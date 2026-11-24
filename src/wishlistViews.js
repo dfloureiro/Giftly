@@ -1,5 +1,5 @@
 // Views for personal wishlists. The owner's page shows NOTHING about reservations.
-import { h, raw, layout, csrfField, postButton, adminHeader, uploadField, dragHandle } from './views.js';
+import { h, raw, layout, csrfField, postButton, adminHeader, uploadField, dragHandle, pageHead, formPage } from './views.js';
 
 function hostOf(url) {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
@@ -73,12 +73,13 @@ function removeForm(ctx, it, forPerson = false) {
 
 // ---------- my wishlist ----------
 
-export function ownWishlistPage(ctx, { wishlist, active, history, error, form }) {
+export function ownWishlistPage(ctx, { wishlist, active, history, error }) {
   return page(ctx, {
     title: ctx.t('wish.mine'),
     body: h`
-<h1>${ctx.t('wish.mineTitle')}</h1>
+${pageHead(ctx, ctx.t('wish.mineTitle'), { href: '/admin/wishlist/new', label: ctx.t('wish.addToWishlist') })}
 <p class="small muted">${ctx.t('wish.mineIntro')}</p>
+${error ? h`<div class="flash flash-error" role="alert">${error}</div>` : ''}
 
 ${active.length ? h`<ul class="items admin-items" data-sortable="/admin/wishlist/order">
   ${active.map((it, idx) => h`<li class="item" id="wish-${it.id}" data-id="${it.id}">
@@ -95,17 +96,6 @@ ${active.length ? h`<ul class="items admin-items" data-sortable="/admin/wishlist
     </div>
   </li>`)}
 </ul>` : h`<p class="empty">${ctx.t('wish.empty')}</p>`}
-
-<section class="card">
-  <h2>${ctx.t('admin.addItem')}</h2>
-  ${error ? h`<div class="flash flash-error" role="alert">${error}</div>` : ''}
-  <form method="post" action="/admin/wishlist/items" class="stack">
-    ${csrfField(ctx)}
-    ${itemFields(ctx, form)}
-    ${uploadField(ctx)}
-    <button type="submit" class="primary">${ctx.t('admin.add')}</button>
-  </form>
-</section>
 
 <section class="card">
   <h2>${ctx.t('give.visibility')}</h2>
@@ -133,6 +123,18 @@ ${history.length ? h`<section>
   });
 }
 
+export function newWishPage(ctx, { form = {}, error }) {
+  return formPage(ctx, {
+    title: ctx.t('wish.addToWishlist'), back: '/admin/wishlist', backLabel: ctx.t('wish.mineTitle'), error,
+    body: h`<form method="post" action="/admin/wishlist/items" class="stack">
+    ${csrfField(ctx)}
+    ${itemFields(ctx, form)}
+    ${uploadField(ctx)}
+    <button type="submit" class="primary">${ctx.t('admin.add')}</button>
+  </form>`,
+  });
+}
+
 // ---------- other admins' wishlists and ideas (on the person's page) ----------
 
 function giveForm(ctx, w, it, choices, preselect, back = '', pick = null) {
@@ -144,7 +146,7 @@ function giveForm(ctx, w, it, choices, preselect, back = '', pick = null) {
     </form>`;
   }
   return h`<details class="edit"${preselect ? raw(' open') : ''}>
-    <summary class="button primary">${ctx.t('wish.illGive')}</summary>
+    <summary class="button">${ctx.t('wish.illGive')}</summary>
     <form method="post" action="/admin/wishlists/${w.id}/items/${it.id}/give" class="stack">
       ${csrfField(ctx)}${back ? h`<input type="hidden" name="back" value="${back}">` : ''}
       <label>${ctx.t('give.forOccasion')}

@@ -1,5 +1,8 @@
 const strings = {
   pt: {
+    "give.newPerson": "Nova pessoa",
+    "lists.fromWishlistHint": "Para criar uma lista a partir de uma wishlist, abre a pessoa em Pessoas.",
+    "give.allHint": "Ocasiões e aniversários por ano: os aniversários deste ano de toda a gente e, dos anos anteriores, os que tiveram prendas.",
     "nav.occasions": "Ocasiões",
     "nav.people": "Pessoas",
     "nav.lists": "Listas",
@@ -471,6 +474,9 @@ const strings = {
     'error.home': 'Ir para o início',
   },
   en: {
+    "give.newPerson": "New person",
+    "lists.fromWishlistHint": "To create a list from a wishlist, open the person in People.",
+    "give.allHint": "Occasions and birthdays by year: everyone's birthday this year and, for earlier years, those that had gifts.",
     "nav.occasions": "Occasions",
     "nav.people": "People",
     "nav.lists": "Lists",

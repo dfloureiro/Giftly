@@ -24,12 +24,14 @@ const ITEMS = [
 })().catch((e) => { console.error(e); process.exit(1); });
 
 async function phase1(admin) {
-  await admin.goto(`${B}/admin/lists`);
+  await admin.goto(`${B}/admin/lists/new`);
   await admin.fill('input[name=title]', "Emma's Christmas list");
   await admin.fill('textarea[name=description]', 'Emma is 34, loves reading, plants and good coffee. Clothes size M.');
   await admin.click('form[action="/admin/lists"] button[type=submit]');
-  fs.writeFileSync(`${OUT}/../listurl`, admin.url().split('?')[0]);
+  const listUrl = admin.url().split('?')[0];
+  fs.writeFileSync(`${OUT}/../listurl`, listUrl);
   for (const it of ITEMS) {
+    await admin.goto(`${listUrl}/items/new`);
     const form = admin.locator('form[action$="/items"]').first();
     await form.locator('input[name=title]').fill(it.title);
     await form.locator('input[name=url]').fill(it.url);

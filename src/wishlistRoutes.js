@@ -81,6 +81,7 @@ export function registerWishlistRoutes({ route, html, redirect, notFound, clean,
   }
 
   route('GET', '/admin/wishlist', (ctx) => renderOwn(ctx), A);
+  route('GET', '/admin/wishlist/new', (ctx) => html(ctx.res, wv.newWishPage(ctx, {})), A);
 
   route('POST', '/admin/wishlist/visibility', (ctx) => {
     wishlists.ofUser(ctx.user.id);
@@ -94,7 +95,7 @@ export function registerWishlistRoutes({ route, html, redirect, notFound, clean,
     if (!w) return notFound(ctx);
     const { f, error } = itemForm(ctx);
     if (error) {
-      if (w.kind === 'own') return renderOwn(ctx, { error: ctx.t(error), form: f }, 400);
+      if (w.kind === 'own') return html(ctx.res, wv.newWishPage(ctx, { form: f, error: ctx.t(error) }), 400);
       return redirect(ctx.res, at(w, 'badItem', 'wishlist'));
     }
     const id = wishItems.create(w.id, f);

@@ -478,6 +478,35 @@ export function upcoming(uid, days = 60, from = today()) {
   return out.sort((a, b) => a.date.localeCompare(b.date));
 }
 
+/**
+ * Every occasion `uid` can see, with birthdays: this year's birthday of everyone (with its state),
+ * and earlier years' birthdays that have gifts (the history). Newest year first, each year in
+ * calendar order. `q` filters by occasion or person name.
+ */
+export function allOccasions(uid, { q = '', from = today() } = {}) {
+  const query = String(q).trim().toLowerCase();
+  const hit = (name) => !query || name.toLowerCase().includes(query);
+  const thisYear = Number(from.slice(0, 4));
+  const out = [];
+  for (const o of occasions.list(uid)) {
+    if (!hit(o.name)) continue;
+    const c = checklist(uid, o);
+    out.push({ kind: 'occasion', date: o.date, year: Number(o.date.slice(0, 4)), occasion: o, total: c.total, doneCount: c.done, done: c.total > 0 && c.done === c.total });
+  }
+  for (const p of people.list(uid)) {
+    if (!hit(p.name)) continue;
+    const years = new Set(gifts.forPerson(uid, p.id).filter((g) => !g.occasion_id && g.year < thisYear).map((g) => g.year));
+    if (p.birthday_month && p.birthday_day) years.add(thisYear);
+    for (const year of years) {
+      const list = gifts.forBirthday(uid, p.id, year);
+      const date = p.birthday_month ? birthdayIn(year, p.birthday_month, p.birthday_day) : `${year}-12-31`;
+      out.push({ kind: 'birthday', date, year, person: p, age: p.birth_year ? year - p.birth_year : null,
+        done: list.some((g) => HAS_GIFT.includes(g.status)), planned: list.length, past: date < from });
+    }
+  }
+  return out.sort((a, b) => b.year - a.year || a.date.localeCompare(b.date));
+}
+
 /** A person's next birthday and the upcoming occasions they are in (as `uid` sees them), soonest first. */
 export function personUpcoming(uid, person, from = today()) {
   const out = [];
