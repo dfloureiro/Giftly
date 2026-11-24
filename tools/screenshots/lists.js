@@ -28,6 +28,8 @@ async function phase1(admin) {
   await admin.fill('input[name=title]', "Emma's Christmas list");
   await admin.fill('textarea[name=description]', 'Emma is 34, loves reading, plants and good coffee. Clothes size M.');
   await admin.check('input[type=checkbox][name=ask_buyer]'); // guests say who buys the gift
+  await admin.check('input[type=checkbox][name=allow_on_behalf]'); // and may reserve for someone else
+  await admin.selectOption('select[name=show_taken]', '2'); // they see who reserved what (no link or price)
   await admin.click('form[action="/admin/lists"] button[type=submit]');
   const listUrl = admin.url().split('?')[0];
   fs.writeFileSync(`${OUT}/../listurl`, listUrl);
@@ -56,7 +58,7 @@ async function phase2(browser, admin) {
     await p.fill('input[name=name]', name);
     await p.click('button[type=submit]');
     for (const [title, buyer] of picks) {
-      await p.locator('li.item', { hasText: title }).locator(`button[value=${buyer}]`).click();
+      await p.locator('li.item', { hasText: title }).locator(`form.pick-buyer button[value=${buyer}]`).click();
       await p.waitForURL(/m=/);
     }
     await p.goto(share);
@@ -153,7 +155,7 @@ async function recordGuestFlow(browser, share) {
   }, target);
   await pause(1000);
   const before = p.url();
-  await tap(item.locator('button[value=guest]'));
+  await tap(item.locator('form.pick-buyer button[value=guest]'));
   await p.waitForURL((u) => u.href !== before);
   await p.waitForLoadState();
   await pause(1200);
