@@ -56,17 +56,46 @@ export function reservationKey(item) {
   return item.reserved_name ? `${item.reserved_guest_id ?? 'manual'}.${item.reserved_at ?? ''}` : 'free';
 }
 
+/**
+ * On a list that asks who buys: the admin's switch for a reserved gift ("we buy" / "guest buys").
+ * Sends `expect` like the other reservation actions, so it only applies to the reservation shown.
+ */
+function adminBuyerSwitch(ctx, it) {
+  const button = (value) => h`<button type="submit" name="buyer" value="${value}" class="link">${ctx.t(`admin.buyerSet.${value}`)}</button>`;
+  const choices = it.reserved_buyer ? [it.reserved_buyer === 'us' ? 'guest' : 'us'] : ['us', 'guest'];
+  return h`<form method="post" action="/admin/items/${it.id}/buyer" class="buyer-choice small">
+    ${csrfField(ctx)}<input type="hidden" name="expect" value="${reservationKey(it)}">
+    ${choices.map((c, i) => h`${i ? ' · ' : ''}${button(c)}`)}
+  </form>`;
+}
+
+/** A gift the managers were asked to buy: "Mark as bought" / "Not bought yet". */
+function boughtToggle(ctx, it) {
+  return h`<form method="post" action="/admin/items/${it.id}/bought" class="inline">
+    ${csrfField(ctx)}<input type="hidden" name="expect" value="${reservationKey(it)}">
+    <input type="hidden" name="bought" value="${it.bought_at ? '0' : '1'}">
+    <button type="submit" class="${it.bought_at ? 'link' : 'secondary'}">${ctx.t(it.bought_at ? 'admin.unmarkBought' : 'admin.markBought')}</button>
+  </form>`;
+}
+
 /** Who has an item reserved (or that it's free / taken in another list). */
-function reservationStatus(ctx, it, adminNames) {
+function reservationStatus(ctx, it, adminNames, list = {}) {
+  const buying = it.reserved_name && it.reserved_buyer === 'us';
+  return h`${reservationText(ctx, it, adminNames)}
+    ${buying && it.bought_at ? h`<span class="small muted bought-line">✅ ${ctx.t('admin.boughtBy', { name: adminNames[it.bought_by_user_id] || '—', date: fmtDate(ctx, it.bought_at) })}</span>` : ''}
+    ${buying || (list.ask_buyer && it.reserved_name) ? h`<span class="buyer-row">${buying ? boughtToggle(ctx, it) : ''}${list.ask_buyer && it.reserved_name && !it.bought_at ? adminBuyerSwitch(ctx, it) : ''}</span>` : ''}`;
+}
+
+function reservationText(ctx, it, adminNames) {
   return it.claimed_elsewhere && !it.reserved_name
     ? h`<span class="muted">🎀 ${ctx.t('wish.claimedElsewhere')}</span>`
     : it.reserved_name
-    ? h`🎀 ${ctx.t('admin.reservedBy', { name: it.reserved_name })} <span class="muted">· ${fmtDate(ctx, it.reserved_at)}${it.reserved_by_user_id ? ` · ${ctx.t('admin.byAdmin', { name: adminNames[it.reserved_by_user_id] || '—' })}` : ''}${it.reserved_guest_id ? '' : ` · ${ctx.t('admin.manual')}`}</span>`
+    ? h`🎀 ${ctx.t('admin.reservedBy', { name: it.reserved_name })}${it.reserved_buyer ? h` <span class="badge buyer-${it.bought_at ? 'bought' : it.reserved_buyer}">${ctx.t(it.bought_at ? 'admin.buyer.bought' : `admin.buyer.${it.reserved_buyer}`)}</span>` : ''} <span class="muted">· ${fmtDate(ctx, it.reserved_at)}${it.reserved_by_user_id ? ` · ${ctx.t('admin.byAdmin', { name: adminNames[it.reserved_by_user_id] || '—' })}` : ''}${it.reserved_guest_id ? '' : ` · ${ctx.t('admin.manual')}`}</span>`
     : h`<span class="muted">${ctx.t('admin.free')}</span>`;
 }
 
 /** The explicit reservation actions: release, and reserve for / reassign to someone by name. */
-function reservationActions(ctx, it, datalistId) {
+function reservationActions(ctx, it, datalistId, list = {}) {
   const expect = h`<input type="hidden" name="expect" value="${reservationKey(it)}">`;
   if (it.claimed_elsewhere && !it.reserved_name) return '';
   const label = it.reserved_name ? ctx.t('admin.reassignButton') : ctx.t('admin.reserveButton');
@@ -78,6 +107,13 @@ function reservationActions(ctx, it, datalistId) {
             <label>${ctx.t('admin.reserveFor')}
               <input name="name" required maxlength="60" list="${datalistId}" autocomplete="off" placeholder="${ctx.t('login.namePlaceholder')}">
             </label>
+            ${list.ask_buyer ? h`<label>${ctx.t('list.buyerAsk')}
+              <select name="buyer">
+                <option value="">${ctx.t('admin.buyerLetThem')}</option>
+                <option value="us">${ctx.t('admin.buyerSet.us')}</option>
+                <option value="guest">${ctx.t('admin.buyerSet.guest')}</option>
+              </select>
+            </label>` : ''}
             <p class="small muted">${ctx.t('admin.reserveHint')}</p>
             <button type="submit" class="primary">${label}</button>
           </form>
@@ -114,7 +150,7 @@ function layout(ctx, { title, body, bodyClass = '' }) {
 <link rel="manifest" href="/site.webmanifest">
 <meta name="theme-color" content="#C8553D">
 <meta name="apple-mobile-web-app-title" content="${site}">
-<link rel="stylesheet" href="/static/style.css?v=28">
+<link rel="stylesheet" href="/static/style.css?v=30">
 <script src="/static/app.js?v=7" defer></script>
 </head>
 <body class="${bodyClass}">
@@ -206,6 +242,28 @@ function itemBody(ctx, it) {
     </div>`;
 }
 
+/** Picking on a list that asks who buys: one button per answer (works without JavaScript). */
+function pickWithBuyer(ctx, list, it) {
+  return h`<form method="post" action="/l/${list.token}/pick/${it.id}" class="inline pick-buyer" data-confirm="${ctx.t('list.pickConfirm', { title: it.title })}">
+    ${csrfField(ctx)}
+    <button type="submit" name="buyer" value="guest" class="primary">${ctx.t('list.pickBuySelf')}</button>
+    <button type="submit" name="buyer" value="us" class="secondary">${ctx.t('list.pickBuyForMe')}</button>
+  </form>`;
+}
+
+/** In "Your picks": who buys it (the guest's answer), and the button to change it. */
+function buyerChoiceForm(ctx, list, it) {
+  if (it.bought_at) return h`<p class="small bought-for-you">${ctx.t('list.boughtForYou')}</p>`;
+  const other = it.reserved_buyer === 'guest' ? 'us' : 'guest';
+  const button = (value, label) => h`<button type="submit" name="buyer" value="${value}" class="link">${label}</button>`;
+  return h`<form method="post" action="/l/${list.token}/buyer/${it.id}" class="buyer-choice small">
+    ${csrfField(ctx)}
+    ${it.reserved_buyer
+      ? h`<span>${ctx.t(`list.buyer.${it.reserved_buyer}`)}</span> · ${button(other, ctx.t(`list.buyerSwitch.${other}`))}`
+      : h`<span>${ctx.t('list.buyerAsk')}</span> ${button('guest', ctx.t('list.pickBuySelf'))} · ${button('us', ctx.t('list.pickBuyForMe'))}`}
+  </form>`;
+}
+
 export function guestListPage(ctx, { list, guest, available, mine, takenByOthers, total, adminNames = {} }) {
   return layout(ctx, {
     title: list.title,
@@ -226,12 +284,13 @@ ${mine.length ? h`
   <h2>${ctx.t('list.mine')}</h2>
   <p class="small muted">${ctx.t('list.mineHint')}</p>
   <ul class="items">
-    ${mine.map((it) => h`<li class="item picked">
+    ${mine.map((it) => h`<li class="item picked" id="item-${it.id}">
       ${thumb(ctx, it)}
       <div class="body">${itemBody(ctx, it)}
         ${it.wish_status && it.wish_status !== 'active' ? h`<p class="flash flash-error small">${ctx.t(`wish.guestRemoved.${it.wish_removed_reason === 'unwanted' ? 'unwanted' : 'bought'}`)}</p>` : ''}
-        ${it.reserved_by_user_id ? h`<p class="small muted reserved-for-you">🎀 ${ctx.t('list.reservedForYou', { name: adminNames[it.reserved_by_user_id] || '—' })}</p>` : ''}</div>
-      ${postButton(ctx, `/l/${list.token}/unpick/${it.id}`, ctx.t('list.unpick'), { cls: 'secondary', confirm: ctx.t('list.unpickConfirm', { title: it.title }) })}
+        ${it.reserved_by_user_id ? h`<p class="small muted reserved-for-you">🎀 ${ctx.t('list.reservedForYou', { name: adminNames[it.reserved_by_user_id] || '—' })}</p>` : ''}
+        ${list.ask_buyer || it.bought_at ? buyerChoiceForm(ctx, list, it) : ''}</div>
+      ${it.bought_at ? '' : postButton(ctx, `/l/${list.token}/unpick/${it.id}`, ctx.t('list.unpick'), { cls: 'secondary', confirm: ctx.t('list.unpickConfirm', { title: it.title }) })}
     </li>`)}
   </ul>
 </section>` : ''}
@@ -245,7 +304,7 @@ ${mine.length ? h`
     ${available.map((it) => h`<li class="item">
       ${thumb(ctx, it)}
       <div class="body">${itemBody(ctx, it)}</div>
-      ${postButton(ctx, `/l/${list.token}/pick/${it.id}`, ctx.t('list.pick'), { cls: 'primary', confirm: ctx.t('list.pickConfirm', { title: it.title }) })}
+      ${list.ask_buyer ? pickWithBuyer(ctx, list, it) : postButton(ctx, `/l/${list.token}/pick/${it.id}`, ctx.t('list.pick'), { cls: 'primary', confirm: ctx.t('list.pickConfirm', { title: it.title }) })}
     </li>`)}
   </ul>` : h`<p class="empty">${total ? ctx.t('list.none') : ctx.t('list.empty')}</p>`}
 </section>`,
@@ -341,6 +400,8 @@ function listFields(ctx, v, { withArchived = false, canSetVisibility = true } = 
         <option value="private"${v.visibility === 'private' ? raw(' selected') : ''}>${ctx.t('lists.vis.private')}</option>
       </select>
     </label>` : ''}
+    <label class="check"><input type="hidden" name="ask_buyer" value="0"><input type="checkbox" name="ask_buyer" value="1"${v.ask_buyer ? raw(' checked') : ''}> ${ctx.t('admin.askBuyer')}</label>
+    <p class="small muted hint">${ctx.t('admin.askBuyerHint')}</p>
     ${v.source_wishlist_id ? h`<label class="check"><input type="hidden" name="auto_add_new" value="0"><input type="checkbox" name="auto_add_new" value="1"${v.auto_add_new ? raw(' checked') : ''}> ${ctx.t('wish.autoAdd')}</label>` : ''}
     <label>${ctx.t('admin.listTitle')}
       <input name="title" required maxlength="120" value="${v.title || ''}" placeholder="${ctx.t('admin.listTitlePlaceholder')}">
@@ -514,6 +575,7 @@ function uploadField(ctx) {
 export function adminListPage(ctx, { list, allItems: everything, allGuests, baseUrl, adminNames = {}, sourceOwner = '', changedIds = new Set() }) {
   const allItems = everything.filter((i) => !i.pending);
   const pending = everything.filter((i) => i.pending);
+  const toBuy = allItems.filter((i) => i.reserved_name && i.reserved_buyer === 'us'); // asked us to buy it
   return layout(ctx, {
     title: list.title,
     body: h`
@@ -534,7 +596,7 @@ ${list.source_wishlist_id ? h`<p class="small muted">🎀 ${ctx.t('wish.listFrom
 </section>
 
 <section>
-  <div class="page-head"><h2>${ctx.t('admin.items')} <span class="muted small">${allItems.filter((i) => i.reserved_name).length}/${allItems.length} ${ctx.t('admin.reserved')}</span></h2>
+  <div class="page-head"><h2>${ctx.t('admin.items')} <span class="muted small">${allItems.filter((i) => i.reserved_name).length}/${allItems.length} ${ctx.t('admin.reserved')}${toBuy.length ? ` · ${ctx.t('admin.toBuyCount', { n: toBuy.filter((i) => !i.bought_at).length })}` : ''}${toBuy.some((i) => i.bought_at) ? ` · ${ctx.t('admin.boughtCount', { n: toBuy.filter((i) => i.bought_at).length })}` : ''}</span></h2>
     <a class="button primary" href="/admin/lists/${list.id}/items/new">＋ ${ctx.t('admin.addItem')}</a></div>
   ${allItems.length ? h`
   <ul class="items admin-items" data-sortable="/admin/lists/${list.id}/order">
@@ -545,12 +607,12 @@ ${list.source_wishlist_id ? h`<p class="small muted">🎀 ${ctx.t('wish.listFrom
         ${itemBody(ctx, it)}
         ${previewStatus(ctx, it)}
         ${it.wishlist_item_id ? h`<p class="small muted">🎀 ${ctx.t('wish.fromWishlist')}${it.hidden ? h` · <strong>${ctx.t('wish.hiddenHere')}</strong>` : ''}${it.wish_status && it.wish_status !== 'active' ? h` · <strong class="warn">${ctx.t(`wish.removedFlag.${it.wish_removed_reason}`)}</strong>` : ''}${it.overridden ? h` · ✎ ${ctx.t('wish.editedHere')}` : ''}${changedIds.has(it.id) ? h` · <a class="warn" href="/admin/items/${it.id}">${ctx.t('wish.wishlistChangedShort')}</a>` : ''}</p>` : ''}
-        <p class="status">${reservationStatus(ctx, it, adminNames)}</p>
+        <p class="status">${reservationStatus(ctx, it, adminNames, list)}</p>
       </div>
       <div class="actions">
         <a class="button secondary" href="/admin/items/${it.id}">${ctx.t('admin.edit')}</a>
         ${it.wishlist_item_id ? postButton(ctx, `/admin/items/${it.id}/hide`, it.hidden ? ctx.t('wish.unhide') : ctx.t('wish.hide'), { cls: 'secondary', extra: `<input type="hidden" name="hidden" value="${it.hidden ? '0' : '1'}">` }) : ''}
-        ${reservationActions(ctx, it, `guests-${list.id}`)}
+        ${reservationActions(ctx, it, `guests-${list.id}`, list)}
         ${idx > 0 ? postButton(ctx, `/admin/items/${it.id}/move`, '↑', { cls: 'icon move', extra: '<input type="hidden" name="dir" value="up">' }) : ''}
         ${idx < allItems.length - 1 ? postButton(ctx, `/admin/items/${it.id}/move`, '↓', { cls: 'icon move', extra: '<input type="hidden" name="dir" value="down">' }) : ''}
         ${postButton(ctx, `/admin/items/${it.id}/delete`, ctx.t('admin.delete'), { cls: 'danger', confirm: ctx.t('admin.deleteItemConfirm') })}
@@ -605,8 +667,8 @@ export function adminItemPage(ctx, { item, list, form, error, allGuests = [], ad
   // Shown outside the edit form: saving the form never changes who is bringing the gift.
   const reservation = h`<section class="card" id="reservation">
   <h2>${ctx.t('admin.reservation')}</h2>
-  <p class="status">${reservationStatus(ctx, item, adminNames)}</p>
-  <div class="actions">${reservationActions(ctx, item, `guests-${list.id}`)}</div>
+  <p class="status">${reservationStatus(ctx, item, adminNames, list)}</p>
+  <div class="actions">${reservationActions(ctx, item, `guests-${list.id}`, list)}</div>
   <datalist id="guests-${list.id}">${allGuests.map((g) => h`<option value="${g.name}"></option>`)}</datalist>
 </section>`;
   // Linked to a wishlist: ideas are edited in the wishlist (every linked list follows); someone's

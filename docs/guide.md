@@ -46,10 +46,22 @@ Every list has a **secret link** (`/l/<22 random characters>`). Anyone with the 
 - *Generate new link* (in the list's ⚙️ menu) replaces it. The old link stops working and everyone who joined is logged out.
 - **Archive** a list to close it without deleting anything.
 
+### Who buys the gift
+
+Some guests would rather you buy the gift for them (they live far away, or they'll pay you back). Tick **Ask guests who buys the gift** when creating a list, or later in its ⚙️ menu → *Edit*. It's off by default and can be switched on or off at any time.
+
+- **Guests** pick a gift with *I'll buy it* or *Please buy it for me* instead of *I'll give this one*. Their picks show the answer, and they can change it.
+- **You** see a badge on each reserved gift (🛒 *we buy* or 🛍️ *guest buys*), and the list's heading counts the gifts left for you to buy. You can switch the answer on the list page, and choose it when you reserve a gift for someone (or leave it for them to choose). The other admins are notified when it changes.
+- **Notifications** for a pick say whether the guest buys it or asks you to; changing the answer later sends one too.
+- **Mark as bought** on a gift you were asked to buy, once you have it. The badge turns into ✅ *bought* with who bought it and when, and the heading counts what is still to buy, so two admins don't buy the same thing. *Not bought yet* undoes it.
+- Once it's bought, **the guest sees "We've bought it for you"** and can no longer give the gift up or change who buys it (they talk to you instead). You can still release it; releasing or reassigning a gift clears the mark.
+
+Switching it off hides the question; the answers already given stay on the gifts.
+
 ### What guests see
 
 1. They open the link and type their name. That's all: no account, no email, nothing tracked.
-2. They see the available gifts and tap *I'll give this one*.
+2. They see the available gifts and tap *I'll give this one* (or, on a list that [asks who buys](#who-buys-the-gift), *I'll buy it* / *Please buy it for me*).
 3. The gift **disappears for everyone else**, so nobody buys the same thing twice. If two people tap at the same moment, only one gets it.
 4. Their picks stay at the top, and they can give them up.
 

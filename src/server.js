@@ -193,6 +193,9 @@ const FLASH = {
   picked: ['success', 'msg.picked'],
   unpicked: ['success', 'msg.unpicked'],
   taken: ['error', 'msg.taken'],
+  chooseBuyer: ['error', 'msg.chooseBuyer'],
+  buyerSaved: ['success', 'msg.buyerSaved'],
+  boughtLocked: ['error', 'msg.boughtLocked'],
   saved: ['success', 'admin.saved'],
   created: ['success', 'admin.created'],
   added: ['success', 'admin.added'],
@@ -343,17 +346,39 @@ route('POST', '/l/:token/logout', (ctx) => {
   redirect(ctx.res, `/l/${ctx.session.list.token}`, [guestCookie(ctx, keep)]);
 }, { auth: 'guest' });
 
+/** 'guest' (they buy it) or 'us' (the list's managers buy it for them); null otherwise. */
+const buyerChoice = (v) => (v === 'guest' || v === 'us' ? v : null);
+
 route('POST', '/l/:token/pick/:id', (ctx) => {
   const id = Number(ctx.params.id);
-  const ok = items.reserve(id, ctx.session.guest);
+  // A list that asks who buys needs an answer (a page opened before it was switched on has none).
+  const buyer = ctx.session.list.ask_buyer ? buyerChoice(ctx.body.buyer) : null;
+  if (ctx.session.list.ask_buyer && !buyer) return redirect(ctx.res, `/l/${ctx.session.list.token}?m=chooseBuyer`);
+  const ok = items.reserve(id, ctx.session.guest, buyer);
   if (ok) notify('pick', { ...ctx.session, item: items.get(id) });
   redirect(ctx.res, `/l/${ctx.session.list.token}?m=${ok ? 'picked' : 'taken'}`);
 }, { auth: 'guest' });
 
+// Change (or give, for a gift an admin reserved for them) the answer to "who buys it?".
+route('POST', '/l/:token/buyer/:id', (ctx) => {
+  const id = Number(ctx.params.id);
+  const buyer = buyerChoice(ctx.body.buyer);
+  const before = items.get(id);
+  if (ctx.session.list.ask_buyer && buyer && before?.reserved_buyer !== buyer && items.setBuyer(id, ctx.session.guest, buyer)) {
+    notify('pick', { ...ctx.session, item: items.get(id), buyerChanged: true });
+  }
+  redirect(ctx.res, `/l/${ctx.session.list.token}?m=buyerSaved#item-${id}`);
+}, { auth: 'guest' });
+
 route('POST', '/l/:token/unpick/:id', (ctx) => {
   const id = Number(ctx.params.id);
-  if (items.unreserve(id, ctx.session.guest)) notify('unpick', { ...ctx.session, item: items.get(id) });
-  redirect(ctx.res, `/l/${ctx.session.list.token}?m=unpicked`);
+  if (items.unreserve(id, ctx.session.guest)) {
+    notify('unpick', { ...ctx.session, item: items.get(id) });
+    return redirect(ctx.res, `/l/${ctx.session.list.token}?m=unpicked`);
+  }
+  // Already bought for them: they talk to the list's managers instead.
+  const it = items.get(id);
+  redirect(ctx.res, `/l/${ctx.session.list.token}${it?.bought_at && it.reserved_guest_id === ctx.session.guest.id ? '?m=boughtLocked' : '?m=unpicked'}`);
 }, { auth: 'guest' });
 
 // ----- admin -----
@@ -667,13 +692,20 @@ route('POST', '/reset/:token', async (ctx) => {
   startSession(ctx, user.id, '/admin?m=passwordChanged');
 });
 
+/**
+ * A checkbox after its hidden "0" (so unticking is sent): ticked arrives as ['0', '1'].
+ * undefined when the form doesn't have it (keep the current value).
+ */
+const checkbox = (v) => (v === undefined ? undefined : [].concat(v).includes('1'));
+
 function validateList(ctx, body) {
   const form = {
     title: clean(body.title, 120),
     description: cleanMultiline(body.description, 2000),
     archived: body.archived === '1',
     visibility: body.visibility === 'private' ? 'private' : 'shared',
-    auto_add_new: body.auto_add_new === undefined ? undefined : body.auto_add_new === '1',
+    auto_add_new: checkbox(body.auto_add_new),
+    ask_buyer: checkbox(body.ask_buyer),
   };
   return { form, error: form.title ? undefined : ctx.t('admin.titleRequired') };
 }
@@ -1009,9 +1041,31 @@ route('POST', '/admin/items/:id/reserve', (ctx) => {
   if (!item || !reservationStillAsShown(ctx, item)) return;
   const name = clean(ctx.body.name, 60);
   if (!name) return redirect(ctx.res, `/admin/lists/${item.list_id}#item-${item.id}`);
-  const guest = items.reserveForGuest(item.id, name, ctx.user.id);
+  const buyer = lists.get(item.list_id)?.ask_buyer ? buyerChoice(ctx.body.buyer) : null;
+  const guest = items.reserveForGuest(item.id, name, ctx.user.id, buyer);
   if (guest) notifyAdminReservation(ctx, item.id, guest);
   redirect(ctx.res, `/admin/lists/${item.list_id}?m=reservedFor#item-${item.id}`);
+}, { auth: 'admin' });
+
+// On a list that asks who buys: an admin records (or changes) the answer for a reserved gift.
+route('POST', '/admin/items/:id/buyer', (ctx) => {
+  const item = loadItem(ctx);
+  if (!item || !reservationStillAsShown(ctx, item)) return;
+  const list = lists.get(item.list_id);
+  const buyer = buyerChoice(ctx.body.buyer);
+  if (list.ask_buyer && buyer && item.reserved_name && item.reserved_buyer !== buyer && items.setBuyer(item.id, null, buyer)) {
+    notify('pick', { list, guest: { name: item.reserved_name }, item: items.get(item.id), byUser: ctx.user, buyerChanged: true },
+      { exceptUserId: ctx.user.id });
+  }
+  redirect(ctx.res, `/admin/lists/${item.list_id}?m=saved#item-${item.id}`);
+}, { auth: 'admin' });
+
+// A gift the guest asked the managers to buy: mark it as bought, or not bought yet.
+route('POST', '/admin/items/:id/bought', (ctx) => {
+  const item = loadItem(ctx);
+  if (!item || !reservationStillAsShown(ctx, item)) return;
+  items.setBought(item.id, ctx.body.bought === '1' ? ctx.user.id : null);
+  redirect(ctx.res, `/admin/lists/${item.list_id}?m=saved#item-${item.id}`);
 }, { auth: 'admin' });
 
 route('POST', '/admin/items/:id/release', (ctx) => {

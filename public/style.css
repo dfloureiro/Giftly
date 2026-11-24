@@ -377,3 +377,15 @@ body:has(.admin-top) > .lang { display: none; }
 .account-menu .menu { max-width: calc(100vw - 24px); }
 .account-menu .menu.align-start { left: 0; right: auto; }
 .account-menu .menu > form:first-child { border-top: 0; margin-top: 0; padding-top: 0; }
+
+/* lists that ask who buys the gift */
+form.pick-buyer { display: flex; flex-direction: column; gap: 6px; }
+form.buyer-choice { margin: 6px 0 0; display: flex; flex-wrap: wrap; gap: 4px; align-items: baseline; }
+form.buyer-choice button.link { font-size: inherit; }
+.badge.buyer-us { background: var(--accent-soft); color: var(--accent); }
+.badge.buyer-us, .badge.buyer-guest { white-space: nowrap; }
+.badge.buyer-bought { background: var(--ok-soft); color: var(--ok); white-space: nowrap; }
+.bought-line { display: block; margin-top: 2px; }
+.buyer-row { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; margin-top: 6px; }
+.buyer-row form.buyer-choice { margin: 0; }
+.bought-for-you { margin: 6px 0 0; color: var(--ok); }

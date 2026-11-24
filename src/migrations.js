@@ -289,6 +289,17 @@ export const migrations = [
   // gift ideas leave the checklist for those wishlists (gifts are 'planned', 'bought' or 'given');
   // list items linked to another admin's wishlist can be edited in that list only (overrides).
   { foreignKeysOff: true, run: migrateTo5 },
+  // v18 (5.3): a list can ask guests, when they pick a gift, whether they buy it themselves
+  // ('guest') or want the list's managers to buy it for them ('us'). NULL: not answered.
+  `
+  ALTER TABLE lists ADD COLUMN ask_buyer INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE items ADD COLUMN reserved_buyer TEXT CHECK (reserved_buyer IN ('guest', 'us'));
+  `,
+  // v19 (5.3): an admin marks a gift they were asked to buy ('us') as bought (and by whom).
+  `
+  ALTER TABLE items ADD COLUMN bought_at INTEGER;
+  ALTER TABLE items ADD COLUMN bought_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
+  `,
 ];
 
 /** Shop-style price text for an idea that had a price (as 3.2 did). */

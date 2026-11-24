@@ -95,11 +95,11 @@ export const lists = {
   byToken(token) {
     return db.prepare('SELECT * FROM lists WHERE token = ?').get(token);
   },
-  create({ title, description, owner_id = null, visibility = 'shared', source_wishlist_id = null, auto_add_new = true, recipient_user_id = null }) {
+  create({ title, description, owner_id = null, visibility = 'shared', source_wishlist_id = null, auto_add_new = true, recipient_user_id = null, ask_buyer = false }) {
     const id = Number(db.prepare(
-      `INSERT INTO lists (title, description, token, owner_id, visibility, source_wishlist_id, auto_add_new, recipient_user_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(title, description, newToken(), owner_id, visibility, source_wishlist_id, auto_add_new ? 1 : 0, recipient_user_id, now()).lastInsertRowid);
+      `INSERT INTO lists (title, description, token, owner_id, visibility, source_wishlist_id, auto_add_new, recipient_user_id, ask_buyer, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(title, description, newToken(), owner_id, visibility, source_wishlist_id, auto_add_new ? 1 : 0, recipient_user_id, ask_buyer ? 1 : 0, now()).lastInsertRowid);
     if (source_wishlist_id) db.prepare('INSERT OR IGNORE INTO list_sources (list_id, wishlist_id) VALUES (?, ?)').run(id, source_wishlist_id);
     return id;
   },
@@ -107,7 +107,7 @@ export const lists = {
    * Only the owner changes visibility; an ownerless (pre-3.0) list becomes yours if you make
    * it private. Archiving marks its reserved wishlist items as received.
    */
-  update(id, { title, description, archived, visibility, auto_add_new }, uid) {
+  update(id, { title, description, archived, visibility, auto_add_new, ask_buyer }, uid) {
     tx(() => {
       const l = lists.get(id);
       let owner = l.owner_id;
@@ -116,8 +116,9 @@ export const lists = {
         vis = visibility;
         if (owner == null && visibility === 'private') owner = uid;
       }
-      db.prepare('UPDATE lists SET title = ?, description = ?, archived = ?, visibility = ?, owner_id = ?, auto_add_new = ? WHERE id = ?')
-        .run(title, description, archived ? 1 : 0, vis, owner, auto_add_new === undefined ? l.auto_add_new : (auto_add_new ? 1 : 0), id);
+      const flag = (v, current) => (v === undefined ? current : (v ? 1 : 0));
+      db.prepare('UPDATE lists SET title = ?, description = ?, archived = ?, visibility = ?, owner_id = ?, auto_add_new = ?, ask_buyer = ? WHERE id = ?')
+        .run(title, description, archived ? 1 : 0, vis, owner, flag(auto_add_new, l.auto_add_new), flag(ask_buyer, l.ask_buyer), id);
       if (archived && !l.archived) {
         db.prepare(`UPDATE wishlist_items SET status = 'received', removed_reason = 'received', removed_at = ?
           WHERE status = 'active' AND id IN (SELECT wishlist_item_id FROM items
@@ -187,7 +188,7 @@ export const guests = {
     tx(() => {
       db.prepare('DELETE FROM wishlist_claims WHERE item_id IN (SELECT id FROM items WHERE reserved_guest_id = ?)').run(id);
       db.prepare(
-        'UPDATE items SET reserved_guest_id = NULL, reserved_name = NULL, reserved_at = NULL, reserved_by_user_id = NULL WHERE reserved_guest_id = ?'
+        'UPDATE items SET reserved_guest_id = NULL, reserved_name = NULL, reserved_at = NULL, reserved_by_user_id = NULL, reserved_buyer = NULL, bought_at = NULL, bought_by_user_id = NULL WHERE reserved_guest_id = ?'
       ).run(id);
       db.prepare('DELETE FROM guests WHERE id = ?').run(id);
     });
@@ -282,7 +283,7 @@ export const items = {
    * found or created in that list, so the gift shows in their picks when they open the list.
    * Returns the guest, or null if nothing changed / the item doesn't exist.
    */
-  reserveForGuest(id, name, userId) {
+  reserveForGuest(id, name, userId, buyer = null) {
     return tx(() => {
       const item = items.get(id);
       if (!item) return null;
@@ -293,13 +294,13 @@ export const items = {
         db.prepare('INSERT OR REPLACE INTO wishlist_claims (wishlist_item_id, item_id, gift_id, created_at) VALUES (?, ?, NULL, ?)')
           .run(item.wishlist_item_id, id, now());
       }
-      db.prepare('UPDATE items SET reserved_guest_id = ?, reserved_name = ?, reserved_at = ?, reserved_by_user_id = ? WHERE id = ?')
-        .run(guest.id, guest.name, now(), userId ?? null, id);
+      db.prepare('UPDATE items SET reserved_guest_id = ?, reserved_name = ?, reserved_at = ?, reserved_by_user_id = ?, reserved_buyer = ?, bought_at = NULL, bought_by_user_id = NULL WHERE id = ?')
+        .run(guest.id, guest.name, now(), userId ?? null, buyer, id);
       return guest;
     });
   },
   /** Atomic: only succeeds if nobody else got there first. */
-  reserve(id, guest) {
+  reserve(id, guest, buyer = null) {
     return tx(() => {
       const item = db.prepare(`SELECT ${ITEM_COLS} FROM items i ${ITEM_JOIN}
         WHERE i.id = ? AND i.list_id = ? AND i.reserved_name IS NULL AND ${GUEST_OFFERABLE}`).get(id, guest.list_id);
@@ -311,20 +312,35 @@ export const items = {
         if (claim.changes !== 1) return false;
       }
       return db.prepare(
-        'UPDATE items SET reserved_guest_id = ?, reserved_name = ?, reserved_at = ?, reserved_by_user_id = NULL WHERE id = ? AND reserved_name IS NULL'
-      ).run(guest.id, guest.name, now(), id).changes === 1;
+        'UPDATE items SET reserved_guest_id = ?, reserved_name = ?, reserved_at = ?, reserved_by_user_id = NULL, reserved_buyer = ?, bought_at = NULL, bought_by_user_id = NULL WHERE id = ? AND reserved_name IS NULL'
+      ).run(guest.id, guest.name, now(), buyer, id).changes === 1;
     });
   },
+  /** A guest gives up a gift — not once the managers bought it for them (an admin can still release it). */
   unreserve(id, guest) {
-    db.prepare('DELETE FROM wishlist_claims WHERE item_id = ? AND item_id IN (SELECT id FROM items WHERE reserved_guest_id = ?)').run(id, guest.id);
+    db.prepare('DELETE FROM wishlist_claims WHERE item_id = ? AND item_id IN (SELECT id FROM items WHERE reserved_guest_id = ? AND bought_at IS NULL)').run(id, guest.id);
     const r = db.prepare(
-      'UPDATE items SET reserved_guest_id = NULL, reserved_name = NULL, reserved_at = NULL, reserved_by_user_id = NULL WHERE id = ? AND reserved_guest_id = ?'
+      'UPDATE items SET reserved_guest_id = NULL, reserved_name = NULL, reserved_at = NULL, reserved_by_user_id = NULL, reserved_buyer = NULL, bought_at = NULL, bought_by_user_id = NULL WHERE id = ? AND reserved_guest_id = ? AND bought_at IS NULL'
     ).run(id, guest.id);
     return r.changes === 1;
   },
+  /**
+   * Who buys a reserved gift ('guest': the guest does; 'us': the list's managers). With a guest,
+   * only a gift they hold; without (an admin's page), any reserved gift. Never once it was bought.
+   */
+  setBuyer(id, guest, buyer) {
+    return (guest
+      ? db.prepare('UPDATE items SET reserved_buyer = ? WHERE id = ? AND reserved_guest_id = ? AND bought_at IS NULL').run(buyer, id, guest.id)
+      : db.prepare('UPDATE items SET reserved_buyer = ? WHERE id = ? AND reserved_name IS NOT NULL AND bought_at IS NULL').run(buyer, id)).changes === 1;
+  },
+  /** An admin marks a gift they were asked to buy as bought (userId), or not bought yet (null). */
+  setBought(id, userId) {
+    return db.prepare(`UPDATE items SET bought_at = ?, bought_by_user_id = ?
+      WHERE id = ? AND reserved_name IS NOT NULL AND reserved_buyer = 'us'`).run(userId ? now() : null, userId ?? null, id).changes === 1;
+  },
   release(id) {
     db.prepare('DELETE FROM wishlist_claims WHERE item_id = ?').run(id);
-    db.prepare('UPDATE items SET reserved_guest_id = NULL, reserved_name = NULL, reserved_at = NULL, reserved_by_user_id = NULL WHERE id = ?').run(id);
+    db.prepare('UPDATE items SET reserved_guest_id = NULL, reserved_name = NULL, reserved_at = NULL, reserved_by_user_id = NULL, reserved_buyer = NULL, bought_at = NULL, bought_by_user_id = NULL WHERE id = ?').run(id);
   },
   delete(id) {
     db.prepare('DELETE FROM items WHERE id = ?').run(id);
