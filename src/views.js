@@ -89,6 +89,16 @@ function flash(ctx) {
   return h`<div class="flash flash-${ctx.flash.type}" role="status">${ctx.flash.text}</div>`;
 }
 
+
+/** PT · EN. Guest pages show it above the page; admin pages put it in the header row, next to the account menu. */
+function langSwitch(ctx) {
+  return h`<nav class="lang" aria-label="Language">
+  ${[['pt', 'PT'], ['en', 'EN']].map(([code, label]) => code === ctx.lang
+    ? h`<strong aria-current="true">${label}</strong>`
+    : h`<a href="/lang?to=${code}&amp;back=${encodeURIComponent(ctx.url.pathname)}" hreflang="${code}" lang="${code}">${label}</a>`)}
+</nav>`;
+}
+
 function layout(ctx, { title, body, bodyClass = '' }) {
   const site = config.siteTitle || ctx.t('appName');
   return h`<!doctype html>
@@ -104,15 +114,11 @@ function layout(ctx, { title, body, bodyClass = '' }) {
 <link rel="manifest" href="/site.webmanifest">
 <meta name="theme-color" content="#C8553D">
 <meta name="apple-mobile-web-app-title" content="${site}">
-<link rel="stylesheet" href="/static/style.css?v=27">
-<script src="/static/app.js?v=6" defer></script>
+<link rel="stylesheet" href="/static/style.css?v=28">
+<script src="/static/app.js?v=7" defer></script>
 </head>
 <body class="${bodyClass}">
-<nav class="lang" aria-label="Language">
-  ${[['pt', 'PT'], ['en', 'EN']].map(([code, label]) => code === ctx.lang
-    ? h`<strong aria-current="true">${label}</strong>`
-    : h`<a href="/lang?to=${code}&amp;back=${encodeURIComponent(ctx.url.pathname)}" hreflang="${code}" lang="${code}">${label}</a>`)}
-</nav>
+${langSwitch(ctx)}
 <main class="wrap">
 ${flash(ctx)}
 ${body}
@@ -282,6 +288,8 @@ const ICONS = {
   wishlist: '<path d="M4 11h16v9H4zM3 7h18v4H3zM12 7v13"/><path d="M12 7c-1.5-3-5-3.5-5-1.2C7 7.3 10 7 12 7zM12 7c1.5-3 5-3.5 5-1.2C17 7.3 14 7 12 7z"/>',
 };
 const icon = (name) => raw(`<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`);
+// Same stroke style as the bottom bar icons (no emoji).
+const GEAR_ICON = raw('<svg class="gear-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>');
 
 const NAV = [
   { href: '/admin/occasions', key: 'nav.occasions', icon: 'occasions', on: (p) => p.startsWith('/admin/occasions') },
@@ -308,13 +316,16 @@ function adminHeader(ctx, backHref, backLabel) {
   <nav class="admin-nav" aria-label="${ctx.t('admin.title')}">
     ${NAV.map((n) => h`<a href="${n.href}" class="tab${n.on(path) ? ' active' : ''}"${current(n.on(path))}>${ctx.t(n.key)}</a>`)}
   </nav>
-  <details class="account-menu">
-    <summary aria-label="${ctx.t('nav.account')}"><span class="avatar" aria-hidden="true">${initials(ctx.user?.name)}</span><span class="who-name">${ctx.user?.name}</span></summary>
-    <div class="menu">
-      ${menu.map(([href, key]) => h`<a href="${href}"${current(path.startsWith(href))}>${ctx.t(key)}</a>`)}
-      ${postButton(ctx, '/admin/logout', ctx.t('admin.logout'), { cls: 'link' })}
-    </div>
-  </details>
+  <div class="top-right">
+    ${langSwitch(ctx)}
+    <details class="account-menu">
+      <summary aria-label="${ctx.t('nav.account')}"><span class="avatar" aria-hidden="true">${initials(ctx.user?.name)}</span><span class="who-name">${ctx.user?.name}</span></summary>
+      <div class="menu">
+        ${menu.map(([href, key]) => h`<a href="${href}"${current(path.startsWith(href))}>${ctx.t(key)}</a>`)}
+        ${postButton(ctx, '/admin/logout', ctx.t('admin.logout'), { cls: 'link' })}
+      </div>
+    </details>
+  </div>
 </header>
 <nav class="bottom-nav" aria-label="${ctx.t('admin.title')}">
   ${NAV.map((n) => h`<a href="${n.href}" class="${n.on(path) ? 'active' : ''}"${current(n.on(path))}>${icon(n.icon)}<span>${ctx.t(n.short || n.key)}</span></a>`)}
@@ -341,12 +352,12 @@ function listFields(ctx, v, { withArchived = false, canSetVisibility = true } = 
 }
 
 /**
- * The ⚙️ menu of a page (its settings and rare actions): items are links ({ href, label }),
+ * The gear menu of a page (its settings and rare actions): items are links ({ href, label }),
  * one-button forms ({ post, label, confirm, danger, extra }) or a note ({ note }).
  */
 export function gearMenu(ctx, items) {
   return h`<details class="account-menu gear-menu">
-    <summary class="gear" aria-label="${ctx.t('nav.options')}" title="${ctx.t('nav.options')}">⚙️</summary>
+    <summary class="gear" aria-label="${ctx.t('nav.options')}" title="${ctx.t('nav.options')}">${GEAR_ICON}</summary>
     <div class="menu">
       ${items.filter(Boolean).map((it) => it.href ? h`<a href="${it.href}">${it.label}</a>`
         : it.post ? postButton(ctx, it.post, it.label, { cls: `link${it.danger ? ' danger' : ''}`, confirm: it.confirm, extra: it.extra || '' })

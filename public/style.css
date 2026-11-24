@@ -363,8 +363,17 @@ form.give-now { margin: 0; }
 
 /* 5.2: ⚙️ page menus */
 .head-actions { display: flex; align-items: center; gap: 8px; }
-.gear-menu > summary.gear { font-size: 1.2rem; width: 40px; height: 40px; justify-content: center; padding: 0; border: 1px solid var(--line); background: var(--card); }
+.gear-menu > summary.gear { width: 40px; height: 40px; justify-content: center; padding: 0; border: 1px solid var(--line); background: var(--card); color: var(--muted); }
 .gear-menu .menu button.link.danger { color: var(--err); }
 .menu-note { margin: 4px 12px 8px; max-width: 240px; }
 .page-head h1 { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 @media (max-width: 640px) { .bottom-nav a span { text-align: center; line-height: 1.15; } }
+
+/* 5.2.1: one header row (PT · EN next to the account menu), gear icon, menus that stay on screen */
+body:has(.admin-top) > .lang { display: none; }
+.top-right { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+.admin-top .lang { padding: 0; margin: 0; max-width: none; }
+.gear-icon { width: 20px; height: 20px; }
+.account-menu .menu { max-width: calc(100vw - 24px); }
+.account-menu .menu.align-start { left: 0; right: auto; }
+.account-menu .menu > form:first-child { border-top: 0; margin-top: 0; padding-top: 0; }

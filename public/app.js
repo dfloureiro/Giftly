@@ -233,3 +233,33 @@ document.querySelectorAll('input[data-filter]').forEach((input) => {
     }
   }
 })();
+
+// Menus (<details class="account-menu">): open towards the side with room so they never leave the
+// screen (a gear button on the left of a phone used to push its menu off the left edge), close the
+// others, and close on a click outside or Escape. Without JavaScript they still open (right-aligned).
+(function menus() {
+  const MARGIN = 12;
+  const place = (menu) => {
+    menu.classList.remove('align-start');
+    menu.style.translate = '';
+    let r = menu.getBoundingClientRect();
+    if (r.left < MARGIN) { menu.classList.add('align-start'); r = menu.getBoundingClientRect(); }
+    const over = r.right - (document.documentElement.clientWidth - MARGIN);
+    if (over > 0) menu.style.translate = `${-Math.min(over, r.left - MARGIN)}px 0`;
+  };
+  const all = () => document.querySelectorAll('details.account-menu[open]');
+  document.addEventListener('toggle', (e) => {
+    const d = e.target;
+    if (!(d instanceof HTMLDetailsElement) || !d.matches('.account-menu') || !d.open) return;
+    for (const other of all()) if (other !== d) other.open = false;
+    const menu = d.querySelector(':scope > .menu');
+    if (menu) place(menu);
+  }, true);
+  document.addEventListener('click', (e) => {
+    for (const d of all()) if (!d.contains(e.target)) d.open = false;
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    for (const d of all()) { d.open = false; d.querySelector('summary')?.focus(); }
+  });
+})();

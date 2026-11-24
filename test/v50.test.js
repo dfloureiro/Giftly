@@ -500,6 +500,17 @@ test('back links go where you came from; the star on a person page shows the fav
   assert.match(page, /name="on" value="0"/, 'pressing it again removes the favourite');
 });
 
+test('admin header: one row with PT · EN beside the account menu; the gear is an icon, not an emoji', async () => {
+  const page = await text(diogo, '/admin/wishlist');
+  const header = page.slice(page.indexOf('<header class="admin-top">'), page.indexOf('</header>'));
+  assert.match(header, /<div class="top-right">\s*<nav class="lang"/, 'language switch in the header row');
+  assert.match(header, /<details class="account-menu">/);
+  const gear = /<summary class="gear"[^>]*>([\s\S]*?)<\/summary>/.exec(page)?.[1] || '';
+  assert.match(gear, /<svg class="gear-icon"/);
+  assert.ok(!gear.includes('⚙'), 'no emoji in the gear button');
+  assert.match(page, /app\.js\?v=7/, 'app.js cache-busted (menus are placed by JS)');
+});
+
 test('settings live in a ⚙️ menu: list, occasion, person and my wishlist', async () => {
   const menu = (html) => html.slice(html.indexOf('class="account-menu gear-menu"'), html.indexOf('</details>', html.indexOf('gear-menu')));
   const list = idFrom((await diogo.post('/admin/lists', { title: 'Gear list' }, { from: '/admin/lists/new' })).location, 'lists');
